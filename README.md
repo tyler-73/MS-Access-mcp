@@ -176,25 +176,34 @@ The MCP server provides comprehensive tools across all seven capability areas:
 
 ## Testing
 
-### Running the Integration Test
+### Running the Full Regression Test
 
-The project includes a comprehensive integration test that validates all seven capabilities:
+Use the committed PowerShell harness to validate every currently exposed MCP tool in one run:
 
-```bash
-dotnet run --project IntegrationTest.csproj
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tests\full_toolset_regression.ps1
 ```
 
-The integration test:
-1. Opens a sample database
-2. Tests connection management (connect, disconnect, status check)
-3. Discovers and lists tables, queries, and relationships
-4. Launches Access, loads forms, then closes it
-5. Inserts and reads back VBA procedures
-6. Queries system table metadata
-7. Reads, updates, and verifies control properties
-8. Exports forms to text, deletes them, re-imports them, and confirms existence
+Optional arguments:
 
-### Manual Testing
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tests\full_toolset_regression.ps1 `
+  -ServerExe "C:\path\to\MS.Access.MCP.Official.exe" `
+  -DatabasePath "C:\path\to\database.accdb"
+```
+
+The script verifies:
+1. Connection lifecycle and status checks
+2. Table creation/query/description/deletion
+3. SQL execution and markdown query output
+4. VBA set/add/get/compile flows
+5. Form import/export/control discovery/edit/delete
+6. Report import/export/delete
+7. Metadata discovery and Access COM automation calls
+
+Pass criterion: `TOTAL_FAIL=0` and process exit code `0`.
+
+### Manual Protocol Probe
 
 To test the server manually:
 
@@ -239,6 +248,14 @@ The Interop library includes comprehensive data models for:
 2. **Database not found**: Verify the database path is correct and accessible
 3. **Permission errors**: Ensure the application has permission to access the database file
 4. **COM errors**: May indicate Access is not properly installed or registered
+5. **Stale lock state (`.laccdb`)**: Close leftover `MSACCESS` processes and remove the sibling `.laccdb` file before rerunning tests
+
+PowerShell cleanup snippet:
+
+```powershell
+Get-Process MSACCESS,MS.Access.MCP.Official -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Remove-Item C:\path\to\database.laccdb -ErrorAction SilentlyContinue
+```
 
 ### Debug Mode
 
