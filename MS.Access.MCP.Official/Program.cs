@@ -144,6 +144,9 @@ class Program
                 new { name = "get_form_controls", description = "Get list of controls in a form", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
                 new { name = "get_control_properties", description = "Get properties of a control", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" }, control_name = new { type = "string" } }, required = new string[] { "form_name", "control_name" } } },
                 new { name = "set_control_property", description = "Set a property of a control", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" }, control_name = new { type = "string" }, property_name = new { type = "string" }, value = new { type = "string" } }, required = new string[] { "form_name", "control_name", "property_name", "value" } } },
+                new { name = "get_report_controls", description = "Get list of controls in a report", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" } }, required = new string[] { "report_name" } } },
+                new { name = "get_report_control_properties", description = "Get properties of a report control", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" }, control_name = new { type = "string" } }, required = new string[] { "report_name", "control_name" } } },
+                new { name = "set_report_control_property", description = "Set a property of a report control", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" }, control_name = new { type = "string" }, property_name = new { type = "string" }, value = new { type = "string" } }, required = new string[] { "report_name", "control_name", "property_name", "value" } } },
                 new { name = "export_form_to_text", description = "Export a form to text format", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
                 new { name = "import_form_from_text", description = "Import a form from text format", inputSchema = new { type = "object", properties = new { form_data = new { type = "string" } }, required = new string[] { "form_data" } } },
                 new { name = "delete_form", description = "Delete a form from the database", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
@@ -203,6 +206,9 @@ class Program
             "get_form_controls" => HandleGetFormControls(accessService, toolArguments),
             "get_control_properties" => HandleGetControlProperties(accessService, toolArguments),
             "set_control_property" => HandleSetControlProperty(accessService, toolArguments),
+            "get_report_controls" => HandleGetReportControls(accessService, toolArguments),
+            "get_report_control_properties" => HandleGetReportControlProperties(accessService, toolArguments),
+            "set_report_control_property" => HandleSetReportControlProperty(accessService, toolArguments),
             "export_form_to_text" => HandleExportFormToText(accessService, toolArguments),
             "import_form_from_text" => HandleImportFormFromText(accessService, toolArguments),
             "delete_form" => HandleDeleteForm(accessService, toolArguments),
@@ -913,6 +919,64 @@ class Program
                 
             accessService.SetControlProperty(formName, controlName, propertyName, value);
             return new { success = true, message = $"Updated property {propertyName}" };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleGetReportControls(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var reportName = arguments.GetProperty("report_name").GetString();
+            if (string.IsNullOrEmpty(reportName))
+                return new { success = false, error = "Report name is required" };
+
+            var controls = accessService.GetReportControls(reportName);
+            return new { success = true, controls = controls.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleGetReportControlProperties(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var reportName = arguments.GetProperty("report_name").GetString();
+            var controlName = arguments.GetProperty("control_name").GetString();
+
+            if (string.IsNullOrEmpty(reportName) || string.IsNullOrEmpty(controlName))
+                return new { success = false, error = "Report name and control name are required" };
+
+            var properties = accessService.GetReportControlProperties(reportName, controlName);
+            return new { success = true, properties = properties };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleSetReportControlProperty(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var reportName = arguments.GetProperty("report_name").GetString();
+            var controlName = arguments.GetProperty("control_name").GetString();
+            var propertyName = arguments.GetProperty("property_name").GetString();
+            var value = arguments.GetProperty("value").GetString();
+
+            if (string.IsNullOrEmpty(reportName) || string.IsNullOrEmpty(controlName) ||
+                string.IsNullOrEmpty(propertyName) || string.IsNullOrEmpty(value))
+                return new { success = false, error = "All parameters are required" };
+
+            accessService.SetReportControlProperty(reportName, controlName, propertyName, value);
+            return new { success = true, message = $"Updated report property {propertyName}" };
         }
         catch (Exception ex)
         {

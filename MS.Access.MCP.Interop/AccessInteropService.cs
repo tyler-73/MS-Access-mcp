@@ -1124,7 +1124,7 @@ namespace MS.Access.MCP.Interop
             releaseOleDb: true);
         }
 
-        private List<ControlInfo> GetReportControls(string reportName)
+        public List<ControlInfo> GetReportControls(string reportName)
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
             if (string.IsNullOrWhiteSpace(reportName)) throw new ArgumentException("Report name is required", nameof(reportName));
@@ -1198,6 +1198,51 @@ namespace MS.Access.MCP.Interop
             releaseOleDb: true);
         }
 
+        public ControlProperties GetReportControlProperties(string reportName, string controlName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(reportName)) throw new ArgumentException("Report name is required", nameof(reportName));
+            if (string.IsNullOrWhiteSpace(controlName)) throw new ArgumentException("Control name is required", nameof(controlName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var openedHere = false;
+                var report = EnsureReportOpen(accessApp, reportName, true, out openedHere);
+                try
+                {
+                    var control = GetControlByName(report, controlName)
+                        ?? throw new InvalidOperationException($"Control '{controlName}' was not found on report '{reportName}'.");
+
+                    return new ControlProperties
+                    {
+                        Name = SafeToString(TryGetDynamicProperty(control, "Name")) ?? controlName,
+                        Type = MapControlType(ToInt32(TryGetDynamicProperty(control, "ControlType"))),
+                        Left = ToInt32(TryGetDynamicProperty(control, "Left")),
+                        Top = ToInt32(TryGetDynamicProperty(control, "Top")),
+                        Width = ToInt32(TryGetDynamicProperty(control, "Width")),
+                        Height = ToInt32(TryGetDynamicProperty(control, "Height")),
+                        Visible = ToBool(TryGetDynamicProperty(control, "Visible"), true),
+                        Enabled = ToBool(TryGetDynamicProperty(control, "Enabled"), true),
+                        BackColor = ToInt32(TryGetDynamicProperty(control, "BackColor")),
+                        ForeColor = ToInt32(TryGetDynamicProperty(control, "ForeColor")),
+                        FontName = SafeToString(TryGetDynamicProperty(control, "FontName")) ?? "",
+                        FontSize = ToInt32(TryGetDynamicProperty(control, "FontSize")),
+                        FontBold = ToBool(TryGetDynamicProperty(control, "FontBold"), false),
+                        FontItalic = ToBool(TryGetDynamicProperty(control, "FontItalic"), false)
+                    };
+                }
+                finally
+                {
+                    if (openedHere)
+                    {
+                        CloseReportInternal(accessApp, reportName, saveChanges: false);
+                    }
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
         public void SetControlProperty(string formName, string controlName, string propertyName, object value)
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
@@ -1224,6 +1269,39 @@ namespace MS.Access.MCP.Interop
                     if (openedHere)
                     {
                         CloseFormInternal(accessApp, formName, saveChanges: false);
+                    }
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void SetReportControlProperty(string reportName, string controlName, string propertyName, object value)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(reportName)) throw new ArgumentException("Report name is required", nameof(reportName));
+            if (string.IsNullOrWhiteSpace(controlName)) throw new ArgumentException("Control name is required", nameof(controlName));
+            if (string.IsNullOrWhiteSpace(propertyName)) throw new ArgumentException("Property name is required", nameof(propertyName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var openedHere = false;
+                try
+                {
+                    var report = EnsureReportOpen(accessApp, reportName, true, out openedHere);
+                    var control = GetControlByName(report, controlName)
+                        ?? throw new InvalidOperationException($"Control '{controlName}' was not found on report '{reportName}'.");
+
+                    var existingValue = TryGetDynamicProperty(control, propertyName);
+                    var convertedValue = ConvertValueForProperty(value, existingValue);
+                    SetDynamicProperty(control, propertyName, convertedValue);
+                    accessApp.DoCmd.Save(3, reportName);
+                }
+                finally
+                {
+                    if (openedHere)
+                    {
+                        CloseReportInternal(accessApp, reportName, saveChanges: false);
                     }
                 }
             },

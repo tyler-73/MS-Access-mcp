@@ -112,6 +112,9 @@ The MCP server provides comprehensive tools across all seven capability areas:
 - **get_form_controls**: Get all controls in a form
 - **get_control_properties**: Get properties of a control
 - **set_control_property**: Set a property of a control
+- **get_report_controls**: Get all controls in a report
+- **get_report_control_properties**: Get properties of a report control
+- **set_report_control_property**: Set a property of a report control
 
 ### 7. Persistence & Versioning
 - **export_form_to_text**: Export a form to text representation

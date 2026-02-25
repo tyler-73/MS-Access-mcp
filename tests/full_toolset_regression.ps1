@@ -183,6 +183,9 @@ Add-ToolCall -Calls $calls -Id 25 -Name "export_form_to_text" -Arguments @{ form
 Add-ToolCall -Calls $calls -Id 26 -Name "open_form" -Arguments @{ form_name = $formName }
 Add-ToolCall -Calls $calls -Id 27 -Name "close_form" -Arguments @{ form_name = $formName }
 Add-ToolCall -Calls $calls -Id 28 -Name "import_report_from_text" -Arguments @{ report_data = $reportData }
+Add-ToolCall -Calls $calls -Id 52 -Name "get_report_controls" -Arguments @{ report_name = $reportName }
+Add-ToolCall -Calls $calls -Id 53 -Name "get_report_control_properties" -Arguments @{ report_name = $reportName; control_name = "lblReport" }
+Add-ToolCall -Calls $calls -Id 54 -Name "set_report_control_property" -Arguments @{ report_name = $reportName; control_name = "lblReport"; property_name = "Visible"; value = "True" }
 Add-ToolCall -Calls $calls -Id 29 -Name "export_report_to_text" -Arguments @{ report_name = $reportName }
 Add-ToolCall -Calls $calls -Id 30 -Name "delete_report" -Arguments @{ report_name = $reportName }
 Add-ToolCall -Calls $calls -Id 31 -Name "delete_form" -Arguments @{ form_name = $formName }
@@ -304,6 +307,9 @@ $idLabels = @{
     26 = "open_form"
     27 = "close_form"
     28 = "import_report_from_text"
+    52 = "get_report_controls"
+    53 = "get_report_control_properties"
+    54 = "set_report_control_property"
     29 = "export_report_to_text"
     30 = "delete_report"
     31 = "delete_form"
@@ -378,6 +384,28 @@ foreach ($id in ($idLabels.Keys | Sort-Object)) {
             if (@($decoded.controls).Count -lt 1) {
                 $failed++
                 Write-Host ('{0}: FAIL expected at least one control' -f $label)
+                continue
+            }
+        }
+        "get_report_controls" {
+            $controls = @($decoded.controls)
+            if ($controls.Count -lt 1) {
+                $failed++
+                Write-Host ('{0}: FAIL expected at least one report control' -f $label)
+                continue
+            }
+
+            $matchedControl = $controls | Where-Object { [string]$_.name -eq "lblReport" }
+            if (@($matchedControl).Count -eq 0) {
+                $failed++
+                Write-Host ('{0}: FAIL expected report control lblReport' -f $label)
+                continue
+            }
+        }
+        "get_report_control_properties" {
+            if ([string]$decoded.properties.name -ne "lblReport") {
+                $failed++
+                Write-Host ('{0}: FAIL expected control properties for lblReport' -f $label)
                 continue
             }
         }

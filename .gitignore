@@ -5,6 +5,7 @@
 # Publish/package outputs
 mcp-server-official/
 mcp-server-official-x64/
+mcp-server-official-x64-run-*/
 
 # IDE and user-local files
 .vs/
