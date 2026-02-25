@@ -17,6 +17,9 @@ namespace MS.Access.MCP.Interop
         private string? _accessDatabasePath;
         private bool _accessDatabaseOpenedExclusive = false;
         private bool _disposed = false;
+        private const int DaoRelationAttributeDontEnforce = 2;
+        private const int DaoRelationAttributeUpdateCascade = 256;
+        private const int DaoRelationAttributeDeleteCascade = 4096;
 
         #region 1. Connection Management
 
@@ -79,25 +82,123 @@ namespace MS.Access.MCP.Interop
             EnsureOleDbConnection();
 
             var queries = new List<QueryInfo>();
-            
-            // Use OleDb to get query information
-            var schema = _oleDbConnection!.GetSchema("Views");
-            
-            foreach (System.Data.DataRow row in schema.Rows)
+
+            try
             {
-                var queryName = row["TABLE_NAME"].ToString();
-                if (!string.IsNullOrEmpty(queryName))
+                var comQueries = ExecuteComOperation(accessApp =>
                 {
-                    queries.Add(new QueryInfo
+                    var list = new List<QueryInfo>();
+                    var currentDb = TryGetCurrentDb(accessApp);
+                    if (currentDb == null)
+                        return list;
+
+                    var queryDefs = TryGetDynamicProperty(currentDb, "QueryDefs");
+                    if (queryDefs == null)
+                        return list;
+
+                    foreach (var queryDef in queryDefs)
                     {
-                        Name = queryName,
-                        SQL = "", // SQL not available through schema
-                        Type = "Query"
-                    });
-                }
+                        var queryName = SafeToString(TryGetDynamicProperty(queryDef, "Name"));
+                        if (string.IsNullOrWhiteSpace(queryName) || queryName.StartsWith("~", StringComparison.Ordinal))
+                            continue;
+
+                        var sql = SafeToString(TryGetDynamicProperty(queryDef, "SQL")) ?? string.Empty;
+                        var typeCode = ToInt32(TryGetDynamicProperty(queryDef, "Type"));
+
+                        list.Add(new QueryInfo
+                        {
+                            Name = queryName,
+                            SQL = sql.Trim(),
+                            Type = MapQueryDefType(typeCode)
+                        });
+                    }
+
+                    return list;
+                },
+                requireExclusive: false,
+                releaseOleDb: false);
+
+                if (comQueries.Count > 0)
+                    return comQueries.OrderBy(q => q.Name, StringComparer.OrdinalIgnoreCase).ToList();
+            }
+            catch
+            {
+                // Fall back to OleDb schema query when DAO QueryDefs are unavailable.
             }
 
-            return queries;
+            // Use OleDb to get query information
+            var schema = _oleDbConnection!.GetSchema("Views");
+            foreach (DataRow row in schema.Rows)
+            {
+                var queryName = row["TABLE_NAME"]?.ToString();
+                if (string.IsNullOrWhiteSpace(queryName) || queryName.StartsWith("~", StringComparison.Ordinal))
+                    continue;
+
+                queries.Add(new QueryInfo
+                {
+                    Name = queryName,
+                    SQL = string.Empty,
+                    Type = "Query"
+                });
+            }
+
+            return queries.OrderBy(q => q.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
+        public void CreateQuery(string queryName, string sql)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(queryName)) throw new ArgumentException("Query name is required", nameof(queryName));
+            if (string.IsNullOrWhiteSpace(sql)) throw new ArgumentException("SQL is required", nameof(sql));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("Failed to get current DAO database.");
+
+                if (FindQueryDef(currentDb, queryName) != null)
+                    throw new InvalidOperationException($"Query already exists: {queryName}");
+
+                _ = InvokeDynamicMethod(currentDb, "CreateQueryDef", queryName, sql);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void UpdateQuery(string queryName, string sql)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(queryName)) throw new ArgumentException("Query name is required", nameof(queryName));
+            if (string.IsNullOrWhiteSpace(sql)) throw new ArgumentException("SQL is required", nameof(sql));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("Failed to get current DAO database.");
+
+                var queryDef = FindQueryDef(currentDb, queryName)
+                    ?? throw new InvalidOperationException($"Query not found: {queryName}");
+
+                SetDynamicProperty(queryDef, "SQL", sql);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void DeleteQuery(string queryName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(queryName)) throw new ArgumentException("Query name is required", nameof(queryName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("Failed to get current DAO database.");
+
+                DeleteQueryInternal(currentDb, queryName);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
         }
 
         public List<RelationshipInfo> GetRelationships()
@@ -109,6 +210,69 @@ namespace MS.Access.MCP.Interop
 
             try
             {
+                var comRelationships = ExecuteComOperation(accessApp =>
+                {
+                    var list = new List<RelationshipInfo>();
+                    var currentDb = TryGetCurrentDb(accessApp);
+                    if (currentDb == null)
+                        return list;
+
+                    var relationCollection = TryGetDynamicProperty(currentDb, "Relations");
+                    if (relationCollection == null)
+                        return list;
+
+                    foreach (var relation in relationCollection)
+                    {
+                        var relationName = SafeToString(TryGetDynamicProperty(relation, "Name"));
+                        if (string.IsNullOrWhiteSpace(relationName) || relationName.StartsWith("~", StringComparison.Ordinal))
+                            continue;
+
+                        var fieldName = string.Empty;
+                        var foreignFieldName = string.Empty;
+                        var relationFields = TryGetDynamicProperty(relation, "Fields");
+                        if (relationFields != null)
+                        {
+                            foreach (var relationField in relationFields)
+                            {
+                                // DAO stores primary-side column as Name and foreign-side column as ForeignName.
+                                // For MCP APIs, we expose table/field as foreign-key side and foreign_* as referenced primary side.
+                                foreignFieldName = SafeToString(TryGetDynamicProperty(relationField, "Name")) ?? string.Empty;
+                                fieldName = SafeToString(TryGetDynamicProperty(relationField, "ForeignName")) ?? string.Empty;
+                                break;
+                            }
+                        }
+
+                        var attributesValue = ToInt32(TryGetDynamicProperty(relation, "Attributes"));
+
+                        list.Add(new RelationshipInfo
+                        {
+                            Name = relationName,
+                            Table = SafeToString(TryGetDynamicProperty(relation, "ForeignTable")) ?? string.Empty,
+                            ForeignTable = SafeToString(TryGetDynamicProperty(relation, "Table")) ?? string.Empty,
+                            Field = fieldName,
+                            ForeignField = foreignFieldName,
+                            EnforceIntegrity = !HasRelationshipAttribute(attributesValue, DaoRelationAttributeDontEnforce),
+                            CascadeUpdate = HasRelationshipAttribute(attributesValue, DaoRelationAttributeUpdateCascade),
+                            CascadeDelete = HasRelationshipAttribute(attributesValue, DaoRelationAttributeDeleteCascade),
+                            Attributes = attributesValue.ToString()
+                        });
+                    }
+
+                    return list;
+                },
+                requireExclusive: false,
+                releaseOleDb: false);
+
+                if (comRelationships.Count > 0)
+                    return comRelationships.OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase).ToList();
+            }
+            catch
+            {
+                // Fall back to OleDb metadata where DAO relationships are unavailable.
+            }
+
+            try
+            {
                 // Not all ACE providers expose this collection; return empty on unsupported providers.
                 var schema = _oleDbConnection!.GetSchema("ForeignKeys");
 
@@ -116,10 +280,15 @@ namespace MS.Access.MCP.Interop
                 {
                     relationships.Add(new RelationshipInfo
                     {
-                        Name = row["FK_NAME"]?.ToString() ?? "",
-                        Table = row["TABLE_NAME"]?.ToString() ?? "",
-                        ForeignTable = row["REFERENCED_TABLE_NAME"]?.ToString() ?? "",
-                        Attributes = ""
+                        Name = row["FK_NAME"]?.ToString() ?? string.Empty,
+                        Table = row["TABLE_NAME"]?.ToString() ?? string.Empty,
+                        ForeignTable = row["REFERENCED_TABLE_NAME"]?.ToString() ?? string.Empty,
+                        Field = row["FK_COLUMN_NAME"]?.ToString() ?? string.Empty,
+                        ForeignField = row["PK_COLUMN_NAME"]?.ToString() ?? string.Empty,
+                        EnforceIntegrity = true,
+                        CascadeUpdate = false,
+                        CascadeDelete = false,
+                        Attributes = string.Empty
                     });
                 }
             }
@@ -128,7 +297,108 @@ namespace MS.Access.MCP.Interop
                 // Keep compatibility with providers that do not publish ForeignKeys metadata.
             }
 
-            return relationships;
+            return relationships.OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
+        public string CreateRelationship(
+            string tableName,
+            string fieldName,
+            string foreignTableName,
+            string foreignFieldName,
+            string? relationshipName = null,
+            bool enforceIntegrity = true,
+            bool cascadeUpdate = false,
+            bool cascadeDelete = false)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(fieldName)) throw new ArgumentException("Field name is required", nameof(fieldName));
+            if (string.IsNullOrWhiteSpace(foreignTableName)) throw new ArgumentException("Foreign table name is required", nameof(foreignTableName));
+            if (string.IsNullOrWhiteSpace(foreignFieldName)) throw new ArgumentException("Foreign field name is required", nameof(foreignFieldName));
+
+            var effectiveRelationshipName = string.IsNullOrWhiteSpace(relationshipName)
+                ? BuildRelationshipName(tableName, fieldName, foreignTableName, foreignFieldName)
+                : relationshipName;
+
+            ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("Failed to get current DAO database.");
+
+                CreateRelationshipInternal(
+                    currentDb,
+                    effectiveRelationshipName!,
+                    tableName,
+                    fieldName,
+                    foreignTableName,
+                    foreignFieldName,
+                    enforceIntegrity,
+                    cascadeUpdate,
+                    cascadeDelete);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+
+            return effectiveRelationshipName!;
+        }
+
+        public string UpdateRelationship(
+            string relationshipName,
+            string tableName,
+            string fieldName,
+            string foreignTableName,
+            string foreignFieldName,
+            bool enforceIntegrity = true,
+            bool cascadeUpdate = false,
+            bool cascadeDelete = false)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(relationshipName)) throw new ArgumentException("Relationship name is required", nameof(relationshipName));
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(fieldName)) throw new ArgumentException("Field name is required", nameof(fieldName));
+            if (string.IsNullOrWhiteSpace(foreignTableName)) throw new ArgumentException("Foreign table name is required", nameof(foreignTableName));
+            if (string.IsNullOrWhiteSpace(foreignFieldName)) throw new ArgumentException("Foreign field name is required", nameof(foreignFieldName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("Failed to get current DAO database.");
+
+                if (!DeleteRelationshipInternal(currentDb, relationshipName))
+                    throw new InvalidOperationException($"Relationship not found: {relationshipName}");
+
+                CreateRelationshipInternal(
+                    currentDb,
+                    relationshipName,
+                    tableName,
+                    fieldName,
+                    foreignTableName,
+                    foreignFieldName,
+                    enforceIntegrity,
+                    cascadeUpdate,
+                    cascadeDelete);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+
+            return relationshipName;
+        }
+
+        public void DeleteRelationship(string relationshipName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(relationshipName)) throw new ArgumentException("Relationship name is required", nameof(relationshipName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("Failed to get current DAO database.");
+
+                if (!DeleteRelationshipInternal(currentDb, relationshipName))
+                    throw new InvalidOperationException($"Relationship not found: {relationshipName}");
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
         }
 
         public void CreateTable(string tableName, List<FieldInfo> fields)
@@ -1428,6 +1698,174 @@ namespace MS.Access.MCP.Interop
             }
         }
 
+        private static dynamic? TryGetCurrentDb(dynamic accessApp)
+        {
+            try
+            {
+                return accessApp.CurrentDb();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static dynamic? FindQueryDef(dynamic currentDb, string queryName)
+        {
+            var queryDefs = TryGetDynamicProperty(currentDb, "QueryDefs");
+            if (queryDefs == null)
+                return null;
+
+            foreach (var queryDef in queryDefs)
+            {
+                var name = SafeToString(TryGetDynamicProperty(queryDef, "Name"));
+                if (string.Equals(name, queryName, StringComparison.OrdinalIgnoreCase))
+                    return queryDef;
+            }
+
+            return null;
+        }
+
+        private static void DeleteQueryInternal(dynamic currentDb, string queryName)
+        {
+            if (FindQueryDef(currentDb, queryName) == null)
+                throw new InvalidOperationException($"Query not found: {queryName}");
+
+            var queryDefs = TryGetDynamicProperty(currentDb, "QueryDefs")
+                ?? throw new InvalidOperationException("DAO QueryDefs collection is unavailable.");
+
+            _ = InvokeDynamicMethod(queryDefs, "Delete", queryName);
+        }
+
+        private static dynamic? FindRelationship(dynamic currentDb, string relationshipName)
+        {
+            var relationships = TryGetDynamicProperty(currentDb, "Relations");
+            if (relationships == null)
+                return null;
+
+            foreach (var relationship in relationships)
+            {
+                var name = SafeToString(TryGetDynamicProperty(relationship, "Name"));
+                if (string.Equals(name, relationshipName, StringComparison.OrdinalIgnoreCase))
+                    return relationship;
+            }
+
+            return null;
+        }
+
+        private void CreateRelationshipInternal(
+            dynamic currentDb,
+            string relationshipName,
+            string tableName,
+            string fieldName,
+            string foreignTableName,
+            string foreignFieldName,
+            bool enforceIntegrity,
+            bool cascadeUpdate,
+            bool cascadeDelete)
+        {
+            if (RelationshipExists(currentDb, relationshipName))
+                throw new InvalidOperationException($"Relationship already exists: {relationshipName}");
+
+            var attributes = BuildRelationshipAttributes(enforceIntegrity, cascadeUpdate, cascadeDelete);
+            // DAO expects (primaryTable, foreignTable). MCP APIs pass (foreignTable, primaryTable).
+            var relationship = InvokeDynamicMethod(currentDb, "CreateRelation", relationshipName, foreignTableName, tableName, attributes)
+                ?? throw new InvalidOperationException("Failed to create DAO Relationship object.");
+
+            // DAO field mapping: Name = primary key column, ForeignName = foreign key column.
+            var relationshipField = InvokeDynamicMethod(relationship, "CreateField", foreignFieldName)
+                ?? throw new InvalidOperationException("Failed to create DAO Relationship field object.");
+            SetDynamicProperty(relationshipField, "ForeignName", fieldName);
+
+            var relationshipFields = TryGetDynamicProperty(relationship, "Fields")
+                ?? throw new InvalidOperationException("Relationship fields collection is unavailable.");
+            _ = InvokeDynamicMethod(relationshipFields, "Append", relationshipField);
+
+            var relationships = TryGetDynamicProperty(currentDb, "Relations")
+                ?? throw new InvalidOperationException("DAO Relations collection is unavailable.");
+            _ = InvokeDynamicMethod(relationships, "Append", relationship);
+        }
+
+        private bool DeleteRelationshipInternal(dynamic currentDb, string relationshipName)
+        {
+            if (FindRelationship(currentDb, relationshipName) is { } relationship)
+            {
+                var daoRelationshipName = SafeToString(TryGetDynamicProperty(relationship, "Name")) ?? relationshipName;
+                var relationships = TryGetDynamicProperty(currentDb, "Relations")
+                    ?? throw new InvalidOperationException("DAO Relations collection is unavailable.");
+                _ = InvokeDynamicMethod(relationships, "Delete", daoRelationshipName);
+                return true;
+            }
+
+            return DeleteRelationshipViaOleDb(relationshipName);
+        }
+
+        private bool RelationshipExists(dynamic currentDb, string relationshipName)
+        {
+            if (FindRelationship(currentDb, relationshipName) != null)
+                return true;
+
+            try
+            {
+                EnsureOleDbConnection();
+                var schema = _oleDbConnection!.GetSchema("ForeignKeys");
+                foreach (DataRow row in schema.Rows)
+                {
+                    var schemaName = row["FK_NAME"]?.ToString();
+                    if (string.Equals(schemaName, relationshipName, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+            }
+            catch
+            {
+                // Ignore fallback metadata errors and treat as "not found".
+            }
+
+            return false;
+        }
+
+        private bool DeleteRelationshipViaOleDb(string relationshipName)
+        {
+            try
+            {
+                EnsureOleDbConnection();
+                var schema = _oleDbConnection!.GetSchema("ForeignKeys");
+                var candidateTables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (DataRow row in schema.Rows)
+                {
+                    var schemaName = row["FK_NAME"]?.ToString();
+                    if (!string.Equals(schemaName, relationshipName, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var tableName = row["TABLE_NAME"]?.ToString();
+                    if (!string.IsNullOrWhiteSpace(tableName))
+                        candidateTables.Add(tableName);
+                }
+
+                foreach (var tableName in candidateTables)
+                {
+                    var sql = $"ALTER TABLE [{EscapeSqlIdentifier(tableName)}] DROP CONSTRAINT [{EscapeSqlIdentifier(relationshipName)}]";
+                    try
+                    {
+                        using var command = new OleDbCommand(sql, _oleDbConnection);
+                        command.ExecuteNonQuery();
+                        return true;
+                    }
+                    catch
+                    {
+                        // Continue trying other candidate tables.
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore metadata errors and report not found.
+            }
+
+            return false;
+        }
+
         private dynamic? FindOrCreateVbComponent(dynamic accessApp, string projectName, string moduleName, bool createIfMissing)
         {
             var project = FindVbProject(accessApp, projectName);
@@ -2027,6 +2465,11 @@ namespace MS.Access.MCP.Interop
                 .Replace("\n", "<br/>", StringComparison.Ordinal);
         }
 
+        private static string EscapeSqlIdentifier(string identifier)
+        {
+            return identifier.Replace("]", "]]", StringComparison.Ordinal);
+        }
+
         private static List<string> MakeUniqueColumnNames(IReadOnlyList<string> rawNames)
         {
             var result = new List<string>(rawNames.Count);
@@ -2048,6 +2491,61 @@ namespace MS.Access.MCP.Interop
             }
 
             return result;
+        }
+
+        private static bool HasRelationshipAttribute(int attributes, int flag)
+        {
+            return (attributes & flag) == flag;
+        }
+
+        private static int BuildRelationshipAttributes(bool enforceIntegrity, bool cascadeUpdate, bool cascadeDelete)
+        {
+            var attributes = 0;
+            if (!enforceIntegrity)
+                attributes |= DaoRelationAttributeDontEnforce;
+            if (cascadeUpdate)
+                attributes |= DaoRelationAttributeUpdateCascade;
+            if (cascadeDelete)
+                attributes |= DaoRelationAttributeDeleteCascade;
+
+            return attributes;
+        }
+
+        private static string BuildRelationshipName(string tableName, string fieldName, string foreignTableName, string foreignFieldName)
+        {
+            var rawName = $"rel_{NormalizeNameFragment(tableName)}_{NormalizeNameFragment(fieldName)}_{NormalizeNameFragment(foreignTableName)}_{NormalizeNameFragment(foreignFieldName)}";
+            return rawName.Length <= 64 ? rawName : rawName.Substring(0, 64);
+        }
+
+        private static string NormalizeNameFragment(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return "x";
+
+            var builder = new StringBuilder(value.Length);
+            foreach (var character in value)
+            {
+                builder.Append(char.IsLetterOrDigit(character) ? char.ToLowerInvariant(character) : '_');
+            }
+
+            return builder.ToString().Trim('_');
+        }
+
+        private static string MapQueryDefType(int typeCode)
+        {
+            return typeCode switch
+            {
+                0 => "Select",
+                16 => "Crosstab",
+                32 => "Delete",
+                48 => "Update",
+                64 => "Append",
+                80 => "MakeTable",
+                96 => "DDL",
+                112 => "PassThrough",
+                128 => "Union",
+                _ => $"QueryType({typeCode})"
+            };
         }
 
         private HashSet<string> GetPrimaryKeyColumns(string tableName)
@@ -2173,7 +2671,12 @@ namespace MS.Access.MCP.Interop
     {
         public string Name { get; set; } = "";
         public string Table { get; set; } = "";
+        public string Field { get; set; } = "";
         public string ForeignTable { get; set; } = "";
+        public string ForeignField { get; set; } = "";
+        public bool EnforceIntegrity { get; set; }
+        public bool CascadeUpdate { get; set; }
+        public bool CascadeDelete { get; set; }
         public string Attributes { get; set; } = "";
     }
 

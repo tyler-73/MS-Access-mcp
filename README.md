@@ -74,6 +74,15 @@ The MCP server provides comprehensive tools across all seven capability areas:
 - **get_tables**: Get all tables from the connected database
 - **get_queries**: Get all queries from the connected database
 - **get_relationships**: Get all relationships from the connected database
+- **create_query**: Create a saved Access query definition
+- **update_query**: Update SQL for a saved query definition
+- **delete_query**: Delete a saved query definition
+- **create_relationship**: Create a relationship (`table_name`/`field_name` = referenced primary side, `foreign_table_name`/`foreign_field_name` = dependent side)
+- **update_relationship**: Replace an existing relationship definition using the same parameter mapping
+- **delete_relationship**: Delete a relationship by name
+- **execute_sql**: Execute SQL directly (query or action)
+- **execute_query_md**: Execute SQL and return markdown table output
+- **describe_table**: Describe table schema, key columns, and defaults
 - **create_table**: Create a new table in the database
 - **delete_table**: Delete a table from the database
 

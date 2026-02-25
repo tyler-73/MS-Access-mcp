@@ -77,6 +77,9 @@ $tableName = "MCP_Table_$suffix"
 $formName = "MCP_Form_$suffix"
 $reportName = "MCP_Report_$suffix"
 $moduleName = "MCP_Module_$suffix"
+$queryName = "MCP_Query_$suffix"
+$relationshipName = "MCP_Rel_$suffix"
+$childTableName = "MCP_Child_$suffix"
 
 $formData = @{
     Name = $formName
@@ -187,6 +190,41 @@ Add-ToolCall -Calls $calls -Id 32 -Name "get_forms" -Arguments @{}
 Add-ToolCall -Calls $calls -Id 33 -Name "get_reports" -Arguments @{}
 Add-ToolCall -Calls $calls -Id 34 -Name "get_macros" -Arguments @{}
 Add-ToolCall -Calls $calls -Id 35 -Name "get_modules" -Arguments @{}
+Add-ToolCall -Calls $calls -Id 40 -Name "create_query" -Arguments @{ query_name = $queryName; sql = "SELECT id, name FROM [$tableName]" }
+Add-ToolCall -Calls $calls -Id 41 -Name "get_queries" -Arguments @{}
+Add-ToolCall -Calls $calls -Id 42 -Name "update_query" -Arguments @{ query_name = $queryName; sql = "SELECT id FROM [$tableName] WHERE id >= 1" }
+Add-ToolCall -Calls $calls -Id 43 -Name "create_table" -Arguments @{
+    table_name = $childTableName
+    fields = @(
+        @{ name = "child_id"; type = "LONG"; size = 0; required = $false; allow_zero_length = $false },
+        @{ name = "parent_id"; type = "LONG"; size = 0; required = $false; allow_zero_length = $false }
+    )
+}
+Add-ToolCall -Calls $calls -Id 50 -Name "execute_sql" -Arguments @{ sql = "ALTER TABLE [$tableName] ADD CONSTRAINT [PK_$tableName] PRIMARY KEY ([id])" }
+Add-ToolCall -Calls $calls -Id 44 -Name "create_relationship" -Arguments @{
+    relationship_name = $relationshipName
+    table_name = $tableName
+    field_name = "id"
+    foreign_table_name = $childTableName
+    foreign_field_name = "parent_id"
+    enforce_integrity = $true
+    cascade_update = $false
+    cascade_delete = $false
+}
+Add-ToolCall -Calls $calls -Id 45 -Name "get_relationships" -Arguments @{}
+Add-ToolCall -Calls $calls -Id 46 -Name "update_relationship" -Arguments @{
+    relationship_name = $relationshipName
+    table_name = $tableName
+    field_name = "id"
+    foreign_table_name = $childTableName
+    foreign_field_name = "parent_id"
+    enforce_integrity = $true
+    cascade_update = $true
+    cascade_delete = $true
+}
+Add-ToolCall -Calls $calls -Id 47 -Name "delete_relationship" -Arguments @{ relationship_name = $relationshipName }
+Add-ToolCall -Calls $calls -Id 48 -Name "delete_query" -Arguments @{ query_name = $queryName }
+Add-ToolCall -Calls $calls -Id 49 -Name "delete_table" -Arguments @{ table_name = $childTableName }
 Add-ToolCall -Calls $calls -Id 36 -Name "delete_table" -Arguments @{ table_name = $tableName }
 Add-ToolCall -Calls $calls -Id 37 -Name "disconnect_access" -Arguments @{}
 Add-ToolCall -Calls $calls -Id 38 -Name "is_connected" -Arguments @{}
@@ -272,6 +310,17 @@ $idLabels = @{
     33 = "get_reports"
     34 = "get_macros"
     35 = "get_modules"
+    40 = "create_query"
+    41 = "get_queries_after_create_query"
+    42 = "update_query"
+    43 = "create_child_table"
+    50 = "add_parent_primary_key"
+    44 = "create_relationship"
+    45 = "get_relationships_after_create_relationship"
+    46 = "update_relationship"
+    47 = "delete_relationship"
+    48 = "delete_query"
+    49 = "delete_child_table"
     36 = "delete_table"
     37 = "disconnect_access"
     38 = "is_connected_after_disconnect"
@@ -335,6 +384,24 @@ foreach ($id in ($idLabels.Keys | Sort-Object)) {
             if ($codeText.IndexOf("Pong", [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
                 $failed++
                 Write-Host ('{0}: FAIL expected procedure text in module code' -f $label)
+                continue
+            }
+        }
+        "get_queries_after_create_query" {
+            $queries = @($decoded.queries)
+            $matchedQuery = $queries | Where-Object { [string]$_.name -eq $queryName }
+            if (@($matchedQuery).Count -eq 0) {
+                $failed++
+                Write-Host ('{0}: FAIL expected query {1}' -f $label, $queryName)
+                continue
+            }
+        }
+        "get_relationships_after_create_relationship" {
+            $relationships = @($decoded.relationships)
+            $matchedRelationship = $relationships | Where-Object { [string]$_.name -eq $relationshipName }
+            if (@($matchedRelationship).Count -eq 0) {
+                $failed++
+                Write-Host ('{0}: FAIL expected relationship {1}' -f $label, $relationshipName)
                 continue
             }
         }

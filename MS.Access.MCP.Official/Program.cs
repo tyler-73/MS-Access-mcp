@@ -114,6 +114,12 @@ class Program
                 new { name = "get_tables", description = "Get list of all tables in the database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_queries", description = "Get list of all queries in the database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_relationships", description = "Get list of all relationships in the database", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "create_query", description = "Create a saved Access query definition", inputSchema = new { type = "object", properties = new { query_name = new { type = "string" }, sql = new { type = "string" } }, required = new string[] { "query_name", "sql" } } },
+                new { name = "update_query", description = "Update SQL text for an existing saved query", inputSchema = new { type = "object", properties = new { query_name = new { type = "string" }, sql = new { type = "string" } }, required = new string[] { "query_name", "sql" } } },
+                new { name = "delete_query", description = "Delete a saved Access query definition", inputSchema = new { type = "object", properties = new { query_name = new { type = "string" } }, required = new string[] { "query_name" } } },
+                new { name = "create_relationship", description = "Create a table relationship", inputSchema = new { type = "object", properties = new { relationship_name = new { type = "string" }, table_name = new { type = "string" }, field_name = new { type = "string" }, foreign_table_name = new { type = "string" }, foreign_field_name = new { type = "string" }, enforce_integrity = new { type = "boolean" }, cascade_update = new { type = "boolean" }, cascade_delete = new { type = "boolean" } }, required = new string[] { "table_name", "field_name", "foreign_table_name", "foreign_field_name" } } },
+                new { name = "update_relationship", description = "Replace an existing relationship definition", inputSchema = new { type = "object", properties = new { relationship_name = new { type = "string" }, table_name = new { type = "string" }, field_name = new { type = "string" }, foreign_table_name = new { type = "string" }, foreign_field_name = new { type = "string" }, enforce_integrity = new { type = "boolean" }, cascade_update = new { type = "boolean" }, cascade_delete = new { type = "boolean" } }, required = new string[] { "relationship_name", "table_name", "field_name", "foreign_table_name", "foreign_field_name" } } },
+                new { name = "delete_relationship", description = "Delete an existing relationship by name", inputSchema = new { type = "object", properties = new { relationship_name = new { type = "string" } }, required = new string[] { "relationship_name" } } },
                 new { name = "execute_sql", description = "Execute a SQL statement against the connected Access database. For SELECT queries, returns columns and rows. For action queries, returns rows_affected.", inputSchema = new { type = "object", properties = new { sql = new { type = "string" }, max_rows = new { type = "integer" } }, required = new string[] { "sql" } } },
                 new { name = "execute_query_md", description = "Execute a SQL statement and return result as a markdown table (or action-query summary).", inputSchema = new { type = "object", properties = new { sql = new { type = "string" }, max_rows = new { type = "integer" } }, required = new string[] { "sql" } } },
                 new { name = "describe_table", description = "Describe a table schema including columns, nullability, defaults, and primary key columns.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
@@ -167,6 +173,12 @@ class Program
             "get_tables" => HandleGetTables(accessService, toolArguments),
             "get_queries" => HandleGetQueries(accessService, toolArguments),
             "get_relationships" => HandleGetRelationships(accessService, toolArguments),
+            "create_query" => HandleCreateQuery(accessService, toolArguments),
+            "update_query" => HandleUpdateQuery(accessService, toolArguments),
+            "delete_query" => HandleDeleteQuery(accessService, toolArguments),
+            "create_relationship" => HandleCreateRelationship(accessService, toolArguments),
+            "update_relationship" => HandleUpdateRelationship(accessService, toolArguments),
+            "delete_relationship" => HandleDeleteRelationship(accessService, toolArguments),
             "execute_sql" => HandleExecuteSql(accessService, toolArguments),
             "execute_query_md" => HandleExecuteQueryMd(accessService, toolArguments),
             "describe_table" => HandleDescribeTable(accessService, toolArguments),
@@ -299,6 +311,157 @@ class Program
         {
             var relationships = accessService.GetRelationships();
             return new { success = true, relationships = relationships.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleCreateQuery(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "query_name", out var queryName, out var queryNameError))
+                return queryNameError;
+            if (!TryGetRequiredString(arguments, "sql", out var sql, out var sqlError))
+                return sqlError;
+
+            accessService.CreateQuery(queryName, sql);
+            return new { success = true, message = $"Created query {queryName}", query_name = queryName };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleUpdateQuery(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "query_name", out var queryName, out var queryNameError))
+                return queryNameError;
+            if (!TryGetRequiredString(arguments, "sql", out var sql, out var sqlError))
+                return sqlError;
+
+            accessService.UpdateQuery(queryName, sql);
+            return new { success = true, message = $"Updated query {queryName}", query_name = queryName };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleDeleteQuery(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "query_name", out var queryName, out var queryNameError))
+                return queryNameError;
+
+            accessService.DeleteQuery(queryName);
+            return new { success = true, message = $"Deleted query {queryName}", query_name = queryName };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleCreateRelationship(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "field_name", out var fieldName, out var fieldNameError))
+                return fieldNameError;
+            if (!TryGetRequiredString(arguments, "foreign_table_name", out var foreignTableName, out var foreignTableNameError))
+                return foreignTableNameError;
+            if (!TryGetRequiredString(arguments, "foreign_field_name", out var foreignFieldName, out var foreignFieldNameError))
+                return foreignFieldNameError;
+
+            _ = TryGetOptionalString(arguments, "relationship_name", out var relationshipName);
+            var enforceIntegrity = GetOptionalBool(arguments, "enforce_integrity", true);
+            var cascadeUpdate = GetOptionalBool(arguments, "cascade_update", false);
+            var cascadeDelete = GetOptionalBool(arguments, "cascade_delete", false);
+
+            var createdRelationshipName = accessService.CreateRelationship(
+                tableName,
+                fieldName,
+                foreignTableName,
+                foreignFieldName,
+                relationshipName,
+                enforceIntegrity,
+                cascadeUpdate,
+                cascadeDelete);
+
+            return new
+            {
+                success = true,
+                message = $"Created relationship {createdRelationshipName}",
+                relationship_name = createdRelationshipName
+            };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleUpdateRelationship(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "relationship_name", out var relationshipName, out var relationshipNameError))
+                return relationshipNameError;
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "field_name", out var fieldName, out var fieldNameError))
+                return fieldNameError;
+            if (!TryGetRequiredString(arguments, "foreign_table_name", out var foreignTableName, out var foreignTableNameError))
+                return foreignTableNameError;
+            if (!TryGetRequiredString(arguments, "foreign_field_name", out var foreignFieldName, out var foreignFieldNameError))
+                return foreignFieldNameError;
+
+            var enforceIntegrity = GetOptionalBool(arguments, "enforce_integrity", true);
+            var cascadeUpdate = GetOptionalBool(arguments, "cascade_update", false);
+            var cascadeDelete = GetOptionalBool(arguments, "cascade_delete", false);
+
+            var updatedRelationshipName = accessService.UpdateRelationship(
+                relationshipName,
+                tableName,
+                fieldName,
+                foreignTableName,
+                foreignFieldName,
+                enforceIntegrity,
+                cascadeUpdate,
+                cascadeDelete);
+
+            return new
+            {
+                success = true,
+                message = $"Updated relationship {updatedRelationshipName}",
+                relationship_name = updatedRelationshipName
+            };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleDeleteRelationship(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "relationship_name", out var relationshipName, out var relationshipNameError))
+                return relationshipNameError;
+
+            accessService.DeleteRelationship(relationshipName);
+            return new { success = true, message = $"Deleted relationship {relationshipName}", relationship_name = relationshipName };
         }
         catch (Exception ex)
         {
@@ -857,6 +1020,47 @@ class Program
         {
             return new { success = false, error = ex.Message };
         }
+    }
+
+    static bool TryGetRequiredString(JsonElement arguments, string propertyName, out string value, out object error)
+    {
+        value = string.Empty;
+        if (!TryGetOptionalString(arguments, propertyName, out value) || string.IsNullOrWhiteSpace(value))
+        {
+            error = new { success = false, error = $"{propertyName} is required" };
+            return false;
+        }
+
+        error = new { success = true };
+        return true;
+    }
+
+    static bool TryGetOptionalString(JsonElement arguments, string propertyName, out string value)
+    {
+        value = string.Empty;
+        if (!arguments.TryGetProperty(propertyName, out var element))
+            return false;
+
+        if (element.ValueKind != JsonValueKind.String)
+            return false;
+
+        value = element.GetString() ?? string.Empty;
+        return true;
+    }
+
+    static bool GetOptionalBool(JsonElement arguments, string propertyName, bool defaultValue)
+    {
+        if (!arguments.TryGetProperty(propertyName, out var element))
+            return defaultValue;
+
+        return element.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.Number when element.TryGetInt32(out var numeric) => numeric != 0,
+            JsonValueKind.String when bool.TryParse(element.GetString(), out var parsed) => parsed,
+            _ => defaultValue
+        };
     }
 
     static object WrapCallToolResult(object payload)
