@@ -1,0 +1,16 @@
+# Build outputs
+**/bin/
+**/obj/
+
+# Publish/package outputs
+mcp-server-official/
+mcp-server-official-x64/
+
+# IDE and user-local files
+.vs/
+*.user
+*.suo
+
+# Access transient lock files
+*.laccdb
+*.ldb
