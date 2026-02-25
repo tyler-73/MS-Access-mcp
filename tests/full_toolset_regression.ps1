@@ -80,6 +80,7 @@ $moduleName = "MCP_Module_$suffix"
 $queryName = "MCP_Query_$suffix"
 $relationshipName = "MCP_Rel_$suffix"
 $childTableName = "MCP_Child_$suffix"
+$indexName = "MCP_Idx_$suffix"
 
 $formData = @{
     Name = $formName
@@ -147,6 +148,13 @@ Add-ToolCall -Calls $calls -Id 8 -Name "create_table" -Arguments @{
     )
 }
 Add-ToolCall -Calls $calls -Id 9 -Name "describe_table" -Arguments @{ table_name = $tableName }
+Add-ToolCall -Calls $calls -Id 57 -Name "create_index" -Arguments @{
+    table_name = $tableName
+    index_name = $indexName
+    columns = @("name")
+    unique = $false
+}
+Add-ToolCall -Calls $calls -Id 58 -Name "get_indexes" -Arguments @{ table_name = $tableName }
 Add-ToolCall -Calls $calls -Id 10 -Name "execute_sql" -Arguments @{ sql = "INSERT INTO [$tableName] (id, name) VALUES (1, 'alpha')" }
 Add-ToolCall -Calls $calls -Id 11 -Name "execute_sql" -Arguments @{ sql = "SELECT * FROM [$tableName]" }
 Add-ToolCall -Calls $calls -Id 12 -Name "execute_query_md" -Arguments @{ sql = "SELECT * FROM [$tableName]" }
@@ -183,6 +191,8 @@ Add-ToolCall -Calls $calls -Id 25 -Name "export_form_to_text" -Arguments @{ form
 Add-ToolCall -Calls $calls -Id 26 -Name "open_form" -Arguments @{ form_name = $formName }
 Add-ToolCall -Calls $calls -Id 27 -Name "close_form" -Arguments @{ form_name = $formName }
 Add-ToolCall -Calls $calls -Id 28 -Name "import_report_from_text" -Arguments @{ report_data = $reportData }
+Add-ToolCall -Calls $calls -Id 55 -Name "open_report" -Arguments @{ report_name = $reportName }
+Add-ToolCall -Calls $calls -Id 56 -Name "close_report" -Arguments @{ report_name = $reportName }
 Add-ToolCall -Calls $calls -Id 52 -Name "get_report_controls" -Arguments @{ report_name = $reportName }
 Add-ToolCall -Calls $calls -Id 53 -Name "get_report_control_properties" -Arguments @{ report_name = $reportName; control_name = "lblReport" }
 Add-ToolCall -Calls $calls -Id 54 -Name "set_report_control_property" -Arguments @{ report_name = $reportName; control_name = "lblReport"; property_name = "Visible"; value = "True" }
@@ -229,6 +239,8 @@ Add-ToolCall -Calls $calls -Id 51 -Name "get_relationships" -Arguments @{}
 Add-ToolCall -Calls $calls -Id 47 -Name "delete_relationship" -Arguments @{ relationship_name = $relationshipName }
 Add-ToolCall -Calls $calls -Id 48 -Name "delete_query" -Arguments @{ query_name = $queryName }
 Add-ToolCall -Calls $calls -Id 49 -Name "delete_table" -Arguments @{ table_name = $childTableName }
+Add-ToolCall -Calls $calls -Id 59 -Name "delete_index" -Arguments @{ table_name = $tableName; index_name = $indexName }
+Add-ToolCall -Calls $calls -Id 60 -Name "get_indexes" -Arguments @{ table_name = $tableName }
 Add-ToolCall -Calls $calls -Id 36 -Name "delete_table" -Arguments @{ table_name = $tableName }
 Add-ToolCall -Calls $calls -Id 37 -Name "disconnect_access" -Arguments @{}
 Add-ToolCall -Calls $calls -Id 38 -Name "is_connected" -Arguments @{}
@@ -288,6 +300,8 @@ $idLabels = @{
     7 = "get_relationships"
     8 = "create_table"
     9 = "describe_table"
+    57 = "create_index"
+    58 = "get_indexes_after_create_index"
     10 = "execute_sql_insert"
     11 = "execute_sql_select"
     12 = "execute_query_md"
@@ -307,6 +321,8 @@ $idLabels = @{
     26 = "open_form"
     27 = "close_form"
     28 = "import_report_from_text"
+    55 = "open_report"
+    56 = "close_report"
     52 = "get_report_controls"
     53 = "get_report_control_properties"
     54 = "set_report_control_property"
@@ -329,6 +345,8 @@ $idLabels = @{
     47 = "delete_relationship"
     48 = "delete_query"
     49 = "delete_child_table"
+    59 = "delete_index"
+    60 = "get_indexes_after_delete_index"
     36 = "delete_table"
     37 = "disconnect_access"
     38 = "is_connected_after_disconnect"
@@ -406,6 +424,32 @@ foreach ($id in ($idLabels.Keys | Sort-Object)) {
             if ([string]$decoded.properties.name -ne "lblReport") {
                 $failed++
                 Write-Host ('{0}: FAIL expected control properties for lblReport' -f $label)
+                continue
+            }
+        }
+        "get_indexes_after_create_index" {
+            $indexes = @($decoded.indexes)
+            $matchedIndex = $indexes | Where-Object { [string]$_.name -eq $indexName }
+            if (@($matchedIndex).Count -eq 0) {
+                $failed++
+                Write-Host ('{0}: FAIL expected index {1}' -f $label, $indexName)
+                continue
+            }
+
+            $index = $matchedIndex | Select-Object -First 1
+            $columns = @($index.columns)
+            if (@($columns | Where-Object { [string]$_ -eq "name" }).Count -eq 0) {
+                $failed++
+                Write-Host ('{0}: FAIL expected index column name' -f $label)
+                continue
+            }
+        }
+        "get_indexes_after_delete_index" {
+            $indexes = @($decoded.indexes)
+            $matchedIndex = $indexes | Where-Object { [string]$_.name -eq $indexName }
+            if (@($matchedIndex).Count -ne 0) {
+                $failed++
+                Write-Host ('{0}: FAIL expected index {1} to be deleted' -f $label, $indexName)
                 continue
             }
         }

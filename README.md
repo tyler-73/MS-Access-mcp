@@ -85,6 +85,9 @@ The MCP server provides comprehensive tools across all seven capability areas:
 - **describe_table**: Describe table schema, key columns, and defaults
 - **create_table**: Create a new table in the database
 - **delete_table**: Delete a table from the database
+- **get_indexes**: Get index metadata for a table
+- **create_index**: Create an index on one or more columns
+- **delete_index**: Delete an index from a table
 
 ### 3. COM Automation
 - **launch_access**: Launch Microsoft Access application
@@ -95,6 +98,8 @@ The MCP server provides comprehensive tools across all seven capability areas:
 - **get_modules**: Get all modules in the database
 - **open_form**: Open a form in Access
 - **close_form**: Close a form in Access
+- **open_report**: Open a report in Access
+- **close_report**: Close a report in Access
 
 ### 4. VBA Extensibility
 - **get_vba_projects**: Get all VBA projects in the database

@@ -125,6 +125,9 @@ class Program
                 new { name = "describe_table", description = "Describe a table schema including columns, nullability, defaults, and primary key columns.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
                 new { name = "create_table", description = "Create a new table in the database", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, fields = new { type = "array", items = new { type = "object", properties = new { name = new { type = "string" }, type = new { type = "string" }, size = new { type = "integer" }, required = new { type = "boolean" }, allow_zero_length = new { type = "boolean" } } } } }, required = new string[] { "table_name", "fields" } } },
                 new { name = "delete_table", description = "Delete a table from the database", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
+                new { name = "get_indexes", description = "Get indexes for a table", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
+                new { name = "create_index", description = "Create an index on one or more columns", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, index_name = new { type = "string" }, columns = new { type = "array", items = new { type = "string" } }, unique = new { type = "boolean" } }, required = new string[] { "table_name", "index_name", "columns" } } },
+                new { name = "delete_index", description = "Delete an index from a table", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, index_name = new { type = "string" } }, required = new string[] { "table_name", "index_name" } } },
                 new { name = "launch_access", description = "Launch Microsoft Access application", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "close_access", description = "Close Microsoft Access application", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_forms", description = "Get list of all forms in the database", inputSchema = new { type = "object", properties = new { } } },
@@ -133,6 +136,8 @@ class Program
                 new { name = "get_modules", description = "Get list of all modules in the database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "open_form", description = "Open a form in Access", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
                 new { name = "close_form", description = "Close a form in Access", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
+                new { name = "open_report", description = "Open a report in Access", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" } }, required = new string[] { "report_name" } } },
+                new { name = "close_report", description = "Close a report in Access", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" } }, required = new string[] { "report_name" } } },
                 new { name = "get_vba_projects", description = "Get list of VBA projects", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_vba_code", description = "Get VBA code from a module", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" } }, required = new string[] { "project_name", "module_name" } } },
                 new { name = "set_vba_code", description = "Set VBA code in a module", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" }, code = new { type = "string" } }, required = new string[] { "project_name", "module_name", "code" } } },
@@ -187,6 +192,9 @@ class Program
             "describe_table" => HandleDescribeTable(accessService, toolArguments),
             "create_table" => HandleCreateTable(accessService, toolArguments),
             "delete_table" => HandleDeleteTable(accessService, toolArguments),
+            "get_indexes" => HandleGetIndexes(accessService, toolArguments),
+            "create_index" => HandleCreateIndex(accessService, toolArguments),
+            "delete_index" => HandleDeleteIndex(accessService, toolArguments),
             "launch_access" => HandleLaunchAccess(accessService, toolArguments),
             "close_access" => HandleCloseAccess(accessService, toolArguments),
             "get_forms" => HandleGetForms(accessService, toolArguments),
@@ -195,6 +203,8 @@ class Program
             "get_modules" => HandleGetModules(accessService, toolArguments),
             "open_form" => HandleOpenForm(accessService, toolArguments),
             "close_form" => HandleCloseForm(accessService, toolArguments),
+            "open_report" => HandleOpenReport(accessService, toolArguments),
+            "close_report" => HandleCloseReport(accessService, toolArguments),
             "get_vba_projects" => HandleGetVBAProjects(accessService, toolArguments),
             "get_vba_code" => HandleGetVBACode(accessService, toolArguments),
             "set_vba_code" => HandleSetVBACode(accessService, toolArguments),
@@ -626,6 +636,61 @@ class Program
         }
     }
 
+    static object HandleGetIndexes(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+
+            var indexes = accessService.GetIndexes(tableName);
+            return new { success = true, indexes = indexes.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleCreateIndex(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "index_name", out var indexName, out var indexNameError))
+                return indexNameError;
+            if (!TryGetRequiredStringArray(arguments, "columns", out var columns, out var columnsError))
+                return columnsError;
+
+            var unique = GetOptionalBool(arguments, "unique", false);
+            accessService.CreateIndex(tableName, indexName, columns, unique);
+            return new { success = true, message = $"Created index {indexName}", index_name = indexName };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleDeleteIndex(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "index_name", out var indexName, out var indexNameError))
+                return indexNameError;
+
+            accessService.DeleteIndex(tableName, indexName);
+            return new { success = true, message = $"Deleted index {indexName}", index_name = indexName };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
     static object HandleLaunchAccess(AccessInteropService accessService, JsonElement arguments)
     {
         try
@@ -926,6 +991,40 @@ class Program
         }
     }
 
+    static object HandleOpenReport(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var reportName = arguments.GetProperty("report_name").GetString();
+            if (string.IsNullOrEmpty(reportName))
+                return new { success = false, error = "Report name is required" };
+
+            accessService.OpenReport(reportName);
+            return new { success = true, message = $"Opened report {reportName}" };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleCloseReport(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var reportName = arguments.GetProperty("report_name").GetString();
+            if (string.IsNullOrEmpty(reportName))
+                return new { success = false, error = "Report name is required" };
+
+            accessService.CloseReport(reportName);
+            return new { success = true, message = $"Closed report {reportName}" };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
     static object HandleGetReportControls(AccessInteropService accessService, JsonElement arguments)
     {
         try
@@ -1109,6 +1208,45 @@ class Program
             return false;
 
         value = element.GetString() ?? string.Empty;
+        return true;
+    }
+
+    static bool TryGetRequiredStringArray(JsonElement arguments, string propertyName, out List<string> values, out object error)
+    {
+        values = new List<string>();
+
+        if (!arguments.TryGetProperty(propertyName, out var element) || element.ValueKind != JsonValueKind.Array)
+        {
+            error = new { success = false, error = $"{propertyName} is required" };
+            return false;
+        }
+
+        foreach (var item in element.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String)
+            {
+                error = new { success = false, error = $"{propertyName} must be an array of strings" };
+                return false;
+            }
+
+            var value = item.GetString();
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                values.Add(value.Trim());
+            }
+        }
+
+        values = values
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (values.Count == 0)
+        {
+            error = new { success = false, error = $"{propertyName} must contain at least one non-empty value" };
+            return false;
+        }
+
+        error = new { success = true };
         return true;
     }
 

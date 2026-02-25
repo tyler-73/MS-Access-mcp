@@ -430,6 +430,106 @@ namespace MS.Access.MCP.Interop
             command.ExecuteNonQuery();
         }
 
+        public List<IndexInfo> GetIndexes(string tableName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required", nameof(tableName));
+            EnsureOleDbConnection();
+
+            var indexesByName = new Dictionary<string, IndexInfo>(StringComparer.OrdinalIgnoreCase);
+            var indexColumns = new Dictionary<string, List<(int Ordinal, string Column)>>(StringComparer.OrdinalIgnoreCase);
+
+            try
+            {
+                var schema = _oleDbConnection!.GetSchema("Indexes");
+                foreach (DataRow row in schema.Rows)
+                {
+                    var indexedTable = GetRowString(row, "TABLE_NAME");
+                    if (!string.Equals(indexedTable, tableName, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var indexName = GetRowString(row, "INDEX_NAME");
+                    if (string.IsNullOrWhiteSpace(indexName) || indexName.StartsWith("~", StringComparison.Ordinal))
+                        continue;
+
+                    if (!indexesByName.TryGetValue(indexName, out var index))
+                    {
+                        index = new IndexInfo
+                        {
+                            Name = indexName,
+                            Table = tableName,
+                            IsUnique = GetRowBool(row, "UNIQUE"),
+                            IsPrimaryKey = GetRowBool(row, "PRIMARY_KEY")
+                        };
+                        indexesByName[indexName] = index;
+                        indexColumns[indexName] = new List<(int Ordinal, string Column)>();
+                    }
+
+                    var columnName = GetRowString(row, "COLUMN_NAME");
+                    if (string.IsNullOrWhiteSpace(columnName))
+                        continue;
+
+                    var ordinal = GetRowInt(row, "ORDINAL_POSITION") ?? int.MaxValue;
+                    indexColumns[indexName].Add((ordinal, columnName));
+                }
+            }
+            catch
+            {
+                // Index metadata is provider-dependent; return what is available.
+            }
+
+            foreach (var kvp in indexesByName)
+            {
+                var columns = indexColumns[kvp.Key]
+                    .OrderBy(c => c.Ordinal)
+                    .ThenBy(c => c.Column, StringComparer.OrdinalIgnoreCase)
+                    .Select(c => c.Column)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                kvp.Value.Columns = columns;
+            }
+
+            return indexesByName.Values
+                .OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        public void CreateIndex(string tableName, string indexName, List<string> columns, bool unique = false)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(indexName)) throw new ArgumentException("Index name is required", nameof(indexName));
+            if (columns == null || columns.Count == 0) throw new ArgumentException("At least one column is required", nameof(columns));
+            EnsureOleDbConnection();
+
+            var normalizedColumns = columns
+                .Where(c => !string.IsNullOrWhiteSpace(c))
+                .Select(c => c.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (normalizedColumns.Count == 0)
+                throw new ArgumentException("At least one non-empty column is required", nameof(columns));
+
+            var uniqueSql = unique ? "UNIQUE " : string.Empty;
+            var columnSql = string.Join(", ", normalizedColumns.Select(c => $"[{EscapeSqlIdentifier(c)}]"));
+            var sql = $"CREATE {uniqueSql}INDEX [{EscapeSqlIdentifier(indexName)}] ON [{EscapeSqlIdentifier(tableName)}] ({columnSql})";
+            using var command = new OleDbCommand(sql, _oleDbConnection);
+            command.ExecuteNonQuery();
+        }
+
+        public void DeleteIndex(string tableName, string indexName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(indexName)) throw new ArgumentException("Index name is required", nameof(indexName));
+            EnsureOleDbConnection();
+
+            var sql = $"DROP INDEX [{EscapeSqlIdentifier(indexName)}] ON [{EscapeSqlIdentifier(tableName)}]";
+            using var command = new OleDbCommand(sql, _oleDbConnection);
+            command.ExecuteNonQuery();
+        }
+
         public SqlExecutionResult ExecuteSql(string sql, int maxRows = 200)
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
@@ -825,6 +925,28 @@ namespace MS.Access.MCP.Interop
 
             ExecuteComOperation(
                 accessApp => accessApp.DoCmd.Close(2, formName),
+                requireExclusive: false,
+                releaseOleDb: false);
+        }
+
+        public void OpenReport(string reportName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(reportName)) throw new ArgumentException("Report name is required", nameof(reportName));
+
+            ExecuteComOperation(
+                accessApp => accessApp.DoCmd.OpenReport(reportName, 1), // 1 = acViewDesign
+                requireExclusive: false,
+                releaseOleDb: false);
+        }
+
+        public void CloseReport(string reportName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(reportName)) throw new ArgumentException("Report name is required", nameof(reportName));
+
+            ExecuteComOperation(
+                accessApp => accessApp.DoCmd.Close(3, reportName),
                 requireExclusive: false,
                 releaseOleDb: false);
         }
@@ -2743,6 +2865,15 @@ namespace MS.Access.MCP.Interop
         public string Name { get; set; } = "";
         public string SQL { get; set; } = "";
         public string Type { get; set; } = "";
+    }
+
+    public class IndexInfo
+    {
+        public string Name { get; set; } = "";
+        public string Table { get; set; } = "";
+        public bool IsUnique { get; set; }
+        public bool IsPrimaryKey { get; set; }
+        public List<string> Columns { get; set; } = new();
     }
 
     public class RelationshipInfo
