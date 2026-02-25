@@ -20,7 +20,15 @@ class Program
             {
                 try
                 {
-                    var document = JsonDocument.Parse(line);
+                    var normalizedLine = line.TrimStart('\uFEFF', '\u00EF', '\u00BB', '\u00BF');
+                    if (string.IsNullOrWhiteSpace(normalizedLine))
+                        continue;
+
+                    var trimmed = normalizedLine.TrimStart();
+                    if (!(trimmed.StartsWith("{") || trimmed.StartsWith("[")))
+                        continue;
+
+                    var document = JsonDocument.Parse(trimmed);
                     var root = document.RootElement;
                     
                     if (!root.TryGetProperty("method", out var methodElement))
