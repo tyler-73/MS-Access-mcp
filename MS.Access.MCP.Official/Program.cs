@@ -1,13 +1,15 @@
 ﻿using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Linq;
 using MS.Access.MCP.Interop;
 
 class Program
 {
+    static readonly JsonElement EmptyJsonObject = JsonSerializer.Deserialize<JsonElement>("{}");
+
     static async Task Main(string[] args)
     {
-        // Suppress any build output by immediately starting JSON-RPC mode
-        Console.WriteLine(""); // Clear any pending output
+        // JSON-RPC mode — no output until we receive a request
         
         var accessService = new AccessInteropService();
         
@@ -28,17 +30,22 @@ class Program
                     if (string.IsNullOrEmpty(method))
                         continue;
                         
-                    var id = 0;
+                    // Skip notifications (no response needed)
+                    if (method.StartsWith("notifications/"))
+                        continue;
+
+                    JsonElement? id = null;
                     if (root.TryGetProperty("id", out var idElement))
-                        id = idElement.GetInt32();
-                        
-                    var paramsElement = root.GetProperty("params");
+                        id = idElement.Clone();
+
+                    var hasParams = root.TryGetProperty("params", out var paramsElement);
+                    var safeParams = hasParams ? paramsElement : EmptyJsonObject;
 
                     object result = method switch
                     {
                         "initialize" => HandleInitialize(),
                         "tools/list" => HandleToolsList(),
-                        "tools/call" => HandleToolsCall(accessService, paramsElement),
+                        "tools/call" => WrapCallToolResult(HandleToolsCall(accessService, safeParams)),
                         _ => new { error = $"Unknown method: {method}" }
                     };
 
@@ -78,11 +85,11 @@ class Program
         return new
         {
             protocolVersion = "2024-11-05",
-            capabilities = new { },
+            capabilities = new { tools = new { } },
             serverInfo = new
             {
                 name = "Access MCP Server",
-                version = "1.0.0"
+                version = "1.0.1"
             }
         };
     }
@@ -93,12 +100,15 @@ class Program
         {
             tools = new object[]
             {
-                new { name = "connect_access", description = "Connect to the configured Access database", inputSchema = new { type = "object", properties = new { } }, required = new string[] { } },
+                new { name = "connect_access", description = "Connect to an Access database. Uses database_path argument, ACCESS_DATABASE_PATH env var, or first database found in Documents.", inputSchema = new { type = "object", properties = new { database_path = new { type = "string" } } } },
                 new { name = "disconnect_access", description = "Disconnect from the current Access database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "is_connected", description = "Check if connected to an Access database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_tables", description = "Get list of all tables in the database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_queries", description = "Get list of all queries in the database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_relationships", description = "Get list of all relationships in the database", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "execute_sql", description = "Execute a SQL statement against the connected Access database. For SELECT queries, returns columns and rows. For action queries, returns rows_affected.", inputSchema = new { type = "object", properties = new { sql = new { type = "string" }, max_rows = new { type = "integer" } }, required = new string[] { "sql" } } },
+                new { name = "execute_query_md", description = "Execute a SQL statement and return result as a markdown table (or action-query summary).", inputSchema = new { type = "object", properties = new { sql = new { type = "string" }, max_rows = new { type = "integer" } }, required = new string[] { "sql" } } },
+                new { name = "describe_table", description = "Describe a table schema including columns, nullability, defaults, and primary key columns.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
                 new { name = "create_table", description = "Create a new table in the database", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, fields = new { type = "array", items = new { type = "object", properties = new { name = new { type = "string" }, type = new { type = "string" }, size = new { type = "integer" }, required = new { type = "boolean" }, allow_zero_length = new { type = "boolean" } } } } }, required = new string[] { "table_name", "fields" } } },
                 new { name = "delete_table", description = "Delete a table from the database", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
                 new { name = "launch_access", description = "Launch Microsoft Access application", inputSchema = new { type = "object", properties = new { } } },
@@ -132,44 +142,54 @@ class Program
 
     static object HandleToolsCall(AccessInteropService accessService, JsonElement arguments)
     {
-        var toolName = arguments.GetProperty("name").GetString();
-        
+        if (arguments.ValueKind != JsonValueKind.Object || !arguments.TryGetProperty("name", out var toolNameElement))
+            return new { success = false, error = "Missing required tools/call parameter: name" };
+
+        var toolName = toolNameElement.GetString();
+        if (string.IsNullOrWhiteSpace(toolName))
+            return new { success = false, error = "Tool name is empty" };
+
+        var toolArguments = GetToolArguments(arguments);
+
         return toolName switch
         {
-            "connect_access" => HandleConnectAccess(accessService, arguments.GetProperty("arguments")),
-            "disconnect_access" => HandleDisconnectAccess(accessService, arguments.GetProperty("arguments")),
-            "is_connected" => HandleIsConnected(accessService, arguments.GetProperty("arguments")),
-            "get_tables" => HandleGetTables(accessService, arguments.GetProperty("arguments")),
-            "get_queries" => HandleGetQueries(accessService, arguments.GetProperty("arguments")),
-            "get_relationships" => HandleGetRelationships(accessService, arguments.GetProperty("arguments")),
-            "create_table" => HandleCreateTable(accessService, arguments.GetProperty("arguments")),
-            "delete_table" => HandleDeleteTable(accessService, arguments.GetProperty("arguments")),
-            "launch_access" => HandleLaunchAccess(accessService, arguments.GetProperty("arguments")),
-            "close_access" => HandleCloseAccess(accessService, arguments.GetProperty("arguments")),
-            "get_forms" => HandleGetForms(accessService, arguments.GetProperty("arguments")),
-            "get_reports" => HandleGetReports(accessService, arguments.GetProperty("arguments")),
-            "get_macros" => HandleGetMacros(accessService, arguments.GetProperty("arguments")),
-            "get_modules" => HandleGetModules(accessService, arguments.GetProperty("arguments")),
-            "open_form" => HandleOpenForm(accessService, arguments.GetProperty("arguments")),
-            "close_form" => HandleCloseForm(accessService, arguments.GetProperty("arguments")),
-            "get_vba_projects" => HandleGetVBAProjects(accessService, arguments.GetProperty("arguments")),
-            "get_vba_code" => HandleGetVBACode(accessService, arguments.GetProperty("arguments")),
-            "set_vba_code" => HandleSetVBACode(accessService, arguments.GetProperty("arguments")),
-            "add_vba_procedure" => HandleAddVBAProcedure(accessService, arguments.GetProperty("arguments")),
-            "compile_vba" => HandleCompileVBA(accessService, arguments.GetProperty("arguments")),
-            "get_system_tables" => HandleGetSystemTables(accessService, arguments.GetProperty("arguments")),
-            "get_object_metadata" => HandleGetObjectMetadata(accessService, arguments.GetProperty("arguments")),
-            "form_exists" => HandleFormExists(accessService, arguments.GetProperty("arguments")),
-            "get_form_controls" => HandleGetFormControls(accessService, arguments.GetProperty("arguments")),
-            "get_control_properties" => HandleGetControlProperties(accessService, arguments.GetProperty("arguments")),
-            "set_control_property" => HandleSetControlProperty(accessService, arguments.GetProperty("arguments")),
-            "export_form_to_text" => HandleExportFormToText(accessService, arguments.GetProperty("arguments")),
-            "import_form_from_text" => HandleImportFormFromText(accessService, arguments.GetProperty("arguments")),
-            "delete_form" => HandleDeleteForm(accessService, arguments.GetProperty("arguments")),
-            "export_report_to_text" => HandleExportReportToText(accessService, arguments.GetProperty("arguments")),
-            "import_report_from_text" => HandleImportReportFromText(accessService, arguments.GetProperty("arguments")),
-            "delete_report" => HandleDeleteReport(accessService, arguments.GetProperty("arguments")),
-            _ => new { error = $"Unknown tool: {toolName}" }
+            "connect_access" => HandleConnectAccess(accessService, toolArguments),
+            "disconnect_access" => HandleDisconnectAccess(accessService, toolArguments),
+            "is_connected" => HandleIsConnected(accessService, toolArguments),
+            "get_tables" => HandleGetTables(accessService, toolArguments),
+            "get_queries" => HandleGetQueries(accessService, toolArguments),
+            "get_relationships" => HandleGetRelationships(accessService, toolArguments),
+            "execute_sql" => HandleExecuteSql(accessService, toolArguments),
+            "execute_query_md" => HandleExecuteQueryMd(accessService, toolArguments),
+            "describe_table" => HandleDescribeTable(accessService, toolArguments),
+            "create_table" => HandleCreateTable(accessService, toolArguments),
+            "delete_table" => HandleDeleteTable(accessService, toolArguments),
+            "launch_access" => HandleLaunchAccess(accessService, toolArguments),
+            "close_access" => HandleCloseAccess(accessService, toolArguments),
+            "get_forms" => HandleGetForms(accessService, toolArguments),
+            "get_reports" => HandleGetReports(accessService, toolArguments),
+            "get_macros" => HandleGetMacros(accessService, toolArguments),
+            "get_modules" => HandleGetModules(accessService, toolArguments),
+            "open_form" => HandleOpenForm(accessService, toolArguments),
+            "close_form" => HandleCloseForm(accessService, toolArguments),
+            "get_vba_projects" => HandleGetVBAProjects(accessService, toolArguments),
+            "get_vba_code" => HandleGetVBACode(accessService, toolArguments),
+            "set_vba_code" => HandleSetVBACode(accessService, toolArguments),
+            "add_vba_procedure" => HandleAddVBAProcedure(accessService, toolArguments),
+            "compile_vba" => HandleCompileVBA(accessService, toolArguments),
+            "get_system_tables" => HandleGetSystemTables(accessService, toolArguments),
+            "get_object_metadata" => HandleGetObjectMetadata(accessService, toolArguments),
+            "form_exists" => HandleFormExists(accessService, toolArguments),
+            "get_form_controls" => HandleGetFormControls(accessService, toolArguments),
+            "get_control_properties" => HandleGetControlProperties(accessService, toolArguments),
+            "set_control_property" => HandleSetControlProperty(accessService, toolArguments),
+            "export_form_to_text" => HandleExportFormToText(accessService, toolArguments),
+            "import_form_from_text" => HandleImportFormFromText(accessService, toolArguments),
+            "delete_form" => HandleDeleteForm(accessService, toolArguments),
+            "export_report_to_text" => HandleExportReportToText(accessService, toolArguments),
+            "import_report_from_text" => HandleImportReportFromText(accessService, toolArguments),
+            "delete_report" => HandleDeleteReport(accessService, toolArguments),
+            _ => new { success = false, error = $"Unknown tool: {toolName}" }
         };
     }
 
@@ -177,8 +197,23 @@ class Program
     {
         try
         {
-            // Hard-coded database path
-            var databasePath = @"C:\Users\brickly\Documents\Database1.accdb";
+            string? databasePath = null;
+            if (arguments.ValueKind == JsonValueKind.Object &&
+                arguments.TryGetProperty("database_path", out var pathElement) &&
+                pathElement.ValueKind == JsonValueKind.String)
+            {
+                databasePath = pathElement.GetString();
+            }
+
+            databasePath ??= ResolveDatabasePath();
+            if (string.IsNullOrWhiteSpace(databasePath))
+            {
+                return new
+                {
+                    success = false,
+                    error = "No database path was provided or discoverable. Set ACCESS_DATABASE_PATH or place a .accdb/.mdb file in Documents."
+                };
+            }
             
             // Check if database file exists
             if (!File.Exists(databasePath))
@@ -256,6 +291,108 @@ class Program
         {
             var relationships = accessService.GetRelationships();
             return new { success = true, relationships = relationships.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleExecuteSql(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!arguments.TryGetProperty("sql", out var sqlElement) || sqlElement.ValueKind != JsonValueKind.String)
+                return new { success = false, error = "SQL is required" };
+
+            var sql = sqlElement.GetString();
+            if (string.IsNullOrWhiteSpace(sql))
+                return new { success = false, error = "SQL is required" };
+
+            var maxRows = 200;
+            if (arguments.TryGetProperty("max_rows", out var maxRowsElement) &&
+                maxRowsElement.ValueKind == JsonValueKind.Number &&
+                maxRowsElement.TryGetInt32(out var parsedMaxRows))
+            {
+                maxRows = parsedMaxRows;
+            }
+
+            if (maxRows <= 0)
+                return new { success = false, error = "max_rows must be greater than 0" };
+
+            var result = accessService.ExecuteSql(sql, maxRows);
+
+            if (result.IsQuery)
+            {
+                return new
+                {
+                    success = true,
+                    is_query = true,
+                    columns = result.Columns,
+                    rows = result.Rows,
+                    row_count = result.RowCount,
+                    truncated = result.Truncated,
+                    max_rows = maxRows
+                };
+            }
+
+            return new
+            {
+                success = true,
+                is_query = false,
+                rows_affected = result.RowsAffected
+            };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleExecuteQueryMd(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!arguments.TryGetProperty("sql", out var sqlElement) || sqlElement.ValueKind != JsonValueKind.String)
+                return new { success = false, error = "SQL is required" };
+
+            var sql = sqlElement.GetString();
+            if (string.IsNullOrWhiteSpace(sql))
+                return new { success = false, error = "SQL is required" };
+
+            var maxRows = 100;
+            if (arguments.TryGetProperty("max_rows", out var maxRowsElement) &&
+                maxRowsElement.ValueKind == JsonValueKind.Number &&
+                maxRowsElement.TryGetInt32(out var parsedMaxRows))
+            {
+                maxRows = parsedMaxRows;
+            }
+
+            if (maxRows <= 0)
+                return new { success = false, error = "max_rows must be greater than 0" };
+
+            var markdown = accessService.ExecuteQueryMarkdown(sql, maxRows);
+            return new { success = true, markdown };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleDescribeTable(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!arguments.TryGetProperty("table_name", out var tableNameElement) || tableNameElement.ValueKind != JsonValueKind.String)
+                return new { success = false, error = "table_name is required" };
+
+            var tableName = tableNameElement.GetString();
+            if (string.IsNullOrWhiteSpace(tableName))
+                return new { success = false, error = "table_name is required" };
+
+            var description = accessService.DescribeTable(tableName);
+            return new { success = true, table = description };
         }
         catch (Exception ex)
         {
@@ -713,6 +850,94 @@ class Program
             return new { success = false, error = ex.Message };
         }
     }
+
+    static object WrapCallToolResult(object payload)
+    {
+        var structuredContent = JsonSerializer.SerializeToElement(payload);
+        var isError = structuredContent.TryGetProperty("success", out var successElement) &&
+                      successElement.ValueKind == JsonValueKind.False;
+
+        return new
+        {
+            content = new object[]
+            {
+                new
+                {
+                    type = "text",
+                    text = structuredContent.GetRawText()
+                }
+            },
+            structuredContent,
+            isError
+        };
+    }
+
+    static JsonElement GetToolArguments(JsonElement callParams)
+    {
+        if (callParams.ValueKind == JsonValueKind.Object &&
+            callParams.TryGetProperty("arguments", out var args) &&
+            args.ValueKind == JsonValueKind.Object)
+        {
+            return args;
+        }
+
+        return EmptyJsonObject;
+    }
+
+    static string? ResolveDatabasePath()
+    {
+        var fromEnv = Environment.GetEnvironmentVariable("ACCESS_DATABASE_PATH");
+        if (!string.IsNullOrWhiteSpace(fromEnv))
+            return fromEnv;
+
+        var searchFolders = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void AddFolder(string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return;
+            if (!Directory.Exists(path))
+                return;
+            if (!seen.Add(path))
+                return;
+
+            searchFolders.Add(path);
+        }
+
+        AddFolder(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+        AddFolder(Environment.GetFolderPath(Environment.SpecialFolder.Personal));
+
+        var userProfile = Environment.GetEnvironmentVariable("USERPROFILE");
+        if (!string.IsNullOrWhiteSpace(userProfile))
+            AddFolder(Path.Combine(userProfile, "Documents"));
+
+        var oneDrive = Environment.GetEnvironmentVariable("OneDrive");
+        if (!string.IsNullOrWhiteSpace(oneDrive))
+            AddFolder(Path.Combine(oneDrive, "Documents"));
+
+        if (searchFolders.Count == 0)
+            return null;
+
+        foreach (var folder in searchFolders)
+        {
+            var defaultPath = Path.Combine(folder, "Database1.accdb");
+            if (File.Exists(defaultPath))
+                return defaultPath;
+        }
+
+        foreach (var folder in searchFolders)
+        {
+            var found = Directory.EnumerateFiles(folder, "*.accdb", SearchOption.TopDirectoryOnly)
+                .Concat(Directory.EnumerateFiles(folder, "*.mdb", SearchOption.TopDirectoryOnly))
+                .FirstOrDefault();
+
+            if (!string.IsNullOrWhiteSpace(found))
+                return found;
+        }
+
+        return null;
+    }
 }
 
 public class JsonRpcRequest
@@ -736,7 +961,7 @@ public class JsonRpcResponse
     public string Jsonrpc { get; set; } = "2.0";
 
     [JsonPropertyName("id")]
-    public int Id { get; set; }
+    public JsonElement? Id { get; set; }
 
     [JsonPropertyName("result")]
     public object Result { get; set; } = new { };
