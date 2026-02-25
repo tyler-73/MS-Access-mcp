@@ -858,6 +858,133 @@ namespace MS.Access.MCP.Interop
             return macros;
         }
 
+        public string ExportMacroToText(string macroName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(macroName)) throw new ArgumentException("Macro name is required", nameof(macroName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var tempPath = BuildTemporaryTextPath("macro_export");
+                try
+                {
+                    accessApp.SaveAsText(4, macroName, tempPath); // 4 = acMacro
+                    return File.ReadAllText(tempPath, Encoding.UTF8);
+                }
+                finally
+                {
+                    TryDeleteFile(tempPath);
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void ImportMacroFromText(string macroName, string macroData, bool overwrite = true)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(macroName)) throw new ArgumentException("Macro name is required", nameof(macroName));
+            if (string.IsNullOrWhiteSpace(macroData)) throw new ArgumentException("Macro data is required", nameof(macroData));
+
+            ExecuteComOperation(accessApp =>
+            {
+                if (!overwrite && MacroExists(accessApp, macroName))
+                    throw new InvalidOperationException($"Macro already exists: {macroName}");
+
+                if (overwrite)
+                {
+                    TryDeleteObject(accessApp, 4, macroName); // 4 = acMacro
+                }
+
+                var tempPath = BuildTemporaryTextPath("macro_import");
+                try
+                {
+                    File.WriteAllText(tempPath, macroData, Encoding.UTF8);
+                    accessApp.LoadFromText(4, macroName, tempPath); // 4 = acMacro
+                }
+                finally
+                {
+                    TryDeleteFile(tempPath);
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void CreateMacro(string macroName, string macroData)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(macroName)) throw new ArgumentException("Macro name is required", nameof(macroName));
+            if (string.IsNullOrWhiteSpace(macroData)) throw new ArgumentException("Macro data is required", nameof(macroData));
+
+            ExecuteComOperation(accessApp =>
+            {
+                if (MacroExists(accessApp, macroName))
+                    throw new InvalidOperationException($"Macro already exists: {macroName}");
+
+                var tempPath = BuildTemporaryTextPath("macro_create");
+                try
+                {
+                    File.WriteAllText(tempPath, macroData, Encoding.UTF8);
+                    accessApp.LoadFromText(4, macroName, tempPath); // 4 = acMacro
+                }
+                finally
+                {
+                    TryDeleteFile(tempPath);
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void UpdateMacro(string macroName, string macroData)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(macroName)) throw new ArgumentException("Macro name is required", nameof(macroName));
+            if (string.IsNullOrWhiteSpace(macroData)) throw new ArgumentException("Macro data is required", nameof(macroData));
+
+            ExecuteComOperation(accessApp =>
+            {
+                if (!MacroExists(accessApp, macroName))
+                    throw new InvalidOperationException($"Macro not found: {macroName}");
+
+                var tempPath = BuildTemporaryTextPath("macro_update");
+                try
+                {
+                    File.WriteAllText(tempPath, macroData, Encoding.UTF8);
+                    accessApp.LoadFromText(4, macroName, tempPath); // 4 = acMacro
+                }
+                finally
+                {
+                    TryDeleteFile(tempPath);
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void RunMacro(string macroName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(macroName)) throw new ArgumentException("Macro name is required", nameof(macroName));
+
+            ExecuteComOperation(
+                accessApp => accessApp.DoCmd.RunMacro(macroName),
+                requireExclusive: false,
+                releaseOleDb: false);
+        }
+
+        public void DeleteMacro(string macroName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(macroName)) throw new ArgumentException("Macro name is required", nameof(macroName));
+
+            ExecuteComOperation(
+                accessApp => accessApp.DoCmd.DeleteObject(4, macroName), // 4 = acMacro
+                requireExclusive: true,
+                releaseOleDb: true);
+        }
+
         public List<ModuleInfo> GetModules()
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
@@ -2492,6 +2619,43 @@ namespace MS.Access.MCP.Interop
             catch
             {
                 // Object may not exist; ignore.
+            }
+        }
+
+        private static bool MacroExists(dynamic accessApp, string macroName)
+        {
+            try
+            {
+                foreach (var macro in accessApp.CurrentProject.AllMacros)
+                {
+                    var currentName = SafeToString(TryGetDynamicProperty(macro, "Name"));
+                    if (string.Equals(currentName, macroName, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+            }
+            catch
+            {
+                // Return false when macro enumeration is unavailable.
+            }
+
+            return false;
+        }
+
+        private static string BuildTemporaryTextPath(string prefix)
+        {
+            return Path.Combine(Path.GetTempPath(), $"{prefix}_{Guid.NewGuid():N}.txt");
+        }
+
+        private static void TryDeleteFile(string path)
+        {
+            try
+            {
+                if (File.Exists(path))
+                    File.Delete(path);
+            }
+            catch
+            {
+                // Best-effort temp cleanup.
             }
         }
 

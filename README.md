@@ -100,6 +100,9 @@ The MCP server provides comprehensive tools across all seven capability areas:
 - **close_form**: Close a form in Access
 - **open_report**: Open a report in Access
 - **close_report**: Close a report in Access
+- **run_macro**: Run a macro by name
+- **create_macro**: Create a macro from text representation
+- **update_macro**: Update an existing macro from text representation
 
 ### 4. VBA Extensibility
 - **get_vba_projects**: Get all VBA projects in the database
@@ -128,6 +131,9 @@ The MCP server provides comprehensive tools across all seven capability areas:
 - **export_report_to_text**: Export a report to text representation
 - **import_report_from_text**: Import a report from text representation
 - **delete_report**: Delete a report from the database
+- **export_macro_to_text**: Export a macro to text representation
+- **import_macro_from_text**: Import a macro from text representation
+- **delete_macro**: Delete a macro from the database
 
 ## Usage Examples
 

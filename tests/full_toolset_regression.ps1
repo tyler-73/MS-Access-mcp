@@ -81,6 +81,7 @@ $queryName = "MCP_Query_$suffix"
 $relationshipName = "MCP_Rel_$suffix"
 $childTableName = "MCP_Child_$suffix"
 $indexName = "MCP_Idx_$suffix"
+$macroName = "MCP_Macro_$suffix"
 
 $formData = @{
     Name = $formName
@@ -130,6 +131,22 @@ $procCode = @'
 Public Sub Pong()
     Debug.Print "Pong"
 End Sub
+'@
+
+$macroDataInitial = @'
+Version =196611
+ColumnsShown =8
+Begin
+    Action ="Beep"
+End
+'@
+
+$macroDataUpdated = @'
+Version =196611
+ColumnsShown =9
+Begin
+    Action ="Beep"
+End
 '@
 
 $calls = New-Object 'System.Collections.Generic.List[object]'
@@ -203,6 +220,14 @@ Add-ToolCall -Calls $calls -Id 32 -Name "get_forms" -Arguments @{}
 Add-ToolCall -Calls $calls -Id 33 -Name "get_reports" -Arguments @{}
 Add-ToolCall -Calls $calls -Id 34 -Name "get_macros" -Arguments @{}
 Add-ToolCall -Calls $calls -Id 35 -Name "get_modules" -Arguments @{}
+Add-ToolCall -Calls $calls -Id 61 -Name "create_macro" -Arguments @{ macro_name = $macroName; macro_data = $macroDataInitial }
+Add-ToolCall -Calls $calls -Id 62 -Name "get_macros" -Arguments @{}
+Add-ToolCall -Calls $calls -Id 63 -Name "export_macro_to_text" -Arguments @{ macro_name = $macroName }
+Add-ToolCall -Calls $calls -Id 64 -Name "run_macro" -Arguments @{ macro_name = $macroName }
+Add-ToolCall -Calls $calls -Id 65 -Name "update_macro" -Arguments @{ macro_name = $macroName; macro_data = $macroDataUpdated }
+Add-ToolCall -Calls $calls -Id 66 -Name "export_macro_to_text" -Arguments @{ macro_name = $macroName }
+Add-ToolCall -Calls $calls -Id 67 -Name "delete_macro" -Arguments @{ macro_name = $macroName }
+Add-ToolCall -Calls $calls -Id 68 -Name "get_macros" -Arguments @{}
 Add-ToolCall -Calls $calls -Id 40 -Name "create_query" -Arguments @{ query_name = $queryName; sql = "SELECT id, name FROM [$tableName]" }
 Add-ToolCall -Calls $calls -Id 41 -Name "get_queries" -Arguments @{}
 Add-ToolCall -Calls $calls -Id 42 -Name "update_query" -Arguments @{ query_name = $queryName; sql = "SELECT id FROM [$tableName] WHERE id >= 1" }
@@ -333,6 +358,14 @@ $idLabels = @{
     33 = "get_reports"
     34 = "get_macros"
     35 = "get_modules"
+    61 = "create_macro"
+    62 = "get_macros_after_create_macro"
+    63 = "export_macro_to_text_initial"
+    64 = "run_macro"
+    65 = "update_macro"
+    66 = "export_macro_to_text_after_update"
+    67 = "delete_macro"
+    68 = "get_macros_after_delete_macro"
     40 = "create_query"
     41 = "get_queries_after_create_query"
     42 = "update_query"
@@ -450,6 +483,43 @@ foreach ($id in ($idLabels.Keys | Sort-Object)) {
             if (@($matchedIndex).Count -ne 0) {
                 $failed++
                 Write-Host ('{0}: FAIL expected index {1} to be deleted' -f $label, $indexName)
+                continue
+            }
+        }
+        "get_macros_after_create_macro" {
+            $macros = @($decoded.macros)
+            $matchedMacro = $macros | Where-Object { [string]$_.name -eq $macroName }
+            if (@($matchedMacro).Count -eq 0) {
+                $failed++
+                Write-Host ('{0}: FAIL expected macro {1}' -f $label, $macroName)
+                continue
+            }
+        }
+        "export_macro_to_text_initial" {
+            $macroText = [string]$decoded.macro_data
+            if ([string]::IsNullOrWhiteSpace($macroText) -or
+                $macroText.IndexOf('Action ="Beep"', [System.StringComparison]::OrdinalIgnoreCase) -lt 0 -or
+                $macroText.IndexOf('ColumnsShown =8', [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
+                $failed++
+                Write-Host ('{0}: FAIL expected exported macro text with initial marker values' -f $label)
+                continue
+            }
+        }
+        "export_macro_to_text_after_update" {
+            $macroText = [string]$decoded.macro_data
+            if ([string]::IsNullOrWhiteSpace($macroText) -or
+                $macroText.IndexOf('ColumnsShown =9', [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
+                $failed++
+                Write-Host ('{0}: FAIL expected exported macro text to include updated marker value' -f $label)
+                continue
+            }
+        }
+        "get_macros_after_delete_macro" {
+            $macros = @($decoded.macros)
+            $matchedMacro = $macros | Where-Object { [string]$_.name -eq $macroName }
+            if (@($matchedMacro).Count -ne 0) {
+                $failed++
+                Write-Host ('{0}: FAIL expected macro {1} to be deleted' -f $label, $macroName)
                 continue
             }
         }

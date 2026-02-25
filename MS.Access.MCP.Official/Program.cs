@@ -138,6 +138,12 @@ class Program
                 new { name = "close_form", description = "Close a form in Access", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
                 new { name = "open_report", description = "Open a report in Access", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" } }, required = new string[] { "report_name" } } },
                 new { name = "close_report", description = "Close a report in Access", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" } }, required = new string[] { "report_name" } } },
+                new { name = "run_macro", description = "Run an Access macro", inputSchema = new { type = "object", properties = new { macro_name = new { type = "string" } }, required = new string[] { "macro_name" } } },
+                new { name = "create_macro", description = "Create a macro from text representation", inputSchema = new { type = "object", properties = new { macro_name = new { type = "string" }, macro_data = new { type = "string" } }, required = new string[] { "macro_name", "macro_data" } } },
+                new { name = "update_macro", description = "Update an existing macro from text representation", inputSchema = new { type = "object", properties = new { macro_name = new { type = "string" }, macro_data = new { type = "string" } }, required = new string[] { "macro_name", "macro_data" } } },
+                new { name = "export_macro_to_text", description = "Export a macro to text format", inputSchema = new { type = "object", properties = new { macro_name = new { type = "string" } }, required = new string[] { "macro_name" } } },
+                new { name = "import_macro_from_text", description = "Import or replace a macro from text format", inputSchema = new { type = "object", properties = new { macro_name = new { type = "string" }, macro_data = new { type = "string" }, overwrite = new { type = "boolean" } }, required = new string[] { "macro_name", "macro_data" } } },
+                new { name = "delete_macro", description = "Delete a macro from the database", inputSchema = new { type = "object", properties = new { macro_name = new { type = "string" } }, required = new string[] { "macro_name" } } },
                 new { name = "get_vba_projects", description = "Get list of VBA projects", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_vba_code", description = "Get VBA code from a module", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" } }, required = new string[] { "project_name", "module_name" } } },
                 new { name = "set_vba_code", description = "Set VBA code in a module", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" }, code = new { type = "string" } }, required = new string[] { "project_name", "module_name", "code" } } },
@@ -205,6 +211,12 @@ class Program
             "close_form" => HandleCloseForm(accessService, toolArguments),
             "open_report" => HandleOpenReport(accessService, toolArguments),
             "close_report" => HandleCloseReport(accessService, toolArguments),
+            "run_macro" => HandleRunMacro(accessService, toolArguments),
+            "create_macro" => HandleCreateMacro(accessService, toolArguments),
+            "update_macro" => HandleUpdateMacro(accessService, toolArguments),
+            "export_macro_to_text" => HandleExportMacroToText(accessService, toolArguments),
+            "import_macro_from_text" => HandleImportMacroFromText(accessService, toolArguments),
+            "delete_macro" => HandleDeleteMacro(accessService, toolArguments),
             "get_vba_projects" => HandleGetVBAProjects(accessService, toolArguments),
             "get_vba_code" => HandleGetVBACode(accessService, toolArguments),
             "set_vba_code" => HandleSetVBACode(accessService, toolArguments),
@@ -1018,6 +1030,109 @@ class Program
 
             accessService.CloseReport(reportName);
             return new { success = true, message = $"Closed report {reportName}" };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleRunMacro(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "macro_name", out var macroName, out var macroNameError))
+                return macroNameError;
+
+            accessService.RunMacro(macroName);
+            return new { success = true, message = $"Ran macro {macroName}", macro_name = macroName };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleCreateMacro(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "macro_name", out var macroName, out var macroNameError))
+                return macroNameError;
+            if (!TryGetRequiredString(arguments, "macro_data", out var macroData, out var macroDataError))
+                return macroDataError;
+
+            accessService.CreateMacro(macroName, macroData);
+            return new { success = true, message = $"Created macro {macroName}", macro_name = macroName };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleUpdateMacro(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "macro_name", out var macroName, out var macroNameError))
+                return macroNameError;
+            if (!TryGetRequiredString(arguments, "macro_data", out var macroData, out var macroDataError))
+                return macroDataError;
+
+            accessService.UpdateMacro(macroName, macroData);
+            return new { success = true, message = $"Updated macro {macroName}", macro_name = macroName };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleExportMacroToText(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "macro_name", out var macroName, out var macroNameError))
+                return macroNameError;
+
+            var macroData = accessService.ExportMacroToText(macroName);
+            return new { success = true, macro_name = macroName, macro_data = macroData };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleImportMacroFromText(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "macro_name", out var macroName, out var macroNameError))
+                return macroNameError;
+            if (!TryGetRequiredString(arguments, "macro_data", out var macroData, out var macroDataError))
+                return macroDataError;
+
+            var overwrite = GetOptionalBool(arguments, "overwrite", true);
+            accessService.ImportMacroFromText(macroName, macroData, overwrite);
+            return new { success = true, message = $"Imported macro {macroName}", macro_name = macroName, overwrite };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleDeleteMacro(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "macro_name", out var macroName, out var macroNameError))
+                return macroNameError;
+
+            accessService.DeleteMacro(macroName);
+            return new { success = true, message = $"Deleted macro {macroName}", macro_name = macroName };
         }
         catch (Exception ex)
         {
