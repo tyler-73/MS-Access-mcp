@@ -235,9 +235,9 @@ namespace MS.Access.MCP.Interop
                             foreach (var relationField in relationFields)
                             {
                                 // DAO stores primary-side column as Name and foreign-side column as ForeignName.
-                                // For MCP APIs, we expose table/field as foreign-key side and foreign_* as referenced primary side.
-                                foreignFieldName = SafeToString(TryGetDynamicProperty(relationField, "Name")) ?? string.Empty;
-                                fieldName = SafeToString(TryGetDynamicProperty(relationField, "ForeignName")) ?? string.Empty;
+                                // MCP APIs expose table/field as primary side and foreign_* as dependent side.
+                                fieldName = SafeToString(TryGetDynamicProperty(relationField, "Name")) ?? string.Empty;
+                                foreignFieldName = SafeToString(TryGetDynamicProperty(relationField, "ForeignName")) ?? string.Empty;
                                 break;
                             }
                         }
@@ -247,8 +247,8 @@ namespace MS.Access.MCP.Interop
                         list.Add(new RelationshipInfo
                         {
                             Name = relationName,
-                            Table = SafeToString(TryGetDynamicProperty(relation, "ForeignTable")) ?? string.Empty,
-                            ForeignTable = SafeToString(TryGetDynamicProperty(relation, "Table")) ?? string.Empty,
+                            Table = SafeToString(TryGetDynamicProperty(relation, "Table")) ?? string.Empty,
+                            ForeignTable = SafeToString(TryGetDynamicProperty(relation, "ForeignTable")) ?? string.Empty,
                             Field = fieldName,
                             ForeignField = foreignFieldName,
                             EnforceIntegrity = !HasRelationshipAttribute(attributesValue, DaoRelationAttributeDontEnforce),
@@ -281,10 +281,10 @@ namespace MS.Access.MCP.Interop
                     relationships.Add(new RelationshipInfo
                     {
                         Name = row["FK_NAME"]?.ToString() ?? string.Empty,
-                        Table = row["TABLE_NAME"]?.ToString() ?? string.Empty,
-                        ForeignTable = row["REFERENCED_TABLE_NAME"]?.ToString() ?? string.Empty,
-                        Field = row["FK_COLUMN_NAME"]?.ToString() ?? string.Empty,
-                        ForeignField = row["PK_COLUMN_NAME"]?.ToString() ?? string.Empty,
+                        Table = row["REFERENCED_TABLE_NAME"]?.ToString() ?? string.Empty,
+                        ForeignTable = row["TABLE_NAME"]?.ToString() ?? string.Empty,
+                        Field = row["PK_COLUMN_NAME"]?.ToString() ?? string.Empty,
+                        ForeignField = row["FK_COLUMN_NAME"]?.ToString() ?? string.Empty,
                         EnforceIntegrity = true,
                         CascadeUpdate = false,
                         CascadeDelete = false,
@@ -1768,14 +1768,14 @@ namespace MS.Access.MCP.Interop
                 throw new InvalidOperationException($"Relationship already exists: {relationshipName}");
 
             var attributes = BuildRelationshipAttributes(enforceIntegrity, cascadeUpdate, cascadeDelete);
-            // DAO expects (primaryTable, foreignTable). MCP APIs pass (foreignTable, primaryTable).
-            var relationship = InvokeDynamicMethod(currentDb, "CreateRelation", relationshipName, foreignTableName, tableName, attributes)
+            // DAO and MCP APIs both use (primaryTable, foreignTable) here.
+            var relationship = InvokeDynamicMethod(currentDb, "CreateRelation", relationshipName, tableName, foreignTableName, attributes)
                 ?? throw new InvalidOperationException("Failed to create DAO Relationship object.");
 
             // DAO field mapping: Name = primary key column, ForeignName = foreign key column.
-            var relationshipField = InvokeDynamicMethod(relationship, "CreateField", foreignFieldName)
+            var relationshipField = InvokeDynamicMethod(relationship, "CreateField", fieldName)
                 ?? throw new InvalidOperationException("Failed to create DAO Relationship field object.");
-            SetDynamicProperty(relationshipField, "ForeignName", fieldName);
+            SetDynamicProperty(relationshipField, "ForeignName", foreignFieldName);
 
             var relationshipFields = TryGetDynamicProperty(relationship, "Fields")
                 ?? throw new InvalidOperationException("Relationship fields collection is unavailable.");

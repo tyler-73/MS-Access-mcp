@@ -222,6 +222,7 @@ Add-ToolCall -Calls $calls -Id 46 -Name "update_relationship" -Arguments @{
     cascade_update = $true
     cascade_delete = $true
 }
+Add-ToolCall -Calls $calls -Id 51 -Name "get_relationships" -Arguments @{}
 Add-ToolCall -Calls $calls -Id 47 -Name "delete_relationship" -Arguments @{ relationship_name = $relationshipName }
 Add-ToolCall -Calls $calls -Id 48 -Name "delete_query" -Arguments @{ query_name = $queryName }
 Add-ToolCall -Calls $calls -Id 49 -Name "delete_table" -Arguments @{ table_name = $childTableName }
@@ -318,6 +319,7 @@ $idLabels = @{
     44 = "create_relationship"
     45 = "get_relationships_after_create_relationship"
     46 = "update_relationship"
+    51 = "get_relationships_after_update_relationship"
     47 = "delete_relationship"
     48 = "delete_query"
     49 = "delete_child_table"
@@ -402,6 +404,33 @@ foreach ($id in ($idLabels.Keys | Sort-Object)) {
             if (@($matchedRelationship).Count -eq 0) {
                 $failed++
                 Write-Host ('{0}: FAIL expected relationship {1}' -f $label, $relationshipName)
+                continue
+            }
+
+            $relationship = $matchedRelationship | Select-Object -First 1
+            if ([string]$relationship.table -ne $tableName -or
+                [string]$relationship.field -ne "id" -or
+                [string]$relationship.foreignTable -ne $childTableName -or
+                [string]$relationship.foreignField -ne "parent_id") {
+                $failed++
+                Write-Host ('{0}: FAIL unexpected relationship mapping table={1} field={2} foreignTable={3} foreignField={4}' -f
+                    $label, [string]$relationship.table, [string]$relationship.field, [string]$relationship.foreignTable, [string]$relationship.foreignField)
+                continue
+            }
+        }
+        "get_relationships_after_update_relationship" {
+            $relationships = @($decoded.relationships)
+            $matchedRelationship = $relationships | Where-Object { [string]$_.name -eq $relationshipName }
+            if (@($matchedRelationship).Count -eq 0) {
+                $failed++
+                Write-Host ('{0}: FAIL expected relationship {1}' -f $label, $relationshipName)
+                continue
+            }
+
+            $relationship = $matchedRelationship | Select-Object -First 1
+            if ($relationship.cascadeUpdate -ne $true -or $relationship.cascadeDelete -ne $true) {
+                $failed++
+                Write-Host ('{0}: FAIL expected cascade flags true after update' -f $label)
                 continue
             }
         }
