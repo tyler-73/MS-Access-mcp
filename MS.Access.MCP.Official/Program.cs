@@ -115,6 +115,15 @@ class Program
                 new { name = "get_tables", description = "Get list of all tables in the database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_queries", description = "Get list of all queries in the database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_relationships", description = "Get list of all relationships in the database", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "list_linked_tables", description = "List all linked tables in the current Access database", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "link_table", description = "Create a linked table to an external Access database table", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, source_database_path = new { type = "string" }, source_table_name = new { type = "string" }, connect_string = new { type = "string" }, overwrite = new { type = "boolean" } }, required = new string[] { "table_name", "source_database_path", "source_table_name" } } },
+                new { name = "create_linked_table", description = "Alias for link_table", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, source_database_path = new { type = "string" }, source_table_name = new { type = "string" }, connect_string = new { type = "string" }, overwrite = new { type = "boolean" } }, required = new string[] { "table_name", "source_database_path", "source_table_name" } } },
+                new { name = "refresh_link", description = "Refresh a linked table connection", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
+                new { name = "refresh_linked_table", description = "Alias for refresh_link", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
+                new { name = "relink_table", description = "Change a linked table to point to a new source database/table", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, source_database_path = new { type = "string" }, source_table_name = new { type = "string" }, connect_string = new { type = "string" } }, required = new string[] { "table_name", "source_database_path" } } },
+                new { name = "update_linked_table", description = "Alias for relink_table", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, source_database_path = new { type = "string" }, source_table_name = new { type = "string" }, connect_string = new { type = "string" } }, required = new string[] { "table_name", "source_database_path" } } },
+                new { name = "unlink_table", description = "Remove a linked table from the database", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
+                new { name = "delete_linked_table", description = "Alias for unlink_table", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
                 new { name = "create_query", description = "Create a saved Access query definition", inputSchema = new { type = "object", properties = new { query_name = new { type = "string" }, sql = new { type = "string" } }, required = new string[] { "query_name", "sql" } } },
                 new { name = "update_query", description = "Update SQL text for an existing saved query", inputSchema = new { type = "object", properties = new { query_name = new { type = "string" }, sql = new { type = "string" } }, required = new string[] { "query_name", "sql" } } },
                 new { name = "delete_query", description = "Delete a saved Access query definition", inputSchema = new { type = "object", properties = new { query_name = new { type = "string" } }, required = new string[] { "query_name" } } },
@@ -123,6 +132,11 @@ class Program
                 new { name = "delete_relationship", description = "Delete an existing relationship by name", inputSchema = new { type = "object", properties = new { relationship_name = new { type = "string" } }, required = new string[] { "relationship_name" } } },
                 new { name = "execute_sql", description = "Execute a SQL statement against the connected Access database. For SELECT queries, returns columns and rows. For action queries, returns rows_affected.", inputSchema = new { type = "object", properties = new { sql = new { type = "string" }, max_rows = new { type = "integer" } }, required = new string[] { "sql" } } },
                 new { name = "execute_query_md", description = "Execute a SQL statement and return result as a markdown table (or action-query summary).", inputSchema = new { type = "object", properties = new { sql = new { type = "string" }, max_rows = new { type = "integer" } }, required = new string[] { "sql" } } },
+                new { name = "begin_transaction", description = "Begin an explicit database transaction", inputSchema = new { type = "object", properties = new { isolation_level = new { type = "string", description = "Optional isolation level: read_committed, read_uncommitted, repeatable_read, serializable, chaos, unspecified" } } } },
+                new { name = "start_transaction", description = "Alias for begin_transaction", inputSchema = new { type = "object", properties = new { isolation_level = new { type = "string", description = "Optional isolation level: read_committed, read_uncommitted, repeatable_read, serializable, chaos, unspecified" } } } },
+                new { name = "commit_transaction", description = "Commit the active transaction", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "rollback_transaction", description = "Rollback the active transaction", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "transaction_status", description = "Get status for the current transaction", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "describe_table", description = "Describe a table schema including columns, nullability, defaults, and primary key columns.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
                 new { name = "create_table", description = "Create a new table in the database", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, fields = new { type = "array", items = new { type = "object", properties = new { name = new { type = "string" }, type = new { type = "string" }, size = new { type = "integer" }, required = new { type = "boolean" }, allow_zero_length = new { type = "boolean" } } } } }, required = new string[] { "table_name", "fields" } } },
                 new { name = "delete_table", description = "Delete a table from the database", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
@@ -193,6 +207,15 @@ class Program
             "get_tables" => HandleGetTables(accessService, toolArguments),
             "get_queries" => HandleGetQueries(accessService, toolArguments),
             "get_relationships" => HandleGetRelationships(accessService, toolArguments),
+            "list_linked_tables" => HandleListLinkedTables(accessService, toolArguments),
+            "link_table" => HandleLinkTable(accessService, toolArguments),
+            "create_linked_table" => HandleLinkTable(accessService, toolArguments),
+            "refresh_link" => HandleRefreshLink(accessService, toolArguments),
+            "refresh_linked_table" => HandleRefreshLink(accessService, toolArguments),
+            "relink_table" => HandleRelinkTable(accessService, toolArguments),
+            "update_linked_table" => HandleRelinkTable(accessService, toolArguments),
+            "unlink_table" => HandleUnlinkTable(accessService, toolArguments),
+            "delete_linked_table" => HandleUnlinkTable(accessService, toolArguments),
             "create_query" => HandleCreateQuery(accessService, toolArguments),
             "update_query" => HandleUpdateQuery(accessService, toolArguments),
             "delete_query" => HandleDeleteQuery(accessService, toolArguments),
@@ -201,6 +224,11 @@ class Program
             "delete_relationship" => HandleDeleteRelationship(accessService, toolArguments),
             "execute_sql" => HandleExecuteSql(accessService, toolArguments),
             "execute_query_md" => HandleExecuteQueryMd(accessService, toolArguments),
+            "begin_transaction" => HandleBeginTransaction(accessService, toolArguments),
+            "start_transaction" => HandleBeginTransaction(accessService, toolArguments),
+            "commit_transaction" => HandleCommitTransaction(accessService, toolArguments),
+            "rollback_transaction" => HandleRollbackTransaction(accessService, toolArguments),
+            "transaction_status" => HandleTransactionStatus(accessService, toolArguments),
             "describe_table" => HandleDescribeTable(accessService, toolArguments),
             "create_table" => HandleCreateTable(accessService, toolArguments),
             "delete_table" => HandleDeleteTable(accessService, toolArguments),
@@ -278,17 +306,6 @@ class Program
             if (!File.Exists(databasePath))
                 return new { success = false, error = $"Database file not found: {databasePath}" };
 
-            var preflight = BuildPreflightDiagnostics();
-            if (!preflight.AceOleDbProviderRegistered)
-            {
-                return new
-                {
-                    success = false,
-                    error = $"connect_access preflight failed: Microsoft ACE OLEDB provider (Microsoft.ACE.OLEDB.12.0) is not available for this {preflight.ProcessBitness} process. Install the Access Database Engine with matching bitness (x86/x64) or run a server build with matching bitness.",
-                    preflight = ToPreflightPayload(preflight)
-                };
-            }
-                
             accessService.Connect(databasePath);
             
             // Verify connection was successful
@@ -365,6 +382,126 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("get_relationships", ex);
+        }
+    }
+
+    static object HandleListLinkedTables(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var linkedTables = accessService.GetLinkedTables();
+            return new { success = true, linked_tables = linkedTables.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("list_linked_tables", ex);
+        }
+    }
+
+    static object HandleLinkTable(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "source_database_path", out var sourceDatabasePath, out var sourceDatabasePathError))
+                return sourceDatabasePathError;
+            if (!TryGetRequiredString(arguments, "source_table_name", out var sourceTableName, out var sourceTableNameError))
+                return sourceTableNameError;
+
+            _ = TryGetOptionalString(arguments, "connect_string", out var connectString);
+            var overwrite = GetOptionalBool(arguments, "overwrite", false);
+
+            var linkedTable = accessService.LinkTable(
+                tableName,
+                sourceDatabasePath,
+                sourceTableName,
+                string.IsNullOrWhiteSpace(connectString) ? null : connectString,
+                overwrite);
+
+            return new
+            {
+                success = true,
+                message = $"Linked table {linkedTable.Name}",
+                table = linkedTable
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("link_table", ex);
+        }
+    }
+
+    static object HandleRefreshLink(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+
+            var linkedTable = accessService.RefreshLink(tableName);
+            return new
+            {
+                success = true,
+                message = $"Refreshed link for {tableName}",
+                table = linkedTable
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("refresh_link", ex);
+        }
+    }
+
+    static object HandleRelinkTable(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "source_database_path", out var sourceDatabasePath, out var sourceDatabasePathError))
+                return sourceDatabasePathError;
+
+            _ = TryGetOptionalString(arguments, "source_table_name", out var sourceTableName);
+            _ = TryGetOptionalString(arguments, "connect_string", out var connectString);
+
+            var linkedTable = accessService.RelinkTable(
+                tableName,
+                sourceDatabasePath,
+                string.IsNullOrWhiteSpace(sourceTableName) ? null : sourceTableName,
+                string.IsNullOrWhiteSpace(connectString) ? null : connectString);
+
+            return new
+            {
+                success = true,
+                message = $"Relinked table {linkedTable.Name}",
+                table = linkedTable
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("relink_table", ex);
+        }
+    }
+
+    static object HandleUnlinkTable(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+
+            accessService.UnlinkTable(tableName);
+            return new
+            {
+                success = true,
+                message = $"Unlinked table {tableName}",
+                table_name = tableName
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("unlink_table", ex);
         }
     }
 
@@ -598,6 +735,89 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("execute_query_md", ex);
+        }
+    }
+
+    static object HandleBeginTransaction(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            string? isolationLevel = null;
+            if (arguments.TryGetProperty("isolation_level", out var isolationLevelElement))
+            {
+                if (isolationLevelElement.ValueKind != JsonValueKind.String)
+                    return new { success = false, error = "isolation_level must be a string when provided" };
+
+                var candidate = isolationLevelElement.GetString();
+                if (!string.IsNullOrWhiteSpace(candidate))
+                    isolationLevel = candidate;
+            }
+
+            var transaction = accessService.BeginTransaction(isolationLevel);
+            return new
+            {
+                success = true,
+                message = "Transaction started",
+                transaction
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("begin_transaction", ex);
+        }
+    }
+
+    static object HandleCommitTransaction(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var transaction = accessService.CommitTransaction();
+            return new
+            {
+                success = true,
+                message = "Transaction committed",
+                transaction
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("commit_transaction", ex);
+        }
+    }
+
+    static object HandleRollbackTransaction(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var transaction = accessService.RollbackTransaction();
+            return new
+            {
+                success = true,
+                message = "Transaction rolled back",
+                transaction
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("rollback_transaction", ex);
+        }
+    }
+
+    static object HandleTransactionStatus(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var transaction = accessService.GetTransactionStatus();
+            return new
+            {
+                success = true,
+                connected = accessService.IsConnected,
+                transaction
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("transaction_status", ex);
         }
     }
 
@@ -1615,7 +1835,7 @@ class Program
     {
         var processBitness = Environment.Is64BitProcess ? "x64" : "x86";
         var aceProviderRegistered = IsAceOleDbProviderRegistered();
-        var aceProviderIssueDetected = !aceProviderRegistered || (ex != null && HasAceProviderRegistrationIndicator(ex));
+        var aceProviderIssueDetected = ex != null && HasAceProviderRegistrationIndicator(ex);
         var trustCenterActiveContentIndicator = ex != null && HasTrustCenterActiveContentIndicator(ex);
 
         var remediationHints = new List<string>();

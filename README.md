@@ -189,6 +189,15 @@ The MCP server provides comprehensive tools across all seven capability areas:
 - **get_indexes**: Get index metadata for a table
 - **create_index**: Create an index on one or more columns
 - **delete_index**: Delete an index from a table
+- **list_linked_tables**: List linked tables in the current database
+- **create_linked_table** (alias: `link_table`): Create a linked table in the current database from another Access database file
+- **refresh_linked_table** (alias: `refresh_link`): Refresh an existing linked table definition
+- **update_linked_table** (alias: `relink_table`): Repoint a linked table to a new source database/table
+- **delete_linked_table** (alias: `unlink_table`): Remove a linked table from the current database
+- **begin_transaction**: Begin a database transaction on the current connection
+- **commit_transaction**: Commit the active transaction
+- **rollback_transaction**: Roll back the active transaction
+- **transaction_status**: Return current transaction status (active state, isolation level, and start time)
 
 ### 3. COM Automation
 - **launch_access**: Launch Microsoft Access application
@@ -337,6 +346,10 @@ The script verifies:
 7. Report import/export/delete in JSON mode, plus `mode="access_text"` export/import round-trip persistence checks
 8. Macro create/export/run/update/delete plus `import_macro_from_text` round-trip verification
 9. Metadata discovery and Access COM automation calls
+10. Linked-table tranche-1 coverage using a local copied `.accdb` source (no external database server dependency)
+11. Transaction tranche-1 coverage validating rollback/commit visibility through deterministic SQL checks
+
+When linked-table and transaction tranche-1 tools are not exposed by `tools/list`, the harness records `SKIP` lines for those sections and preserves the existing pass criterion.
 
 Pass criterion: `TOTAL_FAIL=0` and process exit code `0`.
 

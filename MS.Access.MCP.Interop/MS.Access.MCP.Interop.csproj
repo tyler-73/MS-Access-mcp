@@ -11,6 +11,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Office.Interop.Access" Version="15.0.4420.1018" />
     <PackageReference Include="System.Data.OleDb" Version="8.0.0" />
+    <PackageReference Include="System.Data.Odbc" Version="8.0.0" />
   </ItemGroup>
 
 </Project> 

@@ -101,6 +101,80 @@ function Invoke-McpBatch {
     return $responses
 }
 
+function Get-McpToolsList {
+    param(
+        [string]$ExePath,
+        [string]$ClientName = "full-regression-tools-list",
+        [string]$ClientVersion = "1.0"
+    )
+
+    $jsonLines = New-Object 'System.Collections.Generic.List[string]'
+    $jsonLines.Add((@{
+        jsonrpc = "2.0"
+        id = 1
+        method = "initialize"
+        params = @{
+            protocolVersion = "2024-11-05"
+            capabilities = @{}
+            clientInfo = @{
+                name = $ClientName
+                version = $ClientVersion
+            }
+        }
+    } | ConvertTo-Json -Depth 40 -Compress))
+
+    $jsonLines.Add((@{
+        jsonrpc = "2.0"
+        id = 2
+        method = "tools/list"
+        params = @{}
+    } | ConvertTo-Json -Depth 40 -Compress))
+
+    $rawLines = @((($jsonLines -join "`n") | & $ExePath))
+    $responses = @{}
+    foreach ($line in $rawLines) {
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            continue
+        }
+
+        try {
+            $parsed = $line | ConvertFrom-Json
+            if ($null -ne $parsed.id) {
+                $responses[[int]$parsed.id] = $parsed
+            }
+        }
+        catch {
+            Write-Host "WARN: Could not parse tools/list response line: $line"
+        }
+    }
+
+    if (-not $responses.ContainsKey(2)) {
+        return @()
+    }
+
+    $toolResponse = $responses[2]
+    if ($toolResponse.result -and $toolResponse.result.tools) {
+        return @($toolResponse.result.tools)
+    }
+
+    return @()
+}
+
+function Resolve-ToolName {
+    param(
+        [System.Collections.Generic.Dictionary[string, object]]$ToolByName,
+        [string[]]$Candidates
+    )
+
+    foreach ($candidate in $Candidates) {
+        if ($ToolByName.ContainsKey($candidate)) {
+            return $candidate
+        }
+    }
+
+    return $null
+}
+
 function Stop-StaleProcesses {
     Get-Process MSACCESS, MS.Access.MCP.Official -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
@@ -139,6 +213,7 @@ else {
 }
 
 $exitCode = 1
+$linkedSourceDatabasePath = $null
 try {
 
 $suffix = [Guid]::NewGuid().ToString("N").Substring(0, 8)
@@ -155,6 +230,31 @@ $importedMacroName = "MCP_ImportedMacro_$suffix"
 $schemaFieldName = "schema_text"
 $schemaFieldRenamedName = "schema_text_renamed"
 $renamedTableName = "MCP_Renamed_$suffix"
+$linkedTableName = "MCP_Linked_$suffix"
+$linkedSourceTableName = "MCP_LinkSrc_$suffix"
+$transactionTableName = "MCP_Tx_$suffix"
+
+$linkedSourceDatabasePath = Join-Path (Split-Path -Path $DatabasePath -Parent) "MCP_LinkSource_$suffix.accdb"
+
+$toolList = Get-McpToolsList -ExePath $ServerExe -ClientName "full-regression-tools-list" -ClientVersion "1.0"
+$toolByName = New-Object 'System.Collections.Generic.Dictionary[string, object]' ([System.StringComparer]::OrdinalIgnoreCase)
+foreach ($tool in $toolList) {
+    $name = [string]$tool.name
+    if (-not [string]::IsNullOrWhiteSpace($name)) {
+        $toolByName[$name] = $tool
+    }
+}
+
+$listLinkedTablesToolName = Resolve-ToolName -ToolByName $toolByName -Candidates @("list_linked_tables")
+$createLinkedTableToolName = Resolve-ToolName -ToolByName $toolByName -Candidates @("create_linked_table", "link_table")
+$refreshLinkedTableToolName = Resolve-ToolName -ToolByName $toolByName -Candidates @("refresh_linked_table", "refresh_link")
+$updateLinkedTableToolName = Resolve-ToolName -ToolByName $toolByName -Candidates @("update_linked_table", "relink_table")
+$deleteLinkedTableToolName = Resolve-ToolName -ToolByName $toolByName -Candidates @("delete_linked_table", "unlink_table")
+
+$beginTransactionToolName = Resolve-ToolName -ToolByName $toolByName -Candidates @("begin_transaction", "start_transaction")
+$commitTransactionToolName = Resolve-ToolName -ToolByName $toolByName -Candidates @("commit_transaction")
+$rollbackTransactionToolName = Resolve-ToolName -ToolByName $toolByName -Candidates @("rollback_transaction")
+$transactionStatusToolName = Resolve-ToolName -ToolByName $toolByName -Candidates @("transaction_status")
 
 $formData = @{
     Name = $formName
@@ -913,6 +1013,370 @@ if (-not [string]::IsNullOrWhiteSpace($formAccessTextData) -and -not [string]::I
     }
 }
 
+if (-not [string]::IsNullOrWhiteSpace($createLinkedTableToolName) -and
+    -not [string]::IsNullOrWhiteSpace($deleteLinkedTableToolName) -and
+    -not [string]::IsNullOrWhiteSpace($listLinkedTablesToolName)) {
+    $linkedCoverageToolNames = @($createLinkedTableToolName, $deleteLinkedTableToolName, $listLinkedTablesToolName)
+    if (-not [string]::IsNullOrWhiteSpace($refreshLinkedTableToolName)) {
+        $linkedCoverageToolNames += $refreshLinkedTableToolName
+    }
+    if (-not [string]::IsNullOrWhiteSpace($updateLinkedTableToolName)) {
+        $linkedCoverageToolNames += $updateLinkedTableToolName
+    }
+    Write-Host ('linked_table_coverage: INFO using tools {0}' -f ($linkedCoverageToolNames -join ", "))
+
+    $linkedPrepReady = $false
+    try {
+        Copy-Item -Path $DatabasePath -Destination $linkedSourceDatabasePath -Force
+        Cleanup-AccessArtifacts -DbPath $linkedSourceDatabasePath
+        Start-Sleep -Milliseconds 300
+
+        $linkedPrepCalls = New-Object 'System.Collections.Generic.List[object]'
+        Add-ToolCall -Calls $linkedPrepCalls -Id 301 -Name "connect_access" -Arguments @{ database_path = $linkedSourceDatabasePath }
+        Add-ToolCall -Calls $linkedPrepCalls -Id 302 -Name "create_table" -Arguments @{
+            table_name = $linkedSourceTableName
+            fields = @(
+                @{ name = "id"; type = "LONG"; size = 0; required = $true; allow_zero_length = $false },
+                @{ name = "payload"; type = "TEXT"; size = 50; required = $false; allow_zero_length = $true }
+            )
+        }
+        Add-ToolCall -Calls $linkedPrepCalls -Id 303 -Name "execute_sql" -Arguments @{ sql = "INSERT INTO [$linkedSourceTableName] (id, payload) VALUES (1, 'source_alpha')" }
+        Add-ToolCall -Calls $linkedPrepCalls -Id 304 -Name "disconnect_access" -Arguments @{}
+        Add-ToolCall -Calls $linkedPrepCalls -Id 305 -Name "close_access" -Arguments @{}
+
+        $linkedPrepResponses = Invoke-McpBatch -ExePath $ServerExe -Calls $linkedPrepCalls -ClientName "full-regression-linked-source" -ClientVersion "1.0"
+        $linkedPrepLabels = @{
+            301 = "linked_source_connect_access"
+            302 = "linked_source_create_table"
+            303 = "linked_source_insert_seed_row"
+            304 = "linked_source_disconnect_access"
+            305 = "linked_source_close_access"
+        }
+
+        $linkedPrepFailed = $false
+        foreach ($id in ($linkedPrepLabels.Keys | Sort-Object)) {
+            $label = $linkedPrepLabels[$id]
+            $decoded = Decode-McpResult -Response $linkedPrepResponses[[int]$id]
+
+            if ($null -eq $decoded) {
+                $failed++
+                $linkedPrepFailed = $true
+                Write-Host ('{0}: FAIL missing-response' -f $label)
+                continue
+            }
+
+            if ($decoded -is [string]) {
+                $failed++
+                $linkedPrepFailed = $true
+                Write-Host ('{0}: FAIL raw-string-response' -f $label)
+                continue
+            }
+
+            if ($decoded.success -ne $true) {
+                $failed++
+                $linkedPrepFailed = $true
+                Write-Host ('{0}: FAIL {1}' -f $label, $decoded.error)
+                continue
+            }
+
+            Write-Host ('{0}: OK' -f $label)
+        }
+
+        $linkedPrepReady = (-not $linkedPrepFailed)
+    }
+    catch {
+        $failed++
+        Write-Host ('linked_source_setup: FAIL {0}' -f $_.Exception.Message)
+    }
+
+    if ($linkedPrepReady) {
+        $createLinkedArguments = @{
+            table_name = $linkedTableName
+            linked_table_name = $linkedTableName
+            source_table_name = $linkedSourceTableName
+            external_table_name = $linkedSourceTableName
+            source_database_path = $linkedSourceDatabasePath
+            database_path = $linkedSourceDatabasePath
+            external_database_path = $linkedSourceDatabasePath
+            connection_string = "MS Access;DATABASE=$linkedSourceDatabasePath"
+            connect_string = "DATABASE=$linkedSourceDatabasePath"
+        }
+
+        $deleteLinkedArguments = @{
+            table_name = $linkedTableName
+            linked_table_name = $linkedTableName
+        }
+
+        $linkedCalls = New-Object 'System.Collections.Generic.List[object]'
+        Add-ToolCall -Calls $linkedCalls -Id 321 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
+        Add-ToolCall -Calls $linkedCalls -Id 322 -Name $createLinkedTableToolName -Arguments $createLinkedArguments
+        Add-ToolCall -Calls $linkedCalls -Id 323 -Name $listLinkedTablesToolName -Arguments @{}
+        Add-ToolCall -Calls $linkedCalls -Id 324 -Name "execute_sql" -Arguments @{ sql = "SELECT id, payload FROM [$linkedTableName]" }
+        if (-not [string]::IsNullOrWhiteSpace($refreshLinkedTableToolName)) {
+            Add-ToolCall -Calls $linkedCalls -Id 325 -Name $refreshLinkedTableToolName -Arguments $createLinkedArguments
+            Add-ToolCall -Calls $linkedCalls -Id 326 -Name "execute_sql" -Arguments @{ sql = "SELECT id, payload FROM [$linkedTableName]" }
+        }
+        if (-not [string]::IsNullOrWhiteSpace($updateLinkedTableToolName)) {
+            Add-ToolCall -Calls $linkedCalls -Id 331 -Name $updateLinkedTableToolName -Arguments $createLinkedArguments
+            Add-ToolCall -Calls $linkedCalls -Id 332 -Name "execute_sql" -Arguments @{ sql = "SELECT id, payload FROM [$linkedTableName]" }
+        }
+        Add-ToolCall -Calls $linkedCalls -Id 327 -Name $deleteLinkedTableToolName -Arguments $deleteLinkedArguments
+        Add-ToolCall -Calls $linkedCalls -Id 328 -Name $listLinkedTablesToolName -Arguments @{}
+        Add-ToolCall -Calls $linkedCalls -Id 329 -Name "disconnect_access" -Arguments @{}
+        Add-ToolCall -Calls $linkedCalls -Id 330 -Name "close_access" -Arguments @{}
+
+        $linkedResponses = Invoke-McpBatch -ExePath $ServerExe -Calls $linkedCalls -ClientName "full-regression-linked-table" -ClientVersion "1.0"
+        $linkedIdLabels = @{
+            321 = "linked_table_connect_access"
+            322 = "linked_table_create_linked_table"
+            323 = "linked_table_list_linked_tables_after_create"
+            324 = "linked_table_execute_sql_select"
+            327 = "linked_table_delete_linked_table"
+            328 = "linked_table_list_linked_tables_after_delete"
+            329 = "linked_table_disconnect_access"
+            330 = "linked_table_close_access"
+        }
+        if (-not [string]::IsNullOrWhiteSpace($refreshLinkedTableToolName)) {
+            $linkedIdLabels[325] = "linked_table_refresh_linked_table"
+            $linkedIdLabels[326] = "linked_table_execute_sql_select_after_refresh"
+        }
+        if (-not [string]::IsNullOrWhiteSpace($updateLinkedTableToolName)) {
+            $linkedIdLabels[331] = "linked_table_update_linked_table"
+            $linkedIdLabels[332] = "linked_table_execute_sql_select_after_update"
+        }
+
+        foreach ($id in ($linkedIdLabels.Keys | Sort-Object)) {
+            $label = $linkedIdLabels[$id]
+            $decoded = Decode-McpResult -Response $linkedResponses[[int]$id]
+
+            if ($null -eq $decoded) {
+                $failed++
+                Write-Host ('{0}: FAIL missing-response' -f $label)
+                continue
+            }
+
+            if ($decoded -is [string]) {
+                $failed++
+                Write-Host ('{0}: FAIL raw-string-response' -f $label)
+                continue
+            }
+
+            if ($decoded.success -ne $true) {
+                $failed++
+                Write-Host ('{0}: FAIL {1}' -f $label, $decoded.error)
+                continue
+            }
+
+            switch ($label) {
+                "linked_table_list_linked_tables_after_create" {
+                    $tables = @($decoded.linked_tables)
+                    if ($tables.Count -eq 0 -and $null -ne $decoded.tables) {
+                        $tables = @($decoded.tables)
+                    }
+                    $linkedMatch = $tables | Where-Object {
+                        [string]$_.Name -eq $linkedTableName -or
+                        [string]$_.name -eq $linkedTableName -or
+                        [string]$_.TableName -eq $linkedTableName -or
+                        [string]$_.table_name -eq $linkedTableName
+                    }
+                    if (@($linkedMatch).Count -eq 0) {
+                        $failed++
+                        Write-Host ('{0}: FAIL expected linked table {1}' -f $label, $linkedTableName)
+                        continue
+                    }
+                }
+                "linked_table_execute_sql_select" {
+                    $rows = @($decoded.rows)
+                    if ($rows.Count -lt 1) {
+                        $failed++
+                        Write-Host ('{0}: FAIL expected at least one row from linked table {1}' -f $label, $linkedTableName)
+                        continue
+                    }
+                }
+                "linked_table_execute_sql_select_after_refresh" {
+                    $rows = @($decoded.rows)
+                    if ($rows.Count -lt 1) {
+                        $failed++
+                        Write-Host ('{0}: FAIL expected at least one row after linked table refresh' -f $label)
+                        continue
+                    }
+                }
+                "linked_table_execute_sql_select_after_update" {
+                    $rows = @($decoded.rows)
+                    if ($rows.Count -lt 1) {
+                        $failed++
+                        Write-Host ('{0}: FAIL expected at least one row after linked table update' -f $label)
+                        continue
+                    }
+                }
+                "linked_table_list_linked_tables_after_delete" {
+                    $tables = @($decoded.linked_tables)
+                    if ($tables.Count -eq 0 -and $null -ne $decoded.tables) {
+                        $tables = @($decoded.tables)
+                    }
+                    $linkedMatch = $tables | Where-Object {
+                        [string]$_.Name -eq $linkedTableName -or
+                        [string]$_.name -eq $linkedTableName -or
+                        [string]$_.TableName -eq $linkedTableName -or
+                        [string]$_.table_name -eq $linkedTableName
+                    }
+                    if (@($linkedMatch).Count -ne 0) {
+                        $failed++
+                        Write-Host ('{0}: FAIL expected linked table {1} to be deleted' -f $label, $linkedTableName)
+                        continue
+                    }
+                }
+            }
+
+            Write-Host ('{0}: OK' -f $label)
+        }
+    }
+}
+else {
+    Write-Host "linked_table_coverage: SKIP linked-table tools not exposed by this server build."
+}
+
+if (-not [string]::IsNullOrWhiteSpace($beginTransactionToolName) -and
+    -not [string]::IsNullOrWhiteSpace($commitTransactionToolName) -and
+    -not [string]::IsNullOrWhiteSpace($rollbackTransactionToolName) -and
+    -not [string]::IsNullOrWhiteSpace($transactionStatusToolName)) {
+    Write-Host ('transaction_coverage: INFO using tools {0}, {1}, {2}, {3}' -f
+        $beginTransactionToolName, $commitTransactionToolName, $rollbackTransactionToolName, $transactionStatusToolName)
+
+    $transactionCalls = New-Object 'System.Collections.Generic.List[object]'
+    Add-ToolCall -Calls $transactionCalls -Id 341 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
+    Add-ToolCall -Calls $transactionCalls -Id 342 -Name "create_table" -Arguments @{
+        table_name = $transactionTableName
+        fields = @(
+            @{ name = "id"; type = "LONG"; size = 0; required = $true; allow_zero_length = $false },
+            @{ name = "name"; type = "TEXT"; size = 50; required = $false; allow_zero_length = $true }
+        )
+    }
+    Add-ToolCall -Calls $transactionCalls -Id 343 -Name "execute_sql" -Arguments @{ sql = "INSERT INTO [$transactionTableName] (id, name) VALUES (1, 'outside_txn')" }
+    Add-ToolCall -Calls $transactionCalls -Id 344 -Name $beginTransactionToolName -Arguments @{}
+    Add-ToolCall -Calls $transactionCalls -Id 355 -Name $transactionStatusToolName -Arguments @{}
+    Add-ToolCall -Calls $transactionCalls -Id 345 -Name "execute_sql" -Arguments @{ sql = "INSERT INTO [$transactionTableName] (id, name) VALUES (2, 'rollback_me')" }
+    Add-ToolCall -Calls $transactionCalls -Id 346 -Name $rollbackTransactionToolName -Arguments @{}
+    Add-ToolCall -Calls $transactionCalls -Id 356 -Name $transactionStatusToolName -Arguments @{}
+    Add-ToolCall -Calls $transactionCalls -Id 347 -Name "execute_sql" -Arguments @{ sql = "SELECT id FROM [$transactionTableName] WHERE id = 2" }
+    Add-ToolCall -Calls $transactionCalls -Id 348 -Name $beginTransactionToolName -Arguments @{}
+    Add-ToolCall -Calls $transactionCalls -Id 357 -Name $transactionStatusToolName -Arguments @{}
+    Add-ToolCall -Calls $transactionCalls -Id 349 -Name "execute_sql" -Arguments @{ sql = "INSERT INTO [$transactionTableName] (id, name) VALUES (3, 'commit_me')" }
+    Add-ToolCall -Calls $transactionCalls -Id 350 -Name $commitTransactionToolName -Arguments @{}
+    Add-ToolCall -Calls $transactionCalls -Id 358 -Name $transactionStatusToolName -Arguments @{}
+    Add-ToolCall -Calls $transactionCalls -Id 351 -Name "execute_sql" -Arguments @{ sql = "SELECT id FROM [$transactionTableName] WHERE id = 3" }
+    Add-ToolCall -Calls $transactionCalls -Id 352 -Name "delete_table" -Arguments @{ table_name = $transactionTableName }
+    Add-ToolCall -Calls $transactionCalls -Id 353 -Name "disconnect_access" -Arguments @{}
+    Add-ToolCall -Calls $transactionCalls -Id 354 -Name "close_access" -Arguments @{}
+
+    $transactionResponses = Invoke-McpBatch -ExePath $ServerExe -Calls $transactionCalls -ClientName "full-regression-transactions" -ClientVersion "1.0"
+    $transactionIdLabels = @{
+        341 = "transaction_connect_access"
+        342 = "transaction_create_table"
+        343 = "transaction_insert_outside_transaction"
+        344 = "transaction_begin_for_rollback"
+        355 = "transaction_status_after_begin_for_rollback"
+        345 = "transaction_insert_within_rollback"
+        346 = "transaction_rollback"
+        356 = "transaction_status_after_rollback"
+        347 = "transaction_select_after_rollback"
+        348 = "transaction_begin_for_commit"
+        357 = "transaction_status_after_begin_for_commit"
+        349 = "transaction_insert_within_commit"
+        350 = "transaction_commit"
+        358 = "transaction_status_after_commit"
+        351 = "transaction_select_after_commit"
+        352 = "transaction_delete_table"
+        353 = "transaction_disconnect_access"
+        354 = "transaction_close_access"
+    }
+
+    foreach ($id in ($transactionIdLabels.Keys | Sort-Object)) {
+        $label = $transactionIdLabels[$id]
+        $decoded = Decode-McpResult -Response $transactionResponses[[int]$id]
+
+        if ($null -eq $decoded) {
+            $failed++
+            Write-Host ('{0}: FAIL missing-response' -f $label)
+            continue
+        }
+
+        if ($decoded -is [string]) {
+            $failed++
+            Write-Host ('{0}: FAIL raw-string-response' -f $label)
+            continue
+        }
+
+        if ($decoded.success -ne $true) {
+            $failed++
+            Write-Host ('{0}: FAIL {1}' -f $label, $decoded.error)
+            continue
+        }
+
+        switch ($label) {
+            "transaction_status_after_begin_for_rollback" {
+                if ($decoded.connected -ne $true) {
+                    $failed++
+                    Write-Host ('{0}: FAIL expected connected=true' -f $label)
+                    continue
+                }
+                if ($null -eq $decoded.transaction -or $decoded.transaction.active -ne $true) {
+                    $failed++
+                    Write-Host ('{0}: FAIL expected active transaction after begin' -f $label)
+                    continue
+                }
+            }
+            "transaction_select_after_rollback" {
+                $rows = @($decoded.rows)
+                if ($rows.Count -ne 0) {
+                    $failed++
+                    Write-Host ('{0}: FAIL expected zero rows after rollback' -f $label)
+                    continue
+                }
+            }
+            "transaction_status_after_rollback" {
+                if ($null -eq $decoded.transaction -or $decoded.transaction.active -ne $false) {
+                    $failed++
+                    Write-Host ('{0}: FAIL expected no active transaction after rollback' -f $label)
+                    continue
+                }
+            }
+            "transaction_status_after_begin_for_commit" {
+                if ($decoded.connected -ne $true) {
+                    $failed++
+                    Write-Host ('{0}: FAIL expected connected=true' -f $label)
+                    continue
+                }
+                if ($null -eq $decoded.transaction -or $decoded.transaction.active -ne $true) {
+                    $failed++
+                    Write-Host ('{0}: FAIL expected active transaction after begin' -f $label)
+                    continue
+                }
+            }
+            "transaction_select_after_commit" {
+                $rows = @($decoded.rows)
+                if ($rows.Count -lt 1) {
+                    $failed++
+                    Write-Host ('{0}: FAIL expected committed row to be visible' -f $label)
+                    continue
+                }
+            }
+            "transaction_status_after_commit" {
+                if ($null -eq $decoded.transaction -or $decoded.transaction.active -ne $false) {
+                    $failed++
+                    Write-Host ('{0}: FAIL expected no active transaction after commit' -f $label)
+                    continue
+                }
+            }
+        }
+
+        Write-Host ('{0}: OK' -f $label)
+    }
+}
+else {
+    Write-Host "transaction_coverage: SKIP transaction tools not exposed by this server build."
+}
+
 Write-Host ("TOTAL_FAIL={0}" -f $failed)
 if ($failed -eq 0) {
     $exitCode = 0
@@ -921,6 +1385,10 @@ if ($failed -eq 0) {
 finally {
     Write-Host "Final cleanup: clearing stale Access/MCP processes and locks."
     Cleanup-AccessArtifacts -DbPath $DatabasePath
+    if (-not [string]::IsNullOrWhiteSpace($linkedSourceDatabasePath)) {
+        Cleanup-AccessArtifacts -DbPath $linkedSourceDatabasePath
+        Remove-Item -Path $linkedSourceDatabasePath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 exit $exitCode

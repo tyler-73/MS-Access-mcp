@@ -1,5 +1,7 @@
 using System.Data;
+using System.Data.Common;
 using System.Data.OleDb;
+using System.Data.Odbc;
 using Microsoft.VisualBasic.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -11,18 +13,32 @@ namespace MS.Access.MCP.Interop
     public class AccessInteropService : IDisposable
     {
         private OleDbConnection? _oleDbConnection;
+        private OdbcConnection? _odbcConnection;
         private dynamic? _accessApplication;
         private string? _currentDatabasePath;
         private int _oleDbReleaseDepth = 0;
         private bool _restoreOleDbAfterRelease = false;
+        private DataProviderKind _providerToRestoreAfterRelease = DataProviderKind.None;
         private string? _accessDatabasePath;
         private bool _accessDatabaseOpenedExclusive = false;
+        private OleDbTransaction? _oleDbTransaction;
+        private OdbcTransaction? _odbcTransaction;
+        private DataProviderKind _activeDataProvider = DataProviderKind.None;
+        private DataProviderKind _preferredDataProvider = DataProviderKind.OleDb;
+        private DateTimeOffset? _transactionStartedAtUtc;
         private bool _disposed = false;
         private const int DaoRelationAttributeDontEnforce = 2;
         private const int DaoRelationAttributeUpdateCascade = 256;
         private const int DaoRelationAttributeDeleteCascade = 4096;
         private const string TextModeJson = "json";
         private const string TextModeAccessText = "access_text";
+
+        private enum DataProviderKind
+        {
+            None = 0,
+            OleDb = 1,
+            Odbc = 2
+        }
 
         #region 1. Connection Management
 
@@ -32,14 +48,21 @@ namespace MS.Access.MCP.Interop
                 throw new FileNotFoundException($"Database file not found: {databasePath}");
 
             _currentDatabasePath = databasePath;
-            OpenOleDbConnection(databasePath);
+            try
+            {
+                OpenPreferredConnection(databasePath);
+            }
+            catch
+            {
+                _currentDatabasePath = null;
+                throw;
+            }
         }
 
         public void Disconnect()
         {
-            _oleDbConnection?.Close();
-            _oleDbConnection?.Dispose();
-            _oleDbConnection = null;
+            ResetTransactionState(attemptRollback: true);
+            CloseSqlConnections();
             _currentDatabasePath = null;
             _accessDatabasePath = null;
             _accessDatabaseOpenedExclusive = false;
@@ -59,7 +82,7 @@ namespace MS.Access.MCP.Interop
             var tables = new List<TableInfo>();
             
             // Use OleDb to get table information
-            var schema = _oleDbConnection!.GetSchema("Tables");
+            var schema = GetSchema("Tables");
             
             foreach (System.Data.DataRow row in schema.Rows)
             {
@@ -130,7 +153,7 @@ namespace MS.Access.MCP.Interop
             }
 
             // Use OleDb to get query information
-            var schema = _oleDbConnection!.GetSchema("Views");
+            var schema = GetSchema("Views");
             foreach (DataRow row in schema.Rows)
             {
                 var queryName = row["TABLE_NAME"]?.ToString();
@@ -277,7 +300,7 @@ namespace MS.Access.MCP.Interop
             try
             {
                 // Not all ACE providers expose this collection; return empty on unsupported providers.
-                var schema = _oleDbConnection!.GetSchema("ForeignKeys");
+                var schema = GetSchema("ForeignKeys");
 
                 foreach (DataRow row in schema.Rows)
                 {
@@ -404,6 +427,378 @@ namespace MS.Access.MCP.Interop
             releaseOleDb: false);
         }
 
+        public List<LinkedTableInfo> GetLinkedTables()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            var linkedTables = new List<LinkedTableInfo>();
+
+            try
+            {
+                var daoLinkedTables = ExecuteComOperation(accessApp =>
+                {
+                    var list = new List<LinkedTableInfo>();
+                    var currentDb = TryGetCurrentDb(accessApp);
+                    if (currentDb == null)
+                        return list;
+
+                    var tableDefs = TryGetDynamicProperty(currentDb, "TableDefs");
+                    if (tableDefs == null)
+                        return list;
+
+                    foreach (var tableDef in tableDefs)
+                    {
+                        var tableName = SafeToString(TryGetDynamicProperty(tableDef, "Name"));
+                        if (string.IsNullOrWhiteSpace(tableName) || IsSystemOrTemporaryTableName(tableName))
+                            continue;
+
+                        var connectString = SafeToString(TryGetDynamicProperty(tableDef, "Connect"));
+                        if (string.IsNullOrWhiteSpace(connectString))
+                            continue;
+
+                        var sourceTableName = SafeToString(TryGetDynamicProperty(tableDef, "SourceTableName")) ?? string.Empty;
+                        list.Add(new LinkedTableInfo
+                        {
+                            Name = tableName,
+                            SourceTableName = sourceTableName,
+                            ConnectString = connectString,
+                            SourceDatabasePath = ExtractDatabasePathFromConnectString(connectString) ?? string.Empty,
+                            Attributes = ToInt32(TryGetDynamicProperty(tableDef, "Attributes"))
+                        });
+                    }
+
+                    return list;
+                },
+                requireExclusive: false,
+                releaseOleDb: false);
+
+                if (daoLinkedTables.Count > 0)
+                {
+                    return daoLinkedTables
+                        .OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                }
+            }
+            catch
+            {
+                // Fall back to OleDb metadata when DAO TableDefs are unavailable.
+            }
+
+            EnsureOleDbConnection();
+            var schema = GetSchema("Tables");
+            foreach (DataRow row in schema.Rows)
+            {
+                var tableName = GetRowString(row, "TABLE_NAME");
+                if (string.IsNullOrWhiteSpace(tableName) || IsSystemOrTemporaryTableName(tableName))
+                    continue;
+
+                var tableType = GetRowString(row, "TABLE_TYPE");
+                if (string.IsNullOrWhiteSpace(tableType) || tableType.IndexOf("LINK", StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+
+                linkedTables.Add(new LinkedTableInfo
+                {
+                    Name = tableName,
+                    SourceTableName = string.Empty,
+                    ConnectString = string.Empty,
+                    SourceDatabasePath = string.Empty,
+                    Attributes = 0
+                });
+            }
+
+            return linkedTables
+                .OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        public LinkedTableInfo LinkTable(
+            string tableName,
+            string sourceDatabasePath,
+            string sourceTableName,
+            string? connectString = null,
+            bool overwrite = false)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            var normalizedTableName = NormalizeSchemaIdentifier(tableName, nameof(tableName), "Table name is required");
+            var normalizedSourceTableName = NormalizeSchemaIdentifier(sourceTableName, nameof(sourceTableName), "Source table name is required");
+            var normalizedSourcePath = NormalizeLinkSourceDatabasePath(sourceDatabasePath, nameof(sourceDatabasePath));
+            var normalizedConnectString = NormalizeLinkConnectString(connectString, normalizedSourcePath);
+
+            if (!string.IsNullOrWhiteSpace(_currentDatabasePath) &&
+                PathsMatch(_currentDatabasePath, normalizedSourcePath) &&
+                string.Equals(normalizedTableName, normalizedSourceTableName, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("Cannot create a linked table that points to itself.");
+            }
+
+            EnsureNoActiveTransaction(nameof(LinkTable));
+
+            var linkedInfo = ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("Failed to get current DAO database.");
+                var tableDefs = TryGetDynamicProperty(currentDb, "TableDefs")
+                    ?? throw new InvalidOperationException("DAO TableDefs collection is unavailable.");
+
+                var existing = FindTableDefWithRetry(accessApp, normalizedTableName);
+                if (existing != null)
+                {
+                    if (!overwrite)
+                        throw new InvalidOperationException($"Table already exists: {normalizedTableName}");
+
+                    if (!IsLinkedTableDef(existing))
+                        throw new InvalidOperationException($"Table '{normalizedTableName}' exists and is not a linked table. Refusing to overwrite.");
+
+                    var existingName = SafeToString(TryGetDynamicProperty(existing, "Name")) ?? normalizedTableName;
+                    _ = InvokeDynamicMethod(tableDefs, "Delete", existingName);
+                }
+
+                var tableDef = InvokeDynamicMethod(currentDb, "CreateTableDef", normalizedTableName)
+                    ?? throw new InvalidOperationException("Failed to create DAO TableDef.");
+                SetDynamicProperty(tableDef, "Connect", normalizedConnectString);
+                SetDynamicProperty(tableDef, "SourceTableName", normalizedSourceTableName);
+                _ = InvokeDynamicMethod(tableDefs, "Append", tableDef);
+                _ = InvokeDynamicMethod(tableDefs, "Refresh");
+
+                return new LinkedTableInfo
+                {
+                    Name = normalizedTableName,
+                    SourceTableName = normalizedSourceTableName,
+                    ConnectString = normalizedConnectString,
+                    SourceDatabasePath = normalizedSourcePath,
+                    Attributes = ToInt32(TryGetDynamicProperty(tableDef, "Attributes"))
+                };
+            },
+            requireExclusive: false,
+            releaseOleDb: true);
+
+            RefreshOleDbConnectionAfterSchemaMutation();
+            return linkedInfo;
+        }
+
+        public LinkedTableInfo RefreshLink(string tableName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            var normalizedTableName = NormalizeSchemaIdentifier(tableName, nameof(tableName), "Table name is required");
+            EnsureNoActiveTransaction(nameof(RefreshLink));
+
+            var linkedInfo = ExecuteComOperation(accessApp =>
+            {
+                var tableDef = FindTableDefWithRetry(accessApp, normalizedTableName)
+                    ?? throw new InvalidOperationException($"Table not found: {normalizedTableName}");
+                if (!IsLinkedTableDef(tableDef))
+                    throw new InvalidOperationException($"Table '{normalizedTableName}' is not a linked table.");
+
+                _ = InvokeDynamicMethod(tableDef, "RefreshLink");
+
+                var connectString = SafeToString(TryGetDynamicProperty(tableDef, "Connect")) ?? string.Empty;
+                return new LinkedTableInfo
+                {
+                    Name = normalizedTableName,
+                    SourceTableName = SafeToString(TryGetDynamicProperty(tableDef, "SourceTableName")) ?? string.Empty,
+                    ConnectString = connectString,
+                    SourceDatabasePath = ExtractDatabasePathFromConnectString(connectString) ?? string.Empty,
+                    Attributes = ToInt32(TryGetDynamicProperty(tableDef, "Attributes"))
+                };
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+
+            RefreshOleDbConnectionAfterSchemaMutation();
+            return linkedInfo;
+        }
+
+        public LinkedTableInfo RelinkTable(
+            string tableName,
+            string sourceDatabasePath,
+            string? sourceTableName = null,
+            string? connectString = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            var normalizedTableName = NormalizeSchemaIdentifier(tableName, nameof(tableName), "Table name is required");
+            var normalizedSourcePath = NormalizeLinkSourceDatabasePath(sourceDatabasePath, nameof(sourceDatabasePath));
+            var normalizedConnectString = NormalizeLinkConnectString(connectString, normalizedSourcePath);
+
+            string? normalizedSourceTableName = null;
+            if (!string.IsNullOrWhiteSpace(sourceTableName))
+                normalizedSourceTableName = NormalizeSchemaIdentifier(sourceTableName, nameof(sourceTableName), "Source table name is required");
+
+            EnsureNoActiveTransaction(nameof(RelinkTable));
+
+            var linkedInfo = ExecuteComOperation(accessApp =>
+            {
+                var tableDef = FindTableDefWithRetry(accessApp, normalizedTableName)
+                    ?? throw new InvalidOperationException($"Table not found: {normalizedTableName}");
+                if (!IsLinkedTableDef(tableDef))
+                    throw new InvalidOperationException($"Table '{normalizedTableName}' is not a linked table.");
+
+                SetDynamicProperty(tableDef, "Connect", normalizedConnectString);
+                if (!string.IsNullOrWhiteSpace(normalizedSourceTableName))
+                {
+                    var currentSourceTableName = SafeToString(TryGetDynamicProperty(tableDef, "SourceTableName")) ?? string.Empty;
+                    if (!string.Equals(currentSourceTableName, normalizedSourceTableName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        try
+                        {
+                            SetDynamicProperty(tableDef, "SourceTableName", normalizedSourceTableName);
+                        }
+                        catch (Exception ex)
+                        {
+                            throw new InvalidOperationException(
+                                "Updating source_table_name on an existing linked table is not supported by this Access provider. Recreate the linked table instead.",
+                                ex);
+                        }
+                    }
+                }
+
+                _ = InvokeDynamicMethod(tableDef, "RefreshLink");
+
+                var effectiveSourceTableName = SafeToString(TryGetDynamicProperty(tableDef, "SourceTableName")) ?? string.Empty;
+                var effectiveConnectString = SafeToString(TryGetDynamicProperty(tableDef, "Connect")) ?? normalizedConnectString;
+                return new LinkedTableInfo
+                {
+                    Name = normalizedTableName,
+                    SourceTableName = effectiveSourceTableName,
+                    ConnectString = effectiveConnectString,
+                    SourceDatabasePath = ExtractDatabasePathFromConnectString(effectiveConnectString) ?? normalizedSourcePath,
+                    Attributes = ToInt32(TryGetDynamicProperty(tableDef, "Attributes"))
+                };
+            },
+            requireExclusive: false,
+            releaseOleDb: true);
+
+            RefreshOleDbConnectionAfterSchemaMutation();
+            return linkedInfo;
+        }
+
+        public void UnlinkTable(string tableName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            var normalizedTableName = NormalizeSchemaIdentifier(tableName, nameof(tableName), "Table name is required");
+
+            EnsureNoActiveTransaction(nameof(UnlinkTable));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("Failed to get current DAO database.");
+                var tableDefs = TryGetDynamicProperty(currentDb, "TableDefs")
+                    ?? throw new InvalidOperationException("DAO TableDefs collection is unavailable.");
+                var tableDef = FindTableDefWithRetry(accessApp, normalizedTableName)
+                    ?? throw new InvalidOperationException($"Table not found: {normalizedTableName}");
+
+                if (!IsLinkedTableDef(tableDef))
+                    throw new InvalidOperationException($"Table '{normalizedTableName}' is not a linked table.");
+
+                var daoName = SafeToString(TryGetDynamicProperty(tableDef, "Name")) ?? normalizedTableName;
+                _ = InvokeDynamicMethod(tableDefs, "Delete", daoName);
+                _ = InvokeDynamicMethod(tableDefs, "Refresh");
+            },
+            requireExclusive: false,
+            releaseOleDb: true);
+
+            RefreshOleDbConnectionAfterSchemaMutation();
+        }
+
+        public TransactionStatusInfo BeginTransaction(string? isolationLevel = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            PruneInvalidTransactionState();
+            if (HasActiveTransaction())
+                throw new InvalidOperationException("A transaction is already active. Commit or rollback it before starting a new one.");
+
+            EnsureOleDbConnection();
+            var parsedIsolationLevel = ParseIsolationLevel(isolationLevel);
+
+            if (_activeDataProvider == DataProviderKind.Odbc)
+            {
+                try
+                {
+                    _odbcTransaction = _odbcConnection!.BeginTransaction(parsedIsolationLevel);
+                }
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException("Transactions are not supported by the active ODBC Access provider.", ex);
+                }
+            }
+            else
+            {
+                _oleDbTransaction = _oleDbConnection!.BeginTransaction(parsedIsolationLevel);
+            }
+
+            _transactionStartedAtUtc = DateTimeOffset.UtcNow;
+
+            return GetTransactionStatus();
+        }
+
+        public TransactionStatusInfo CommitTransaction()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            var transaction = GetActiveTransaction()
+                ?? throw new InvalidOperationException("No active transaction to commit.");
+
+            try
+            {
+                if (transaction is OleDbTransaction oleDbTransaction)
+                {
+                    oleDbTransaction.Commit();
+                }
+                else if (transaction is OdbcTransaction odbcTransaction)
+                {
+                    odbcTransaction.Commit();
+                }
+            }
+            finally
+            {
+                ResetTransactionState(attemptRollback: false);
+            }
+
+            return GetTransactionStatus();
+        }
+
+        public TransactionStatusInfo RollbackTransaction()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            var transaction = GetActiveTransaction()
+                ?? throw new InvalidOperationException("No active transaction to rollback.");
+
+            try
+            {
+                if (transaction is OleDbTransaction oleDbTransaction)
+                {
+                    oleDbTransaction.Rollback();
+                }
+                else if (transaction is OdbcTransaction odbcTransaction)
+                {
+                    odbcTransaction.Rollback();
+                }
+            }
+            finally
+            {
+                ResetTransactionState(attemptRollback: false);
+            }
+
+            return GetTransactionStatus();
+        }
+
+        public TransactionStatusInfo GetTransactionStatus()
+        {
+            PruneInvalidTransactionState();
+            var transaction = GetActiveTransaction();
+
+            return new TransactionStatusInfo
+            {
+                Active = transaction != null,
+                IsolationLevel = transaction?.IsolationLevel.ToString(),
+                StartedAtUtc = _transactionStartedAtUtc
+            };
+        }
+
         public void CreateTable(string tableName, List<FieldInfo> fields)
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
@@ -421,7 +816,7 @@ namespace MS.Access.MCP.Interop
             }
 
             var createSql = $"CREATE TABLE [{tableName}] ({string.Join(", ", fieldDefinitions)})";
-            var command = new OleDbCommand(createSql, _oleDbConnection);
+            using var command = CreateCommand(createSql);
             command.ExecuteNonQuery();
         }
 
@@ -429,7 +824,7 @@ namespace MS.Access.MCP.Interop
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
             EnsureOleDbConnection();
-            var command = new OleDbCommand($"DROP TABLE [{tableName}]", _oleDbConnection);
+            using var command = CreateCommand($"DROP TABLE [{tableName}]");
             command.ExecuteNonQuery();
         }
 
@@ -569,7 +964,7 @@ namespace MS.Access.MCP.Interop
 
             try
             {
-                var schema = _oleDbConnection!.GetSchema("Indexes");
+                var schema = GetSchema("Indexes");
                 foreach (DataRow row in schema.Rows)
                 {
                     var indexedTable = GetRowString(row, "TABLE_NAME");
@@ -642,7 +1037,7 @@ namespace MS.Access.MCP.Interop
             var uniqueSql = unique ? "UNIQUE " : string.Empty;
             var columnSql = string.Join(", ", normalizedColumns.Select(c => $"[{EscapeSqlIdentifier(c)}]"));
             var sql = $"CREATE {uniqueSql}INDEX [{EscapeSqlIdentifier(indexName)}] ON [{EscapeSqlIdentifier(tableName)}] ({columnSql})";
-            using var command = new OleDbCommand(sql, _oleDbConnection);
+            using var command = CreateCommand(sql);
             command.ExecuteNonQuery();
         }
 
@@ -654,7 +1049,7 @@ namespace MS.Access.MCP.Interop
             EnsureOleDbConnection();
 
             var sql = $"DROP INDEX [{EscapeSqlIdentifier(indexName)}] ON [{EscapeSqlIdentifier(tableName)}]";
-            using var command = new OleDbCommand(sql, _oleDbConnection);
+            using var command = CreateCommand(sql);
             command.ExecuteNonQuery();
         }
 
@@ -665,7 +1060,7 @@ namespace MS.Access.MCP.Interop
             if (maxRows <= 0) throw new ArgumentOutOfRangeException(nameof(maxRows), "maxRows must be greater than 0");
             EnsureOleDbConnection();
 
-            using var command = new OleDbCommand(sql, _oleDbConnection);
+            using var command = CreateCommand(sql);
             using var reader = command.ExecuteReader();
 
             if (reader == null)
@@ -778,7 +1173,7 @@ namespace MS.Access.MCP.Interop
             if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required", nameof(tableName));
             EnsureOleDbConnection();
 
-            var columnsSchema = _oleDbConnection!.GetSchema("Columns", new string[] { null!, null!, tableName, null! });
+            var columnsSchema = GetSchema("Columns", new string[] { null!, null!, tableName, null! });
             if (columnsSchema.Rows.Count == 0)
             {
                 throw new InvalidOperationException($"Table not found or has no visible columns: {tableName}");
@@ -791,9 +1186,7 @@ namespace MS.Access.MCP.Interop
             {
                 var columnName = GetRowString(row, "COLUMN_NAME") ?? string.Empty;
                 var dataTypeCode = GetRowInt(row, "DATA_TYPE");
-                var dataTypeName = dataTypeCode.HasValue
-                    ? ((OleDbType)dataTypeCode.Value).ToString()
-                    : "Unknown";
+                var dataTypeName = GetProviderDataTypeName(row, dataTypeCode);
 
                 columns.Add(new TableColumnDefinition
                 {
@@ -801,10 +1194,10 @@ namespace MS.Access.MCP.Interop
                     DataType = dataTypeName,
                     DataTypeCode = dataTypeCode,
                     OrdinalPosition = GetRowInt(row, "ORDINAL_POSITION"),
-                    MaxLength = GetRowInt(row, "CHARACTER_MAXIMUM_LENGTH"),
+                    MaxLength = GetRowInt(row, "CHARACTER_MAXIMUM_LENGTH") ?? GetRowInt(row, "COLUMN_SIZE"),
                     NumericPrecision = GetRowInt(row, "NUMERIC_PRECISION"),
                     NumericScale = GetRowInt(row, "NUMERIC_SCALE"),
-                    IsNullable = string.Equals(GetRowString(row, "IS_NULLABLE"), "YES", StringComparison.OrdinalIgnoreCase),
+                    IsNullable = IsColumnNullable(row),
                     IsPrimaryKey = primaryKeyColumns.Contains(columnName),
                     HasDefault = GetRowBool(row, "COLUMN_HASDEFAULT"),
                     DefaultValue = GetRowString(row, "COLUMN_DEFAULT")
@@ -868,7 +1261,7 @@ namespace MS.Access.MCP.Interop
 
             try
             {
-                var command = new OleDbCommand("SELECT Name FROM MSysObjects WHERE Type = -32768", _oleDbConnection);
+                using var command = CreateCommand("SELECT Name FROM MSysObjects WHERE Type = -32768");
                 using var reader = command.ExecuteReader();
                 while (reader.Read())
                 {
@@ -917,7 +1310,7 @@ namespace MS.Access.MCP.Interop
 
             try
             {
-                var command = new OleDbCommand("SELECT Name FROM MSysObjects WHERE Type = -32764", _oleDbConnection);
+                using var command = CreateCommand("SELECT Name FROM MSysObjects WHERE Type = -32764");
                 using var reader = command.ExecuteReader();
                 while (reader.Read())
                 {
@@ -966,7 +1359,7 @@ namespace MS.Access.MCP.Interop
 
             try
             {
-                var command = new OleDbCommand("SELECT Name FROM MSysObjects WHERE Type = -32766", _oleDbConnection);
+                using var command = CreateCommand("SELECT Name FROM MSysObjects WHERE Type = -32766");
                 using var reader = command.ExecuteReader();
                 while (reader.Read())
                 {
@@ -1142,7 +1535,7 @@ namespace MS.Access.MCP.Interop
 
             try
             {
-                var command = new OleDbCommand("SELECT Name FROM MSysObjects WHERE Type = -32761", _oleDbConnection);
+                using var command = CreateCommand("SELECT Name FROM MSysObjects WHERE Type = -32761");
                 using var reader = command.ExecuteReader();
                 while (reader.Read())
                 {
@@ -1250,7 +1643,7 @@ namespace MS.Access.MCP.Interop
 
             try
             {
-                var command = new OleDbCommand("SELECT Name FROM MSysObjects WHERE Type = -32761", _oleDbConnection);
+                using var command = CreateCommand("SELECT Name FROM MSysObjects WHERE Type = -32761");
                 using var reader = command.ExecuteReader();
                 var modules = new List<VBAModuleInfo>();
                 while (reader.Read())
@@ -1383,7 +1776,7 @@ namespace MS.Access.MCP.Interop
             EnsureOleDbConnection();
 
             var systemTables = new List<SystemTableInfo>();
-            var schema = _oleDbConnection!.GetSchema("Tables");
+            var schema = GetSchema("Tables");
             
             foreach (System.Data.DataRow row in schema.Rows)
             {
@@ -1413,7 +1806,7 @@ namespace MS.Access.MCP.Interop
             try
             {
                 // Query MSysObjects table for object metadata
-                var command = new OleDbCommand("SELECT * FROM MSysObjects", _oleDbConnection);
+                using var command = CreateCommand("SELECT * FROM MSysObjects");
                 using var reader = command.ExecuteReader();
                 
                 while (reader.Read())
@@ -1461,8 +1854,8 @@ namespace MS.Access.MCP.Interop
             try
             {
                 EnsureOleDbConnection();
-                var command = new OleDbCommand("SELECT COUNT(*) FROM MSysObjects WHERE Name = ? AND Type = -32768", _oleDbConnection);
-                command.Parameters.AddWithValue("@Name", formName);
+                using var command = CreateCommand("SELECT COUNT(*) FROM MSysObjects WHERE Name = ? AND Type = -32768");
+                AddCommandParameter(command, "@Name", formName);
                 var count = Convert.ToInt32(command.ExecuteScalar());
                 return count > 0;
             }
@@ -1905,7 +2298,7 @@ namespace MS.Access.MCP.Interop
             try
             {
                 EnsureOleDbConnection();
-                var schema = _oleDbConnection!.GetSchema("Columns", new string[] { null!, null!, tableName });
+                var schema = GetSchema("Columns", new string[] { null!, null!, tableName, null! });
                 
                 foreach (System.Data.DataRow row in schema.Rows)
                 {
@@ -1932,7 +2325,7 @@ namespace MS.Access.MCP.Interop
             try
             {
                 EnsureOleDbConnection();
-                var command = new OleDbCommand($"SELECT COUNT(*) FROM [{tableName}]", _oleDbConnection);
+                using var command = CreateCommand($"SELECT COUNT(*) FROM [{tableName}]");
                 return Convert.ToInt64(command.ExecuteScalar());
             }
             catch
@@ -1943,6 +2336,8 @@ namespace MS.Access.MCP.Interop
 
         private void ExecuteSchemaNonQuery(string sql)
         {
+            EnsureNoActiveTransaction("Schema mutation");
+
             Exception? lastRecoverableError = null;
 
             for (var attempt = 0; attempt < 2; attempt++)
@@ -1951,7 +2346,7 @@ namespace MS.Access.MCP.Interop
 
                 try
                 {
-                    using var command = new OleDbCommand(sql, _oleDbConnection);
+                    using var command = CreateCommand(sql);
                     command.ExecuteNonQuery();
                     RefreshOleDbConnectionAfterSchemaMutation();
                     return;
@@ -1959,9 +2354,7 @@ namespace MS.Access.MCP.Interop
                 catch (Exception ex) when (attempt == 0 && IsRecoverableOleDbLockError(ex) && TryReleaseExclusiveAccessLock())
                 {
                     lastRecoverableError = ex;
-                    _oleDbConnection?.Close();
-                    _oleDbConnection?.Dispose();
-                    _oleDbConnection = null;
+                    CloseSqlConnections();
                 }
             }
 
@@ -1975,14 +2368,12 @@ namespace MS.Access.MCP.Interop
 
             try
             {
-                OpenOleDbConnection(_currentDatabasePath);
+                OpenPreferredConnection(_currentDatabasePath);
             }
             catch
             {
                 // Defer refresh to the next operation when immediate reopen is unavailable.
-                _oleDbConnection?.Close();
-                _oleDbConnection?.Dispose();
-                _oleDbConnection = null;
+                CloseSqlConnections();
             }
         }
 
@@ -1996,7 +2387,7 @@ namespace MS.Access.MCP.Interop
         {
             EnsureOleDbConnection();
 
-            var schema = _oleDbConnection!.GetSchema("Tables");
+            var schema = GetSchema("Tables");
             foreach (DataRow row in schema.Rows)
             {
                 var currentName = GetRowString(row, "TABLE_NAME");
@@ -2021,7 +2412,7 @@ namespace MS.Access.MCP.Interop
         {
             EnsureOleDbConnection();
 
-            var schema = _oleDbConnection!.GetSchema("Columns", new string[] { null!, null!, tableName, null! });
+            var schema = GetSchema("Columns", new string[] { null!, null!, tableName, null! });
             foreach (DataRow row in schema.Rows)
             {
                 var currentName = GetRowString(row, "COLUMN_NAME");
@@ -2300,7 +2691,7 @@ namespace MS.Access.MCP.Interop
 
             try
             {
-                var schema = _oleDbConnection!.GetSchema("ForeignKeys");
+                var schema = GetSchema("ForeignKeys");
                 foreach (DataRow row in schema.Rows)
                 {
                     var relationshipName = GetRowStringByCandidates(row, "FK_NAME", "CONSTRAINT_NAME", "RELATIONSHIP_NAME");
@@ -2539,7 +2930,7 @@ namespace MS.Access.MCP.Interop
 
             try
             {
-                var schema = _oleDbConnection!.GetSchema("ForeignKeys");
+                var schema = GetSchema("ForeignKeys");
                 foreach (DataRow row in schema.Rows)
                 {
                     var existingName = GetRowStringByCandidates(row, "FK_NAME", "CONSTRAINT_NAME", "RELATIONSHIP_NAME");
@@ -2566,7 +2957,7 @@ namespace MS.Access.MCP.Interop
 
             try
             {
-                var schema = _oleDbConnection!.GetSchema("Columns", new string[] { null!, null!, tableName, null! });
+                var schema = GetSchema("Columns", new string[] { null!, null!, tableName, null! });
                 foreach (DataRow row in schema.Rows)
                 {
                     var columnName = GetRowString(row, "COLUMN_NAME");
@@ -2716,45 +3107,414 @@ namespace MS.Access.MCP.Interop
             return dataTypeName;
         }
 
+        private IDbCommand CreateCommand(string sql)
+        {
+            if (string.IsNullOrWhiteSpace(sql))
+                throw new ArgumentException("SQL is required.", nameof(sql));
+
+            EnsureOleDbConnection();
+            PruneInvalidTransactionState();
+
+            IDbCommand command;
+            if (_activeDataProvider == DataProviderKind.Odbc)
+            {
+                command = new OdbcCommand(sql, _odbcConnection);
+            }
+            else
+            {
+                command = new OleDbCommand(sql, _oleDbConnection);
+            }
+
+            if (_oleDbTransaction != null)
+            {
+                var transactionConnection = _oleDbTransaction.Connection;
+                if (transactionConnection == null || !ReferenceEquals(transactionConnection, _oleDbConnection))
+                {
+                    ResetTransactionState(attemptRollback: false);
+                    throw new InvalidOperationException("Active transaction is no longer valid because the database connection changed.");
+                }
+
+                command.Transaction = _oleDbTransaction;
+            }
+            else if (_odbcTransaction != null)
+            {
+                var transactionConnection = _odbcTransaction.Connection;
+                if (transactionConnection == null || !ReferenceEquals(transactionConnection, _odbcConnection))
+                {
+                    ResetTransactionState(attemptRollback: false);
+                    throw new InvalidOperationException("Active transaction is no longer valid because the database connection changed.");
+                }
+
+                command.Transaction = _odbcTransaction;
+            }
+
+            return command;
+        }
+
+        private static void AddCommandParameter(IDbCommand command, string parameterName, object? value)
+        {
+            var parameter = command.CreateParameter();
+            parameter.ParameterName = parameterName;
+            parameter.Value = value ?? DBNull.Value;
+            command.Parameters.Add(parameter);
+        }
+
+        private void EnsureNoActiveTransaction(string operationName)
+        {
+            PruneInvalidTransactionState();
+            if (HasActiveTransaction())
+                throw new InvalidOperationException($"{operationName} is not allowed while a transaction is active. Commit or rollback first.");
+        }
+
+        private static string NormalizeLinkSourceDatabasePath(string sourceDatabasePath, string paramName)
+        {
+            if (string.IsNullOrWhiteSpace(sourceDatabasePath))
+                throw new ArgumentException("Source database path is required.", paramName);
+
+            string fullPath;
+            try
+            {
+                fullPath = Path.GetFullPath(sourceDatabasePath.Trim());
+            }
+            catch (Exception ex)
+            {
+                throw new ArgumentException("Source database path is invalid.", paramName, ex);
+            }
+
+            if (!File.Exists(fullPath))
+                throw new FileNotFoundException($"Source database file not found: {fullPath}");
+
+            return fullPath;
+        }
+
+        private static string NormalizeLinkConnectString(string? connectString, string normalizedSourceDatabasePath)
+        {
+            if (!string.IsNullOrWhiteSpace(connectString))
+            {
+                var normalized = connectString.Trim();
+
+                // Accept common caller formats like:
+                //   DATABASE=C:\db.accdb
+                //   ;DATABASE=C:\db.accdb
+                //   MS Access;DATABASE=C:\db.accdb
+                if (normalized.StartsWith("MS Access;", StringComparison.OrdinalIgnoreCase))
+                {
+                    normalized = normalized.Substring("MS Access".Length);
+                }
+
+                if (!normalized.StartsWith(";", StringComparison.Ordinal))
+                {
+                    normalized = ";" + normalized;
+                }
+
+                if (!normalized.EndsWith(";", StringComparison.Ordinal))
+                {
+                    normalized += ";";
+                }
+
+                return normalized;
+            }
+
+            return BuildAccessLinkConnectString(normalizedSourceDatabasePath);
+        }
+
+        private static string BuildAccessLinkConnectString(string normalizedSourceDatabasePath)
+        {
+            // DAO link strings expect a trailing semicolon terminator.
+            return $";DATABASE={normalizedSourceDatabasePath};";
+        }
+
+        private static string? ExtractDatabasePathFromConnectString(string? connectString)
+        {
+            if (string.IsNullOrWhiteSpace(connectString))
+                return null;
+
+            var match = Regex.Match(connectString, @"(?:^|;)\s*(DATABASE|DBQ|Data Source)\s*=\s*(?<value>[^;]+)", RegexOptions.IgnoreCase);
+            if (!match.Success)
+                return null;
+
+            var value = match.Groups["value"].Value.Trim().Trim('"');
+            if (string.IsNullOrWhiteSpace(value))
+                return null;
+
+            try
+            {
+                return Path.GetFullPath(value);
+            }
+            catch
+            {
+                return value;
+            }
+        }
+
+        private static bool IsLinkedTableDef(dynamic tableDef)
+        {
+            var connectString = SafeToString(TryGetDynamicProperty(tableDef, "Connect"));
+            return !string.IsNullOrWhiteSpace(connectString);
+        }
+
+        private static bool IsSystemOrTemporaryTableName(string tableName)
+        {
+            return tableName.StartsWith("~", StringComparison.Ordinal) ||
+                   tableName.StartsWith("MSys", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static IsolationLevel ParseIsolationLevel(string? isolationLevel)
+        {
+            if (string.IsNullOrWhiteSpace(isolationLevel))
+                return IsolationLevel.ReadCommitted;
+
+            var normalized = isolationLevel
+                .Trim()
+                .Replace("_", string.Empty, StringComparison.Ordinal)
+                .Replace("-", string.Empty, StringComparison.Ordinal)
+                .ToLowerInvariant();
+
+            return normalized switch
+            {
+                "chaos" => IsolationLevel.Chaos,
+                "readuncommitted" => IsolationLevel.ReadUncommitted,
+                "readcommitted" => IsolationLevel.ReadCommitted,
+                "repeatableread" => IsolationLevel.RepeatableRead,
+                "serializable" => IsolationLevel.Serializable,
+                "unspecified" => IsolationLevel.Unspecified,
+                _ => throw new ArgumentException("Unsupported isolation level. Valid values: read_committed, read_uncommitted, repeatable_read, serializable, chaos, unspecified.", nameof(isolationLevel))
+            };
+        }
+
+        private void PruneInvalidTransactionState()
+        {
+            if (_oleDbTransaction != null &&
+                (_oleDbConnection?.State != ConnectionState.Open || _oleDbTransaction.Connection == null))
+            {
+                ResetTransactionState(attemptRollback: false);
+            }
+
+            if (_odbcTransaction != null &&
+                (_odbcConnection?.State != ConnectionState.Open || _odbcTransaction.Connection == null))
+            {
+                ResetTransactionState(attemptRollback: false);
+            }
+        }
+
+        private bool HasActiveTransaction()
+        {
+            return _oleDbTransaction != null || _odbcTransaction != null;
+        }
+
+        private DbTransaction? GetActiveTransaction()
+        {
+            if (_oleDbTransaction != null)
+                return _oleDbTransaction;
+
+            return _odbcTransaction;
+        }
+
+        private void ResetTransactionState(bool attemptRollback)
+        {
+            if (_oleDbTransaction != null)
+            {
+                try
+                {
+                    if (attemptRollback)
+                        _oleDbTransaction.Rollback();
+                }
+                catch
+                {
+                    // Ignore rollback failures during cleanup.
+                }
+
+                try
+                {
+                    _oleDbTransaction.Dispose();
+                }
+                catch
+                {
+                    // Ignore disposal failures during cleanup.
+                }
+
+                _oleDbTransaction = null;
+            }
+
+            if (_odbcTransaction != null)
+            {
+                try
+                {
+                    if (attemptRollback)
+                        _odbcTransaction.Rollback();
+                }
+                catch
+                {
+                    // Ignore rollback failures during cleanup.
+                }
+
+                try
+                {
+                    _odbcTransaction.Dispose();
+                }
+                catch
+                {
+                    // Ignore disposal failures during cleanup.
+                }
+
+                _odbcTransaction = null;
+            }
+
+            _transactionStartedAtUtc = null;
+        }
+
         private void OpenOleDbConnection(string databasePath)
         {
-            _oleDbConnection?.Close();
-            _oleDbConnection?.Dispose();
+            ResetTransactionState(attemptRollback: true);
+            CloseSqlConnections();
 
             var connectionString = $"Provider=Microsoft.ACE.OLEDB.12.0;Data Source={databasePath};";
             _oleDbConnection = new OleDbConnection(connectionString);
             _oleDbConnection.Open();
+            _activeDataProvider = DataProviderKind.OleDb;
+            _preferredDataProvider = DataProviderKind.OleDb;
+        }
+
+        private void OpenOdbcConnection(string databasePath)
+        {
+            ResetTransactionState(attemptRollback: true);
+            CloseSqlConnections();
+
+            Exception? lastError = null;
+            foreach (var connectionString in BuildOdbcConnectionStrings(databasePath))
+            {
+                try
+                {
+                    var connection = new OdbcConnection(connectionString);
+                    connection.Open();
+                    _odbcConnection = connection;
+                    _activeDataProvider = DataProviderKind.Odbc;
+                    _preferredDataProvider = DataProviderKind.Odbc;
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex;
+                }
+            }
+
+            throw new InvalidOperationException(
+                $"Failed to open Access database via ODBC. Install a Microsoft Access ODBC driver (for example: Microsoft Access Driver (*.mdb, *.accdb)). Last ODBC error: {lastError?.Message}",
+                lastError);
+        }
+
+        private void OpenPreferredConnection(string databasePath)
+        {
+            var preferred = _preferredDataProvider == DataProviderKind.None ? DataProviderKind.OleDb : _preferredDataProvider;
+
+            if (preferred == DataProviderKind.Odbc)
+            {
+                Exception? odbcError = null;
+                try
+                {
+                    OpenOdbcConnection(databasePath);
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    odbcError = ex;
+                }
+
+                try
+                {
+                    OpenOleDbConnection(databasePath);
+                    return;
+                }
+                catch (Exception oleDbError)
+                {
+                    throw new AggregateException("Unable to open Access database using ODBC or OleDb providers.", odbcError!, oleDbError);
+                }
+            }
+
+            Exception? primaryError = null;
+            try
+            {
+                OpenOleDbConnection(databasePath);
+                return;
+            }
+            catch (Exception ex) when (IsRecoverableOleDbLockError(ex) && TryReleaseExclusiveAccessLock())
+            {
+                OpenOleDbConnection(databasePath);
+                return;
+            }
+            catch (Exception ex) when (ShouldUseOdbcFallbackForOleDbOpen(ex))
+            {
+                primaryError = ex;
+            }
+
+            if (primaryError == null)
+                throw new InvalidOperationException("Failed to open Access database.");
+
+            try
+            {
+                OpenOdbcConnection(databasePath);
+            }
+            catch (Exception odbcError)
+            {
+                throw new AggregateException("Unable to open Access database using OleDb or ODBC providers.", primaryError, odbcError);
+            }
+        }
+
+        private static IEnumerable<string> BuildOdbcConnectionStrings(string databasePath)
+        {
+            yield return $"Driver={{Microsoft Access Driver (*.mdb, *.accdb)}};Dbq={databasePath};";
+            yield return $"Driver={{Microsoft Access Driver (*.mdb, *.accdb)}};Dbq={databasePath};ExtendedAnsiSQL=1;";
+            yield return $"Driver={{Microsoft Access Driver (*.mdb)}};Dbq={databasePath};";
         }
 
         private void EnsureOleDbConnection()
         {
+            PruneInvalidTransactionState();
             if (_oleDbConnection?.State == ConnectionState.Open)
+            {
+                _activeDataProvider = DataProviderKind.OleDb;
                 return;
+            }
+
+            if (_odbcConnection?.State == ConnectionState.Open)
+            {
+                _activeDataProvider = DataProviderKind.Odbc;
+                return;
+            }
 
             if (string.IsNullOrWhiteSpace(_currentDatabasePath))
                 throw new InvalidOperationException("Not connected to database");
 
-            try
-            {
-                OpenOleDbConnection(_currentDatabasePath);
-            }
-            catch (Exception ex) when (IsRecoverableOleDbLockError(ex) && TryReleaseExclusiveAccessLock())
-            {
-                OpenOleDbConnection(_currentDatabasePath);
-            }
+            OpenPreferredConnection(_currentDatabasePath);
+        }
+
+        private void CloseSqlConnections()
+        {
+            _oleDbConnection?.Close();
+            _oleDbConnection?.Dispose();
+            _oleDbConnection = null;
+
+            _odbcConnection?.Close();
+            _odbcConnection?.Dispose();
+            _odbcConnection = null;
+
+            _activeDataProvider = DataProviderKind.None;
         }
 
         private void ExecuteWithOleDbReleased(Action action)
         {
+            EnsureNoActiveTransaction("Temporarily releasing OleDb connection");
+
             var isOuterScope = _oleDbReleaseDepth == 0;
             if (isOuterScope)
             {
                 _restoreOleDbAfterRelease = IsConnected && !string.IsNullOrWhiteSpace(_currentDatabasePath);
                 if (_restoreOleDbAfterRelease)
                 {
-                    _oleDbConnection?.Close();
-                    _oleDbConnection?.Dispose();
-                    _oleDbConnection = null;
+                    _providerToRestoreAfterRelease = _activeDataProvider == DataProviderKind.None
+                        ? _preferredDataProvider
+                        : _activeDataProvider;
+                    CloseSqlConnections();
                 }
             }
 
@@ -2768,19 +3528,23 @@ namespace MS.Access.MCP.Interop
                 _oleDbReleaseDepth--;
                 if (isOuterScope)
                 {
-                    if (_restoreOleDbAfterRelease && _oleDbConnection == null && !string.IsNullOrWhiteSpace(_currentDatabasePath))
+                    if (_restoreOleDbAfterRelease && _oleDbConnection == null && _odbcConnection == null && !string.IsNullOrWhiteSpace(_currentDatabasePath))
                     {
                         try
                         {
-                            OpenOleDbConnection(_currentDatabasePath);
+                            _preferredDataProvider = _providerToRestoreAfterRelease == DataProviderKind.None
+                                ? _preferredDataProvider
+                                : _providerToRestoreAfterRelease;
+                            OpenPreferredConnection(_currentDatabasePath);
                         }
                         catch
                         {
-                            // Defer reconnection until next OleDb operation.
+                            // Defer reconnection until next SQL operation.
                         }
                     }
 
                     _restoreOleDbAfterRelease = false;
+                    _providerToRestoreAfterRelease = DataProviderKind.None;
                 }
             }
         }
@@ -2992,6 +3756,60 @@ namespace MS.Access.MCP.Interop
             }
         }
 
+        private DataTable GetSchema(string collectionName)
+        {
+            EnsureOleDbConnection();
+
+            return _activeDataProvider switch
+            {
+                DataProviderKind.Odbc => _odbcConnection!.GetSchema(collectionName),
+                _ => _oleDbConnection!.GetSchema(collectionName)
+            };
+        }
+
+        private DataTable GetSchema(string collectionName, string[] restrictions)
+        {
+            EnsureOleDbConnection();
+
+            return _activeDataProvider switch
+            {
+                DataProviderKind.Odbc => _odbcConnection!.GetSchema(collectionName, restrictions),
+                _ => _oleDbConnection!.GetSchema(collectionName, restrictions)
+            };
+        }
+
+        private string GetProviderDataTypeName(DataRow schemaRow, int? dataTypeCode)
+        {
+            var providerTypeName = GetRowString(schemaRow, "TYPE_NAME");
+            if (!string.IsNullOrWhiteSpace(providerTypeName))
+                return providerTypeName;
+
+            if (!dataTypeCode.HasValue)
+                return "Unknown";
+
+            if (_activeDataProvider == DataProviderKind.Odbc)
+                return dataTypeCode.Value.ToString();
+
+            return ((OleDbType)dataTypeCode.Value).ToString();
+        }
+
+        private static bool ShouldUseOdbcFallbackForOleDbOpen(Exception ex)
+        {
+            if (ex is COMException comException && (uint)comException.ErrorCode == 0x80040154)
+                return true;
+
+            var message = ex.Message ?? string.Empty;
+            if ((message.IndexOf("Microsoft.ACE.OLEDB.12.0", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                 message.IndexOf("not registered", StringComparison.OrdinalIgnoreCase) >= 0) ||
+                message.IndexOf("provider cannot be found", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                message.IndexOf("class not registered", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+
+            return ex.InnerException != null && ShouldUseOdbcFallbackForOleDbOpen(ex.InnerException);
+        }
+
         private static bool IsRecoverableOleDbLockError(Exception ex)
         {
             var message = ex.Message ?? string.Empty;
@@ -3134,7 +3952,7 @@ namespace MS.Access.MCP.Interop
             try
             {
                 EnsureOleDbConnection();
-                var schema = _oleDbConnection!.GetSchema("ForeignKeys");
+                var schema = GetSchema("ForeignKeys");
                 foreach (DataRow row in schema.Rows)
                 {
                     var schemaName = row["FK_NAME"]?.ToString();
@@ -3155,7 +3973,7 @@ namespace MS.Access.MCP.Interop
             try
             {
                 EnsureOleDbConnection();
-                var schema = _oleDbConnection!.GetSchema("ForeignKeys");
+                var schema = GetSchema("ForeignKeys");
                 var candidateTables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
                 foreach (DataRow row in schema.Rows)
@@ -3174,7 +3992,7 @@ namespace MS.Access.MCP.Interop
                     var sql = $"ALTER TABLE [{EscapeSqlIdentifier(tableName)}] DROP CONSTRAINT [{EscapeSqlIdentifier(relationshipName)}]";
                     try
                     {
-                        using var command = new OleDbCommand(sql, _oleDbConnection);
+                        using var command = CreateCommand(sql);
                         command.ExecuteNonQuery();
                         return true;
                     }
@@ -3988,7 +4806,7 @@ namespace MS.Access.MCP.Interop
 
             try
             {
-                var indexes = _oleDbConnection!.GetSchema("Indexes");
+                var indexes = GetSchema("Indexes");
                 foreach (DataRow row in indexes.Rows)
                 {
                     var indexedTable = GetRowString(row, "TABLE_NAME");
@@ -4053,6 +4871,17 @@ namespace MS.Access.MCP.Interop
                 string s when bool.TryParse(s, out var parsed) => parsed,
                 _ => Convert.ToInt32(value) != 0
             };
+        }
+
+        private static bool IsColumnNullable(DataRow row)
+        {
+            var isNullable = GetRowString(row, "IS_NULLABLE");
+            if (!string.IsNullOrWhiteSpace(isNullable))
+                return string.Equals(isNullable, "YES", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(isNullable, "TRUE", StringComparison.OrdinalIgnoreCase);
+
+            var nullableCode = GetRowInt(row, "NULLABLE");
+            return nullableCode.HasValue && nullableCode.Value != 0;
         }
 
         #endregion
@@ -4121,6 +4950,22 @@ namespace MS.Access.MCP.Interop
         public bool CascadeUpdate { get; set; }
         public bool CascadeDelete { get; set; }
         public string Attributes { get; set; } = "";
+    }
+
+    public class LinkedTableInfo
+    {
+        public string Name { get; set; } = "";
+        public string SourceTableName { get; set; } = "";
+        public string ConnectString { get; set; } = "";
+        public string SourceDatabasePath { get; set; } = "";
+        public int Attributes { get; set; }
+    }
+
+    public class TransactionStatusInfo
+    {
+        public bool Active { get; set; }
+        public string? IsolationLevel { get; set; }
+        public DateTimeOffset? StartedAtUtc { get; set; }
     }
 
     public class FormInfo
