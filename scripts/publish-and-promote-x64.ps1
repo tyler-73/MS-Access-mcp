@@ -451,12 +451,34 @@ if (-not $SkipSmokeTest) {
         self_contained = $SelfContained
         smoke_test_passed = $true
         regression_run = [bool]$RunRegression
+        regression_passed = [bool]$RunRegression
         git_commit = $gitCommit
     }
 
     $validationManifestJson = $validationManifest | ConvertTo-Json -Depth 10
     Set-Content -LiteralPath $validationManifestPath -Value $validationManifestJson -Encoding utf8
+
+    $writtenManifest = Get-Content -LiteralPath $validationManifestPath -Raw | ConvertFrom-Json -ErrorAction Stop
+    foreach ($requiredField in @("git_commit", "regression_run", "regression_passed")) {
+        if ($null -eq $writtenManifest.PSObject.Properties[$requiredField]) {
+            throw "Validation manifest verification failed: missing '$requiredField' field."
+        }
+    }
+
+    $writtenRegressionRun = $writtenManifest.PSObject.Properties["regression_run"].Value
+    if (($writtenRegressionRun -isnot [bool]) -or ([bool]$writtenRegressionRun -ne [bool]$RunRegression)) {
+        throw "Validation manifest verification failed: regression_run does not match -RunRegression."
+    }
+
+    $writtenRegressionPassed = $writtenManifest.PSObject.Properties["regression_passed"].Value
+    if (($writtenRegressionPassed -isnot [bool]) -or ([bool]$writtenRegressionPassed -ne [bool]$RunRegression)) {
+        throw "Validation manifest verification failed: regression_passed does not match -RunRegression."
+    }
+
     Write-Host "Validation manifest written: $validationManifestPath"
+    if (-not $RunRegression) {
+        Write-Warning "Validation manifest is smoke-backed only (regression_run=false). Strict repair mode (-RequireRegressionBackedManifest) will reject this binary unless explicitly overridden."
+    }
 }
 else {
     if (Test-Path -LiteralPath $validationManifestPath) {

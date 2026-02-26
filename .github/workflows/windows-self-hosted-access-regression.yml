@@ -50,11 +50,43 @@ jobs:
         run: |
           $publishDir = Join-Path $env:RUNNER_TEMP "mcp-server-official-x64"
           $serverExe = Join-Path $publishDir "MS.Access.MCP.Official.exe"
+          $fullRegressionLog = Join-Path $env:RUNNER_TEMP "full_toolset_regression.log"
           if (-not (Test-Path -LiteralPath $serverExe)) {
             throw "Server executable not found: $serverExe"
           }
 
-          & .\tests\full_toolset_regression.ps1 -ServerExe $serverExe -DatabasePath $env:ACCESS_DATABASE_PATH
+          & .\tests\full_toolset_regression.ps1 -ServerExe $serverExe -DatabasePath $env:ACCESS_DATABASE_PATH 2>&1 | Tee-Object -FilePath $fullRegressionLog
           if ($LASTEXITCODE -ne 0) {
             throw "Regression script failed with exit code $LASTEXITCODE."
+          }
+
+          $fullRegressionOutput = Get-Content -LiteralPath $fullRegressionLog -Raw
+          if ($fullRegressionOutput -notmatch "TOTAL_FAIL=0") {
+            throw "Regression output did not contain TOTAL_FAIL=0."
+          }
+          if ($fullRegressionOutput -notmatch "database_file_tools_coverage:") {
+            throw "Regression output did not include database lifecycle coverage markers."
+          }
+
+      - name: Run negative-path regression
+        shell: pwsh
+        run: |
+          $publishDir = Join-Path $env:RUNNER_TEMP "mcp-server-official-x64"
+          $serverExe = Join-Path $publishDir "MS.Access.MCP.Official.exe"
+          $negativeRegressionLog = Join-Path $env:RUNNER_TEMP "full_toolset_negative_paths.log"
+          if (-not (Test-Path -LiteralPath $serverExe)) {
+            throw "Server executable not found: $serverExe"
+          }
+
+          & .\tests\full_toolset_negative_paths.ps1 -ServerExe $serverExe -DatabasePath $env:ACCESS_DATABASE_PATH 2>&1 | Tee-Object -FilePath $negativeRegressionLog
+          if ($LASTEXITCODE -ne 0) {
+            throw "Negative-path regression failed with exit code $LASTEXITCODE."
+          }
+
+          $negativeRegressionOutput = Get-Content -LiteralPath $negativeRegressionLog -Raw
+          if ($negativeRegressionOutput -notmatch "NEGATIVE_PATHS_PASS=1") {
+            throw "Negative-path output did not contain NEGATIVE_PATHS_PASS=1."
+          }
+          if ($negativeRegressionOutput -notmatch "connect_access_secure_arg_detected=") {
+            throw "Negative-path output did not include secure connect argument coverage marker."
           }

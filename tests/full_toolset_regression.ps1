@@ -1,7 +1,10 @@
 param(
+    [Alias("ServerExePath")]
     [string]$ServerExe = "$PSScriptRoot\..\mcp-server-official-x64\MS.Access.MCP.Official.exe",
     [string]$DatabasePath = $(if ($env:ACCESS_DATABASE_PATH) { $env:ACCESS_DATABASE_PATH } else { "$env:USERPROFILE\Documents\MyDatabase.accdb" }),
-    [switch]$NoCleanup
+    [switch]$NoCleanup,
+    [switch]$AllowCoverageSkips,
+    [switch]$IncludeUiCoverage
 )
 
 $ErrorActionPreference = "Stop"
@@ -45,6 +48,119 @@ function Add-ToolCall {
     })
 }
 
+$script:TrackedMsAccessPids = @{}
+
+function Get-NormalizedExecutablePath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $null
+    }
+
+    try {
+        $resolved = Resolve-Path -LiteralPath $Path -ErrorAction SilentlyContinue
+        if ($resolved) {
+            return [string]$resolved.ProviderPath
+        }
+    }
+    catch {
+    }
+
+    try {
+        return [System.IO.Path]::GetFullPath($Path)
+    }
+    catch {
+        return $Path
+    }
+}
+
+function Get-MsAccessProcessSnapshot {
+    $snapshot = @{}
+    foreach ($process in @(Get-Process -Name MSACCESS -ErrorAction SilentlyContinue)) {
+        $startTicks = $null
+        try {
+            $startTicks = $process.StartTime.ToUniversalTime().Ticks
+        }
+        catch {
+        }
+
+        $snapshot[[int]$process.Id] = $startTicks
+    }
+
+    return $snapshot
+}
+
+function Sync-TrackedMsAccessPids {
+    param([hashtable]$CurrentSnapshot = $null)
+
+    if ($null -eq $CurrentSnapshot) {
+        $CurrentSnapshot = Get-MsAccessProcessSnapshot
+    }
+
+    foreach ($trackedPid in @($script:TrackedMsAccessPids.Keys)) {
+        if (-not $CurrentSnapshot.ContainsKey($trackedPid)) {
+            $null = $script:TrackedMsAccessPids.Remove($trackedPid)
+            continue
+        }
+
+        $trackedStartTicks = $script:TrackedMsAccessPids[$trackedPid]
+        $currentStartTicks = $CurrentSnapshot[$trackedPid]
+        if ($null -ne $trackedStartTicks -and $null -ne $currentStartTicks -and $trackedStartTicks -ne $currentStartTicks) {
+            $null = $script:TrackedMsAccessPids.Remove($trackedPid)
+        }
+    }
+}
+
+function Register-NewMsAccessPids {
+    param([hashtable]$BeforeSnapshot)
+
+    if ($null -eq $BeforeSnapshot) {
+        $BeforeSnapshot = @{}
+    }
+
+    $afterSnapshot = Get-MsAccessProcessSnapshot
+    Sync-TrackedMsAccessPids -CurrentSnapshot $afterSnapshot
+
+    foreach ($processId in @($afterSnapshot.Keys)) {
+        if (-not $BeforeSnapshot.ContainsKey($processId)) {
+            $script:TrackedMsAccessPids[[int]$processId] = $afterSnapshot[$processId]
+            continue
+        }
+
+        $beforeStartTicks = $BeforeSnapshot[$processId]
+        $afterStartTicks = $afterSnapshot[$processId]
+        if ($null -ne $beforeStartTicks -and $null -ne $afterStartTicks -and $beforeStartTicks -ne $afterStartTicks) {
+            $script:TrackedMsAccessPids[[int]$processId] = $afterStartTicks
+        }
+    }
+}
+
+function Test-IsTrackedMsAccessProcess {
+    param(
+        [System.Diagnostics.Process]$Process,
+        [hashtable]$CurrentSnapshot
+    )
+
+    $processId = [int]$Process.Id
+    if (-not $script:TrackedMsAccessPids.ContainsKey($processId)) {
+        return $false
+    }
+
+    if (-not $CurrentSnapshot.ContainsKey($processId)) {
+        $null = $script:TrackedMsAccessPids.Remove($processId)
+        return $false
+    }
+
+    $trackedStartTicks = $script:TrackedMsAccessPids[$processId]
+    $currentStartTicks = $CurrentSnapshot[$processId]
+    if ($null -ne $trackedStartTicks -and $null -ne $currentStartTicks -and $trackedStartTicks -ne $currentStartTicks) {
+        $null = $script:TrackedMsAccessPids.Remove($processId)
+        return $false
+    }
+
+    return $true
+}
+
 function Invoke-McpBatch {
     param(
         [string]$ExePath,
@@ -80,7 +196,15 @@ function Invoke-McpBatch {
         } | ConvertTo-Json -Depth 50 -Compress))
     }
 
-    $rawLines = @((($jsonLines -join "`n") | & $ExePath))
+    $msAccessSnapshotBefore = Get-MsAccessProcessSnapshot
+    $rawLines = @()
+    try {
+        $rawLines = @((($jsonLines -join "`n") | & $ExePath))
+    }
+    finally {
+        Register-NewMsAccessPids -BeforeSnapshot $msAccessSnapshotBefore
+    }
+
     $responses = @{}
     foreach ($line in $rawLines) {
         if ([string]::IsNullOrWhiteSpace($line)) {
@@ -130,7 +254,15 @@ function Get-McpToolsList {
         params = @{}
     } | ConvertTo-Json -Depth 40 -Compress))
 
-    $rawLines = @((($jsonLines -join "`n") | & $ExePath))
+    $msAccessSnapshotBefore = Get-MsAccessProcessSnapshot
+    $rawLines = @()
+    try {
+        $rawLines = @((($jsonLines -join "`n") | & $ExePath))
+    }
+    finally {
+        Register-NewMsAccessPids -BeforeSnapshot $msAccessSnapshotBefore
+    }
+
     $responses = @{}
     foreach ($line in $rawLines) {
         if ([string]::IsNullOrWhiteSpace($line)) {
@@ -195,25 +327,124 @@ function Resolve-AlternateToolName {
     return $null
 }
 
+function Get-DatabaseLockPath {
+    param([string]$DbPath)
+
+    if ([string]::IsNullOrWhiteSpace($DbPath)) {
+        return $null
+    }
+
+    $dbDir = Split-Path -Path $DbPath -Parent
+    if ([string]::IsNullOrWhiteSpace($dbDir)) {
+        return $null
+    }
+
+    $dbName = [System.IO.Path]::GetFileNameWithoutExtension($DbPath)
+    return (Join-Path $dbDir ($dbName + ".laccdb"))
+}
+
 function Stop-StaleProcesses {
-    Get-Process MSACCESS, MS.Access.MCP.Official -ErrorAction SilentlyContinue |
-        Stop-Process -Force -ErrorAction SilentlyContinue
+    param([string]$DbPath)
+
+    $normalizedServerExe = Get-NormalizedExecutablePath -Path $ServerExe
+
+    foreach ($serverProcess in @(Get-CimInstance Win32_Process -Filter "Name = 'MS.Access.MCP.Official.exe'" -ErrorAction SilentlyContinue)) {
+        $processExePath = Get-NormalizedExecutablePath -Path $serverProcess.ExecutablePath
+        if (-not [string]::IsNullOrWhiteSpace($normalizedServerExe) -and
+            -not [string]::IsNullOrWhiteSpace($processExePath) -and
+            $processExePath -ieq $normalizedServerExe) {
+            Stop-Process -Id ([int]$serverProcess.ProcessId) -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    $msAccessProcesses = @(Get-Process -Name MSACCESS -ErrorAction SilentlyContinue)
+    if ($msAccessProcesses.Count -eq 0) {
+        Sync-TrackedMsAccessPids
+        return
+    }
+
+    $msAccessSnapshot = Get-MsAccessProcessSnapshot
+    $msAccessCommandLineByPid = @{}
+    foreach ($msAccessCim in @(Get-CimInstance Win32_Process -Filter "Name = 'MSACCESS.EXE'" -ErrorAction SilentlyContinue)) {
+        $msAccessCommandLineByPid[[int]$msAccessCim.ProcessId] = [string]$msAccessCim.CommandLine
+    }
+
+    foreach ($msAccessProcess in $msAccessProcesses) {
+        $processId = [int]$msAccessProcess.Id
+        $isTracked = Test-IsTrackedMsAccessProcess -Process $msAccessProcess -CurrentSnapshot $msAccessSnapshot
+        $mainWindowTitle = [string]$msAccessProcess.MainWindowTitle
+        $isHeadlessWindow = [string]::IsNullOrWhiteSpace($mainWindowTitle)
+        $commandLine = ""
+        if ($msAccessCommandLineByPid.ContainsKey($processId)) {
+            $commandLine = [string]$msAccessCommandLineByPid[$processId]
+        }
+        $isEmbedding = $commandLine -match '(?i)(^|\s|")/embedding(\s|$)'
+
+        if ($isTracked -or $isEmbedding -or $isHeadlessWindow) {
+            Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    Sync-TrackedMsAccessPids
 }
 
 function Remove-LockFile {
     param([string]$DbPath)
 
-    $dbDir = Split-Path -Path $DbPath -Parent
-    $dbName = [System.IO.Path]::GetFileNameWithoutExtension($DbPath)
-    $lockFile = Join-Path $dbDir ($dbName + ".laccdb")
+    $lockFile = Get-DatabaseLockPath -DbPath $DbPath
+    if ([string]::IsNullOrWhiteSpace($lockFile)) {
+        return
+    }
+
     Remove-Item -Path $lockFile -ErrorAction SilentlyContinue
 }
 
 function Cleanup-AccessArtifacts {
     param([string]$DbPath)
 
-    Stop-StaleProcesses
+    Stop-StaleProcesses -DbPath $DbPath
     Remove-LockFile -DbPath $DbPath
+}
+
+function Acquire-RegressionLock {
+    param([string]$LockName = "ms-access-mcp-regression")
+
+    $lockRoot = [System.IO.Path]::GetTempPath()
+    if ([string]::IsNullOrWhiteSpace($lockRoot)) {
+        $lockRoot = $env:TEMP
+    }
+    if ([string]::IsNullOrWhiteSpace($lockRoot)) {
+        throw "Unable to resolve a temporary directory for regression lock file."
+    }
+
+    $lockPath = Join-Path $lockRoot ($LockName + ".lock")
+    try {
+        $stream = [System.IO.File]::Open($lockPath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+        return [pscustomobject]@{
+            Path = $lockPath
+            Stream = $stream
+        }
+    }
+    catch {
+        throw ("Another regression run is already active (lock file: {0}). Wait for it to finish or remove stale lock after confirming no run is active." -f $lockPath)
+    }
+}
+
+function Release-RegressionLock {
+    param([object]$LockState)
+
+    if ($null -eq $LockState) {
+        return
+    }
+
+    try {
+        if ($LockState.Stream) {
+            $LockState.Stream.Dispose()
+        }
+    }
+    catch {
+        # Ignore lock cleanup failures.
+    }
 }
 
 if (-not (Test-Path -LiteralPath $ServerExe)) {
@@ -224,16 +455,35 @@ if (-not (Test-Path -LiteralPath $DatabasePath)) {
     throw "Database file not found: $DatabasePath"
 }
 
-if (-not $NoCleanup) {
-    Write-Host "Pre-run cleanup: clearing stale Access/MCP processes and locks."
-    Cleanup-AccessArtifacts -DbPath $DatabasePath
+$regressionLock = Acquire-RegressionLock
+Write-Host ("Regression lock acquired: {0}" -f $regressionLock.Path)
+
+if ($IncludeUiCoverage) {
+    Write-Host "ui_coverage: ENABLED (launch_access/open_form/open_report will run)"
 }
 else {
-    Write-Warning "Skipping pre-run cleanup per -NoCleanup; final cleanup will still execute."
+    Write-Host "ui_coverage: DISABLED (headless mode; UI-opening tools are skipped)"
+}
+
+try {
+    if (-not $NoCleanup) {
+        Write-Host "Pre-run cleanup: clearing stale Access/MCP processes and locks."
+        Cleanup-AccessArtifacts -DbPath $DatabasePath
+    }
+    else {
+        Write-Warning "Skipping pre-run cleanup per -NoCleanup; final cleanup will still execute."
+    }
+}
+catch {
+    Release-RegressionLock -LockState $regressionLock
+    throw
 }
 
 $exitCode = 1
 $linkedSourceDatabasePath = $null
+$databaseLifecycleCreatedPath = $null
+$databaseLifecycleBackupPath = $null
+$databaseLifecycleCompactPath = $null
 try {
 
 $suffix = [Guid]::NewGuid().ToString("N").Substring(0, 8)
@@ -253,8 +503,12 @@ $renamedTableName = "MCP_Renamed_$suffix"
 $linkedTableName = "MCP_Linked_$suffix"
 $linkedSourceTableName = "MCP_LinkSrc_$suffix"
 $transactionTableName = "MCP_Tx_$suffix"
+$databaseLifecycleTableName = "MCP_DbLifecycle_$suffix"
 
 $linkedSourceDatabasePath = Join-Path (Split-Path -Path $DatabasePath -Parent) "MCP_LinkSource_$suffix.accdb"
+$databaseLifecycleCreatedPath = Join-Path (Split-Path -Path $DatabasePath -Parent) "MCP_CreateDb_$suffix.accdb"
+$databaseLifecycleBackupPath = Join-Path (Split-Path -Path $DatabasePath -Parent) "MCP_BackupDb_$suffix.accdb"
+$databaseLifecycleCompactPath = Join-Path (Split-Path -Path $DatabasePath -Parent) "MCP_CompactDb_$suffix.accdb"
 
 $toolList = Get-McpToolsList -ExePath $ServerExe -ClientName "full-regression-tools-list" -ClientVersion "1.0"
 $toolByName = New-Object 'System.Collections.Generic.Dictionary[string, object]' ([System.StringComparer]::OrdinalIgnoreCase)
@@ -280,6 +534,9 @@ $commitTransactionToolName = Resolve-ToolName -ToolByName $toolByName -Candidate
 $rollbackTransactionToolName = Resolve-ToolName -ToolByName $toolByName -Candidates @("rollback_transaction")
 $transactionStatusToolName = Resolve-ToolName -ToolByName $toolByName -Candidates @("transaction_status")
 $beginTransactionAliasToolName = Resolve-AlternateToolName -ToolByName $toolByName -PrimaryName $beginTransactionToolName -Candidates @("begin_transaction", "start_transaction")
+$createDatabaseToolName = Resolve-ToolName -ToolByName $toolByName -Candidates @("create_database")
+$backupDatabaseToolName = Resolve-ToolName -ToolByName $toolByName -Candidates @("backup_database")
+$compactRepairDatabaseToolName = Resolve-ToolName -ToolByName $toolByName -Candidates @("compact_repair_database")
 
 $formData = @{
     Name = $formName
@@ -351,7 +608,9 @@ $calls = New-Object 'System.Collections.Generic.List[object]'
 
 Add-ToolCall -Calls $calls -Id 2 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
 Add-ToolCall -Calls $calls -Id 3 -Name "is_connected" -Arguments @{}
-Add-ToolCall -Calls $calls -Id 4 -Name "launch_access" -Arguments @{}
+if ($IncludeUiCoverage) {
+    Add-ToolCall -Calls $calls -Id 4 -Name "launch_access" -Arguments @{}
+}
 Add-ToolCall -Calls $calls -Id 5 -Name "get_tables" -Arguments @{}
 Add-ToolCall -Calls $calls -Id 6 -Name "get_queries" -Arguments @{}
 Add-ToolCall -Calls $calls -Id 7 -Name "get_relationships" -Arguments @{}
@@ -449,11 +708,15 @@ Add-ToolCall -Calls $calls -Id 24 -Name "set_control_property" -Arguments @{
 }
 Add-ToolCall -Calls $calls -Id 25 -Name "export_form_to_text" -Arguments @{ form_name = $formName }
 Add-ToolCall -Calls $calls -Id 83 -Name "export_form_to_text" -Arguments @{ form_name = $formName; mode = "access_text" }
-Add-ToolCall -Calls $calls -Id 26 -Name "open_form" -Arguments @{ form_name = $formName }
-Add-ToolCall -Calls $calls -Id 27 -Name "close_form" -Arguments @{ form_name = $formName }
+if ($IncludeUiCoverage) {
+    Add-ToolCall -Calls $calls -Id 26 -Name "open_form" -Arguments @{ form_name = $formName }
+    Add-ToolCall -Calls $calls -Id 27 -Name "close_form" -Arguments @{ form_name = $formName }
+}
 Add-ToolCall -Calls $calls -Id 28 -Name "import_report_from_text" -Arguments @{ report_data = $reportData }
-Add-ToolCall -Calls $calls -Id 55 -Name "open_report" -Arguments @{ report_name = $reportName }
-Add-ToolCall -Calls $calls -Id 56 -Name "close_report" -Arguments @{ report_name = $reportName }
+if ($IncludeUiCoverage) {
+    Add-ToolCall -Calls $calls -Id 55 -Name "open_report" -Arguments @{ report_name = $reportName }
+    Add-ToolCall -Calls $calls -Id 56 -Name "close_report" -Arguments @{ report_name = $reportName }
+}
 Add-ToolCall -Calls $calls -Id 52 -Name "get_report_controls" -Arguments @{ report_name = $reportName }
 Add-ToolCall -Calls $calls -Id 53 -Name "get_report_control_properties" -Arguments @{ report_name = $reportName; control_name = "lblReport" }
 Add-ToolCall -Calls $calls -Id 54 -Name "set_report_control_property" -Arguments @{ report_name = $reportName; control_name = "lblReport"; property_name = "Visible"; value = "True" }
@@ -523,7 +786,6 @@ $responses = Invoke-McpBatch -ExePath $ServerExe -Calls $calls -ClientName "full
 $idLabels = @{
     2 = "connect_access"
     3 = "is_connected_initial"
-    4 = "launch_access"
     5 = "get_tables"
     6 = "get_queries"
     7 = "get_relationships"
@@ -560,11 +822,7 @@ $idLabels = @{
     24 = "set_control_property"
     25 = "export_form_to_text"
     83 = "export_form_to_text_access_text"
-    26 = "open_form"
-    27 = "close_form"
     28 = "import_report_from_text"
-    55 = "open_report"
-    56 = "close_report"
     52 = "get_report_controls"
     53 = "get_report_control_properties"
     54 = "set_report_control_property"
@@ -604,6 +862,14 @@ $idLabels = @{
     37 = "disconnect_access"
     38 = "is_connected_after_disconnect"
     39 = "close_access"
+}
+
+if ($IncludeUiCoverage) {
+    $idLabels[4] = "launch_access"
+    $idLabels[26] = "open_form"
+    $idLabels[27] = "close_form"
+    $idLabels[55] = "open_report"
+    $idLabels[56] = "close_report"
 }
 
 $failed = 0
@@ -1346,7 +1612,18 @@ if (-not [string]::IsNullOrWhiteSpace($createLinkedTableToolName) -and
     }
 }
 else {
-    Write-Host "linked_table_coverage: SKIP linked-table tools not exposed by this server build."
+    $missingLinkedTools = @()
+    if ([string]::IsNullOrWhiteSpace($createLinkedTableToolName)) { $missingLinkedTools += "create_linked_table|link_table" }
+    if ([string]::IsNullOrWhiteSpace($deleteLinkedTableToolName)) { $missingLinkedTools += "delete_linked_table|unlink_table" }
+    if ([string]::IsNullOrWhiteSpace($listLinkedTablesToolName)) { $missingLinkedTools += "list_linked_tables" }
+
+    if ($AllowCoverageSkips) {
+        Write-Host ("linked_table_coverage: SKIP linked-table tools not exposed by this server build. missing={0}" -f ($missingLinkedTools -join ", "))
+    }
+    else {
+        $failed++
+        Write-Host ("linked_table_coverage: FAIL required linked-table tools not exposed by this server build. missing={0}" -f ($missingLinkedTools -join ", "))
+    }
 }
 
 if (-not [string]::IsNullOrWhiteSpace($beginTransactionToolName) -and
@@ -1521,7 +1798,207 @@ if (-not [string]::IsNullOrWhiteSpace($beginTransactionToolName) -and
     }
 }
 else {
-    Write-Host "transaction_coverage: SKIP transaction tools not exposed by this server build."
+    $missingTransactionTools = @()
+    if ([string]::IsNullOrWhiteSpace($beginTransactionToolName)) { $missingTransactionTools += "begin_transaction|start_transaction" }
+    if ([string]::IsNullOrWhiteSpace($commitTransactionToolName)) { $missingTransactionTools += "commit_transaction" }
+    if ([string]::IsNullOrWhiteSpace($rollbackTransactionToolName)) { $missingTransactionTools += "rollback_transaction" }
+    if ([string]::IsNullOrWhiteSpace($transactionStatusToolName)) { $missingTransactionTools += "transaction_status" }
+
+    if ($AllowCoverageSkips) {
+        Write-Host ("transaction_coverage: SKIP transaction tools not exposed by this server build. missing={0}" -f ($missingTransactionTools -join ", "))
+    }
+    else {
+        $failed++
+        Write-Host ("transaction_coverage: FAIL required transaction tools not exposed by this server build. missing={0}" -f ($missingTransactionTools -join ", "))
+    }
+}
+
+if (-not [string]::IsNullOrWhiteSpace($createDatabaseToolName) -and
+    -not [string]::IsNullOrWhiteSpace($backupDatabaseToolName) -and
+    -not [string]::IsNullOrWhiteSpace($compactRepairDatabaseToolName)) {
+    $databaseLifecycleToolNames = @($createDatabaseToolName, $backupDatabaseToolName, $compactRepairDatabaseToolName)
+    Write-Host ('database_file_tools_coverage: INFO using tools {0}' -f ($databaseLifecycleToolNames -join ", "))
+
+    foreach ($dbLifecyclePath in @($databaseLifecycleCreatedPath, $databaseLifecycleBackupPath, $databaseLifecycleCompactPath)) {
+        if (-not [string]::IsNullOrWhiteSpace($dbLifecyclePath)) {
+            Cleanup-AccessArtifacts -DbPath $dbLifecyclePath
+            Remove-Item -Path $dbLifecyclePath -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    $databaseLifecycleCalls = New-Object 'System.Collections.Generic.List[object]'
+
+    $createDatabaseArguments = @{
+        database_path = $databaseLifecycleCreatedPath
+        path = $databaseLifecycleCreatedPath
+        target_database_path = $databaseLifecycleCreatedPath
+        overwrite = $true
+    }
+
+    $backupDatabaseArguments = @{
+        database_path = $databaseLifecycleCreatedPath
+        source_database_path = $databaseLifecycleCreatedPath
+        backup_path = $databaseLifecycleBackupPath
+        backup_database_path = $databaseLifecycleBackupPath
+        destination_path = $databaseLifecycleBackupPath
+        destination_database_path = $databaseLifecycleBackupPath
+        output_database_path = $databaseLifecycleBackupPath
+        overwrite = $true
+    }
+
+    $compactRepairArguments = @{
+        database_path = $databaseLifecycleBackupPath
+        source_database_path = $databaseLifecycleBackupPath
+        input_database_path = $databaseLifecycleBackupPath
+        compacted_database_path = $databaseLifecycleCompactPath
+        output_database_path = $databaseLifecycleCompactPath
+        destination_database_path = $databaseLifecycleCompactPath
+        target_database_path = $databaseLifecycleCompactPath
+        overwrite = $true
+    }
+
+    Add-ToolCall -Calls $databaseLifecycleCalls -Id 371 -Name $createDatabaseToolName -Arguments $createDatabaseArguments
+    Add-ToolCall -Calls $databaseLifecycleCalls -Id 372 -Name "connect_access" -Arguments @{ database_path = $databaseLifecycleCreatedPath }
+    Add-ToolCall -Calls $databaseLifecycleCalls -Id 373 -Name "create_table" -Arguments @{
+        table_name = $databaseLifecycleTableName
+        fields = @(
+            @{ name = "id"; type = "LONG"; size = 0; required = $true; allow_zero_length = $false },
+            @{ name = "payload"; type = "TEXT"; size = 50; required = $false; allow_zero_length = $true }
+        )
+    }
+    Add-ToolCall -Calls $databaseLifecycleCalls -Id 374 -Name "execute_sql" -Arguments @{ sql = "INSERT INTO [$databaseLifecycleTableName] (id, payload) VALUES (1, 'seed_value')" }
+    Add-ToolCall -Calls $databaseLifecycleCalls -Id 375 -Name "execute_sql" -Arguments @{ sql = "SELECT id, payload FROM [$databaseLifecycleTableName] WHERE id = 1" }
+    Add-ToolCall -Calls $databaseLifecycleCalls -Id 376 -Name "disconnect_access" -Arguments @{}
+    Add-ToolCall -Calls $databaseLifecycleCalls -Id 377 -Name "close_access" -Arguments @{}
+    Add-ToolCall -Calls $databaseLifecycleCalls -Id 378 -Name $backupDatabaseToolName -Arguments $backupDatabaseArguments
+    Add-ToolCall -Calls $databaseLifecycleCalls -Id 379 -Name $compactRepairDatabaseToolName -Arguments $compactRepairArguments
+
+    $databaseLifecycleResponses = Invoke-McpBatch -ExePath $ServerExe -Calls $databaseLifecycleCalls -ClientName "full-regression-database-lifecycle" -ClientVersion "1.0"
+    $databaseLifecycleIdLabels = @{
+        371 = "database_file_create_database"
+        372 = "database_file_connect_created_database"
+        373 = "database_file_create_seed_table"
+        374 = "database_file_insert_seed_row"
+        375 = "database_file_execute_sql_seed_select"
+        376 = "database_file_disconnect_created_database"
+        377 = "database_file_close_created_database"
+        378 = "database_file_backup_database"
+        379 = "database_file_compact_repair_database"
+    }
+
+    foreach ($id in ($databaseLifecycleIdLabels.Keys | Sort-Object)) {
+        $label = $databaseLifecycleIdLabels[$id]
+        $decoded = Decode-McpResult -Response $databaseLifecycleResponses[[int]$id]
+
+        if ($null -eq $decoded) {
+            $failed++
+            Write-Host ('{0}: FAIL missing-response' -f $label)
+            continue
+        }
+
+        if ($decoded -is [string]) {
+            $failed++
+            Write-Host ('{0}: FAIL raw-string-response' -f $label)
+            continue
+        }
+
+        if ($decoded.success -ne $true) {
+            $failed++
+            Write-Host ('{0}: FAIL {1}' -f $label, $decoded.error)
+            continue
+        }
+
+        switch ($label) {
+            "database_file_execute_sql_seed_select" {
+                $rows = @($decoded.rows)
+                if ($rows.Count -lt 1) {
+                    $failed++
+                    Write-Host ('{0}: FAIL expected seeded row to be readable before backup/compact' -f $label)
+                    continue
+                }
+            }
+        }
+
+        Write-Host ('{0}: OK' -f $label)
+    }
+
+    $verificationDatabasePath = $null
+    foreach ($candidatePath in @($databaseLifecycleCompactPath, $databaseLifecycleBackupPath, $databaseLifecycleCreatedPath)) {
+        if (-not [string]::IsNullOrWhiteSpace($candidatePath) -and (Test-Path -LiteralPath $candidatePath)) {
+            $verificationDatabasePath = $candidatePath
+            break
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($verificationDatabasePath)) {
+        $failed++
+        Write-Host "database_file_compact_repair_artifact: FAIL no readable database artifact found after backup/compact"
+    }
+    else {
+        Write-Host ('database_file_tools_coverage: INFO verification_path={0}' -f $verificationDatabasePath)
+
+        $databaseLifecycleVerifyCalls = New-Object 'System.Collections.Generic.List[object]'
+        Add-ToolCall -Calls $databaseLifecycleVerifyCalls -Id 380 -Name "connect_access" -Arguments @{ database_path = $verificationDatabasePath }
+        Add-ToolCall -Calls $databaseLifecycleVerifyCalls -Id 381 -Name "execute_sql" -Arguments @{ sql = "SELECT id, payload FROM [$databaseLifecycleTableName] WHERE id = 1" }
+        Add-ToolCall -Calls $databaseLifecycleVerifyCalls -Id 382 -Name "disconnect_access" -Arguments @{}
+        Add-ToolCall -Calls $databaseLifecycleVerifyCalls -Id 383 -Name "close_access" -Arguments @{}
+
+        $databaseLifecycleVerifyResponses = Invoke-McpBatch -ExePath $ServerExe -Calls $databaseLifecycleVerifyCalls -ClientName "full-regression-database-lifecycle-verify" -ClientVersion "1.0"
+        $databaseLifecycleVerifyIdLabels = @{
+            380 = "database_file_verify_connect"
+            381 = "database_file_verify_seed_row_after_compact"
+            382 = "database_file_verify_disconnect"
+            383 = "database_file_verify_close_access"
+        }
+
+        foreach ($id in ($databaseLifecycleVerifyIdLabels.Keys | Sort-Object)) {
+            $label = $databaseLifecycleVerifyIdLabels[$id]
+            $decoded = Decode-McpResult -Response $databaseLifecycleVerifyResponses[[int]$id]
+
+            if ($null -eq $decoded) {
+                $failed++
+                Write-Host ('{0}: FAIL missing-response' -f $label)
+                continue
+            }
+
+            if ($decoded -is [string]) {
+                $failed++
+                Write-Host ('{0}: FAIL raw-string-response' -f $label)
+                continue
+            }
+
+            if ($decoded.success -ne $true) {
+                $failed++
+                Write-Host ('{0}: FAIL {1}' -f $label, $decoded.error)
+                continue
+            }
+
+            if ($label -eq "database_file_verify_seed_row_after_compact") {
+                $rows = @($decoded.rows)
+                if ($rows.Count -lt 1) {
+                    $failed++
+                    Write-Host ('{0}: FAIL expected seeded row after backup/compact flow' -f $label)
+                    continue
+                }
+            }
+
+            Write-Host ('{0}: OK' -f $label)
+        }
+    }
+}
+else {
+    $missingDatabaseLifecycleTools = @()
+    if ([string]::IsNullOrWhiteSpace($createDatabaseToolName)) { $missingDatabaseLifecycleTools += "create_database" }
+    if ([string]::IsNullOrWhiteSpace($backupDatabaseToolName)) { $missingDatabaseLifecycleTools += "backup_database" }
+    if ([string]::IsNullOrWhiteSpace($compactRepairDatabaseToolName)) { $missingDatabaseLifecycleTools += "compact_repair_database" }
+
+    if ($AllowCoverageSkips) {
+        Write-Host ("database_file_tools_coverage: SKIP database file lifecycle tools not exposed by this server build. missing={0}" -f ($missingDatabaseLifecycleTools -join ", "))
+    }
+    else {
+        $failed++
+        Write-Host ("database_file_tools_coverage: FAIL required database file lifecycle tools not exposed by this server build. missing={0}" -f ($missingDatabaseLifecycleTools -join ", "))
+    }
 }
 
 Write-Host ("TOTAL_FAIL={0}" -f $failed)
@@ -1536,6 +2013,13 @@ finally {
         Cleanup-AccessArtifacts -DbPath $linkedSourceDatabasePath
         Remove-Item -Path $linkedSourceDatabasePath -Force -ErrorAction SilentlyContinue
     }
+    foreach ($dbLifecyclePath in @($databaseLifecycleCreatedPath, $databaseLifecycleBackupPath, $databaseLifecycleCompactPath)) {
+        if (-not [string]::IsNullOrWhiteSpace($dbLifecyclePath)) {
+            Cleanup-AccessArtifacts -DbPath $dbLifecyclePath
+            Remove-Item -Path $dbLifecyclePath -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Release-RegressionLock -LockState $regressionLock
 }
 
 exit $exitCode

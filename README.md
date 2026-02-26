@@ -56,7 +56,7 @@ What this script does:
 3. Renames the active target to `mcp-server-official-x64-backup-*`
 4. Promotes staging to `mcp-server-official-x64`
 5. Runs an MCP `initialize` smoke test against the promoted exe
-6. Writes `mcp-server-official-x64\release-validation.json` after smoke success
+6. Writes `mcp-server-official-x64\release-validation.json` after smoke success (includes `git_commit`, `regression_run`, and `regression_passed`)
 
 If promotion fails with `Access denied`, one or more server processes are still running under a context this shell cannot terminate. Rerun from an elevated PowerShell session after stopping `MS.Access.MCP.Official`.
 
@@ -110,9 +110,11 @@ powershell -ExecutionPolicy Bypass -File .\scripts\publish-and-promote-x64.ps1 `
   -RegressionDatabasePath "C:\path\to\database.accdb"
 ```
 
+Use `-RunRegression` when you intend to consume the promoted binary with strict repair selection (`-RequireRegressionBackedManifest`).
+
 ### Repair + Verify Hardening
 
-Use this from repo root to clean stale state, enforce trusted location, validate candidate binaries with `initialize` smoke + `connect_access`, and run full regression.
+Use this from repo root to clean stale state, enforce trusted location, validate candidate binaries with `initialize` smoke + `connect_access`, and run full regression. By default, candidate manifests must include `git_commit` matching repo `HEAD`.
 
 ```powershell
 # Full hardening run (includes regression and both config updates)
@@ -136,9 +138,32 @@ powershell -ExecutionPolicy Bypass -File .\scripts\repair-and-verify-access-mcp.
   -DatabasePath "C:\path\to\database.accdb" `
   -UpdateClaudeConfig
 
-# Default: require validated x64 promoted binary (release-validation.json present)
+# Optional: override Claude config path (default resolves %APPDATA%\Claude\claude_desktop_config.json,
+# then falls back to %USERPROFILE%\.claude.json if present)
+powershell -ExecutionPolicy Bypass -File .\scripts\repair-and-verify-access-mcp.ps1 `
+  -DatabasePath "C:\path\to\database.accdb" `
+  -UpdateClaudeConfig `
+  -ClaudeConfigPath "C:\path\to\claude_desktop_config.json"
+
+# Default: require validated x64 promoted binary and manifest git_commit matching HEAD
 powershell -ExecutionPolicy Bypass -File .\scripts\repair-and-verify-access-mcp.ps1 `
   -DatabasePath "C:\path\to\database.accdb"
+
+# Optional: bypass git_commit vs HEAD enforcement (diagnostics only)
+powershell -ExecutionPolicy Bypass -File .\scripts\repair-and-verify-access-mcp.ps1 `
+  -DatabasePath "C:\path\to\database.accdb" `
+  -AllowManifestHeadMismatch
+
+# Strict mode: require regression-backed validation manifest for candidate selection
+powershell -ExecutionPolicy Bypass -File .\scripts\repair-and-verify-access-mcp.ps1 `
+  -DatabasePath "C:\path\to\database.accdb" `
+  -RequireRegressionBackedManifest
+
+# Strict mode override: allow non-regression manifest while keeping strict flag visible
+powershell -ExecutionPolicy Bypass -File .\scripts\repair-and-verify-access-mcp.ps1 `
+  -DatabasePath "C:\path\to\database.accdb" `
+  -RequireRegressionBackedManifest `
+  -AllowNonRegressionManifest
 
 # Optional: allow unvalidated binaries (diagnostics only)
 powershell -ExecutionPolicy Bypass -File .\scripts\repair-and-verify-access-mcp.ps1 `
@@ -168,16 +193,21 @@ Add the following to your Claude Desktop configuration file (`%APPDATA%\Claude\c
 }
 ```
 
-**Note**: Use the absolute path to your MCP server executable and double backslashes.
+**Notes**:
+- Use the absolute path to your MCP server executable and double backslashes.
+- `repair-and-verify-access-mcp.ps1 -UpdateClaudeConfig` updates either `mcpServers.access-mcp-server.command` or `mcpServers.access-mcp.command` (whichever exists) and fails fast if neither key is present.
 
 ## Available Tools
 
 The MCP server provides comprehensive tools across all seven capability areas:
 
 ### 1. Connection Management
-- **connect_access**: Connect to an Access database (requires `database_path` parameter)
+- **connect_access**: Connect to an Access database. Uses `database_path` argument, `ACCESS_DATABASE_PATH` env var, or first database found in Documents. Newer builds can expose secure/password-related arguments on this tool schema.
 - **disconnect_access**: Disconnect from the current Access database
 - **is_connected**: Check if connected to an Access database
+- **create_database**: Create a new Access database file
+- **backup_database**: Create a backup copy of an Access database file
+- **compact_repair_database**: Compact and repair an Access database file
 
 ### 2. Data Access Object Models
 - **get_tables**: Get all tables from the connected database
@@ -208,6 +238,7 @@ The MCP server provides comprehensive tools across all seven capability areas:
 - **update_linked_table** (alias: `relink_table`): Repoint a linked table to a new source database/table
 - **delete_linked_table** (alias: `unlink_table`): Remove a linked table from the current database
 - **begin_transaction**: Begin a database transaction on the current connection
+- **start_transaction** (alias): Begin a database transaction on the current connection
 - **commit_transaction**: Commit the active transaction
 - **rollback_transaction**: Roll back the active transaction
 - **transaction_status**: Return current transaction status (active state, isolation level, and start time)
@@ -329,7 +360,16 @@ The MCP server provides comprehensive tools across all seven capability areas:
 This repository includes two GitHub Actions workflows with different coverage goals:
 
 - `windows-hosted-build-smoke.yml` runs on GitHub-hosted `windows-latest` for `push` and `pull_request`. It validates publish/build health and runs an MCP `initialize` smoke test that does not require Microsoft Access.
-- `windows-self-hosted-access-regression.yml` runs on self-hosted Windows (`workflow_dispatch` plus weekly schedule) and executes `tests\full_toolset_regression.ps1`. It requires Microsoft Access on the runner and an `ACCESS_DATABASE_PATH` value provided by dispatch input (`access_database_path`) or secret (`ACCESS_DATABASE_PATH`).
+- `windows-self-hosted-access-regression.yml` runs on self-hosted Windows (`workflow_dispatch` plus weekly schedule) and executes both `tests\full_toolset_regression.ps1` and `tests\full_toolset_negative_paths.ps1`. It requires Microsoft Access on the runner and an `ACCESS_DATABASE_PATH` value provided by dispatch input (`access_database_path`) or secret (`ACCESS_DATABASE_PATH`), and asserts that database-lifecycle and secure-connect coverage markers are present in logs.
+
+Bootstrap GitHub auth/secret/workflow setup from terminal:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap-github-actions.ps1 `
+  -SetDatabaseSecret `
+  -DatabasePath "C:\path\to\database.accdb" `
+  -TriggerRegressionWorkflow
+```
 
 ## Testing
 
@@ -349,22 +389,57 @@ powershell -ExecutionPolicy Bypass -File .\tests\full_toolset_regression.ps1 `
   -DatabasePath "C:\path\to\database.accdb"
 ```
 
+UI coverage mode:
+
+```powershell
+# Default behavior is headless (prevents Access UI pop-ups during automation)
+powershell -ExecutionPolicy Bypass -File .\tests\full_toolset_regression.ps1
+
+# Opt-in only when you intentionally want UI-opening tool coverage
+powershell -ExecutionPolicy Bypass -File .\tests\full_toolset_regression.ps1 -IncludeUiCoverage
+```
+
 The script verifies:
 1. Connection lifecycle and status checks
 2. Table creation/query/description/deletion
-3. Deterministic schema evolution coverage (`add_field`, `alter_field`, `rename_field`, `drop_field`, `rename_table`)
-4. SQL execution and markdown query output
-5. VBA set/add/get/compile flows
-6. Form import/export/control discovery/edit/delete in JSON mode, plus `mode="access_text"` export/import round-trip persistence checks
-7. Report import/export/delete in JSON mode, plus `mode="access_text"` export/import round-trip persistence checks
-8. Macro create/export/run/update/delete plus `import_macro_from_text` round-trip verification
-9. Metadata discovery and Access COM automation calls
-10. Linked-table tranche-1 coverage using a local copied `.accdb` source (no external database server dependency), including explicit alias-path calls beyond candidate resolution (`link_table`, `refresh_link`, `relink_table`, `unlink_table` when exposed)
-11. Transaction tranche-1 coverage validating rollback/commit visibility through deterministic SQL checks, including explicit alias-path begin coverage (`start_transaction` when exposed)
+3. Database lifecycle coverage for `create_database`, `backup_database`, and `compact_repair_database` using ephemeral local `.accdb` files
+4. Deterministic schema evolution coverage (`add_field`, `alter_field`, `rename_field`, `drop_field`, `rename_table`)
+5. SQL execution and markdown query output
+6. VBA set/add/get/compile flows
+7. Form import/export/control discovery/edit/delete in JSON mode, plus `mode="access_text"` export/import round-trip persistence checks
+8. Report import/export/delete in JSON mode, plus `mode="access_text"` export/import round-trip persistence checks
+9. Macro create/export/run/update/delete plus `import_macro_from_text` round-trip verification
+10. Metadata discovery and Access COM automation calls
+11. Linked-table tranche-1 coverage using a local copied `.accdb` source (no external database server dependency), including explicit alias-path calls beyond candidate resolution (`link_table`, `refresh_link`, `relink_table`, `unlink_table` when exposed)
+12. Transaction tranche-1 coverage validating rollback/commit visibility through deterministic SQL checks, including explicit alias-path begin coverage (`start_transaction` when exposed)
 
-When linked-table and transaction tranche-1 tools are not exposed by `tools/list`, the harness records `SKIP` lines for those sections and preserves the existing pass criterion.
+By default, linked-table, transaction, and database lifecycle coverage are required: if those tool families are missing from `tools/list`, the harness records `FAIL` and increments `TOTAL_FAIL`.
+
+If you are intentionally validating a reduced server surface, use:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tests\full_toolset_regression.ps1 -AllowCoverageSkips
+```
 
 Pass criterion: `TOTAL_FAIL=0` and process exit code `0`.
+
+### Running the Negative-Path Regression Test
+
+Use this harness to validate failure contracts (expected `success=false` + preflight coverage on disconnected operations), including invalid-path checks for `create_database`/`backup_database`/`compact_repair_database` and secure-argument validation coverage for `connect_access`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tests\full_toolset_negative_paths.ps1
+```
+
+Optional arguments:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tests\full_toolset_negative_paths.ps1 `
+  -ServerExe "C:\path\to\MS.Access.MCP.Official.exe" `
+  -DatabasePath "C:\path\to\database.accdb"
+```
+
+Pass criterion: output contains `NEGATIVE_PATHS_PASS=1` and process exit code `0`.
 
 ### Manual Protocol Probe
 

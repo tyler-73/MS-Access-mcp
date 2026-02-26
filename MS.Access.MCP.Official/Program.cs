@@ -109,7 +109,10 @@ class Program
         {
             tools = new object[]
             {
-                new { name = "connect_access", description = "Connect to an Access database. Uses database_path argument, ACCESS_DATABASE_PATH env var, or first database found in Documents.", inputSchema = new { type = "object", properties = new { database_path = new { type = "string" } } } },
+                new { name = "connect_access", description = "Connect to an Access database. Uses database_path argument, ACCESS_DATABASE_PATH env var, or first database found in Documents.", inputSchema = new { type = "object", properties = new { database_path = new { type = "string" }, database_password = new { type = "string" }, system_database_path = new { type = "string" } } } },
+                new { name = "create_database", description = "Create a new Access database file (.accdb or .mdb).", inputSchema = new { type = "object", properties = new { database_path = new { type = "string" }, overwrite = new { type = "boolean" } }, required = new string[] { "database_path" } } },
+                new { name = "backup_database", description = "Back up an Access database by copying it to a destination path.", inputSchema = new { type = "object", properties = new { source_database_path = new { type = "string" }, destination_database_path = new { type = "string" }, overwrite = new { type = "boolean" } }, required = new string[] { "destination_database_path" } } },
+                new { name = "compact_repair_database", description = "Compact and repair an Access database. Supports in-place replacement when destination_database_path is omitted.", inputSchema = new { type = "object", properties = new { source_database_path = new { type = "string" }, destination_database_path = new { type = "string" }, overwrite = new { type = "boolean" } } } },
                 new { name = "disconnect_access", description = "Disconnect from the current Access database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "is_connected", description = "Check if connected to an Access database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_tables", description = "Get list of all tables in the database", inputSchema = new { type = "object", properties = new { } } },
@@ -202,6 +205,9 @@ class Program
         return toolName switch
         {
             "connect_access" => HandleConnectAccess(accessService, toolArguments),
+            "create_database" => HandleCreateDatabase(accessService, toolArguments),
+            "backup_database" => HandleBackupDatabase(accessService, toolArguments),
+            "compact_repair_database" => HandleCompactRepairDatabase(accessService, toolArguments),
             "disconnect_access" => HandleDisconnectAccess(accessService, toolArguments),
             "is_connected" => HandleIsConnected(accessService, toolArguments),
             "get_tables" => HandleGetTables(accessService, toolArguments),
@@ -284,13 +290,9 @@ class Program
     {
         try
         {
-            string? databasePath = null;
-            if (arguments.ValueKind == JsonValueKind.Object &&
-                arguments.TryGetProperty("database_path", out var pathElement) &&
-                pathElement.ValueKind == JsonValueKind.String)
-            {
-                databasePath = pathElement.GetString();
-            }
+            _ = TryGetOptionalString(arguments, "database_path", out var databasePath);
+            _ = TryGetOptionalString(arguments, "database_password", out var databasePassword);
+            _ = TryGetOptionalString(arguments, "system_database_path", out var systemDatabasePath);
 
             databasePath ??= ResolveDatabasePath();
             if (string.IsNullOrWhiteSpace(databasePath))
@@ -306,17 +308,141 @@ class Program
             if (!File.Exists(databasePath))
                 return new { success = false, error = $"Database file not found: {databasePath}" };
 
-            accessService.Connect(databasePath);
+            accessService.Connect(
+                databasePath,
+                string.IsNullOrWhiteSpace(databasePassword) ? null : databasePassword,
+                string.IsNullOrWhiteSpace(systemDatabasePath) ? null : systemDatabasePath);
             
             // Verify connection was successful
             if (!accessService.IsConnected)
                 return new { success = false, error = "Failed to establish database connection" };
                 
-            return new { success = true, message = $"Connected to {databasePath}", connected = true };
+            return new
+            {
+                success = true,
+                message = $"Connected to {databasePath}",
+                connected = true,
+                database_path = accessService.CurrentDatabasePath ?? databasePath,
+                secured = !string.IsNullOrWhiteSpace(databasePassword),
+                system_database_path = string.IsNullOrWhiteSpace(systemDatabasePath) ? null : systemDatabasePath
+            };
         }
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("connect_access", ex);
+        }
+    }
+
+    static object HandleCreateDatabase(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "database_path", out var databasePath, out var databasePathError))
+                return databasePathError;
+
+            var overwrite = GetOptionalBool(arguments, "overwrite", false);
+            var result = accessService.CreateDatabase(databasePath, overwrite);
+
+            return new
+            {
+                success = true,
+                message = $"Created database at {result.DatabasePath}",
+                database_path = result.DatabasePath,
+                existed_before = result.ExistedBefore,
+                size_bytes = result.SizeBytes,
+                last_write_time_utc = result.LastWriteTimeUtc
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("create_database", ex);
+        }
+    }
+
+    static object HandleBackupDatabase(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            _ = TryGetOptionalString(arguments, "source_database_path", out var sourceDatabasePath);
+            if (string.IsNullOrWhiteSpace(sourceDatabasePath))
+                sourceDatabasePath = accessService.CurrentDatabasePath ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(sourceDatabasePath))
+            {
+                return new
+                {
+                    success = false,
+                    error = "source_database_path is required when there is no active database connection"
+                };
+            }
+
+            if (!TryGetRequiredString(arguments, "destination_database_path", out var destinationDatabasePath, out var destinationDatabasePathError))
+                return destinationDatabasePathError;
+
+            var overwrite = GetOptionalBool(arguments, "overwrite", false);
+            var result = accessService.BackupDatabase(sourceDatabasePath, destinationDatabasePath, overwrite);
+
+            return new
+            {
+                success = true,
+                message = $"Backed up {result.SourceDatabasePath} to {result.DestinationDatabasePath}",
+                source_database_path = result.SourceDatabasePath,
+                destination_database_path = result.DestinationDatabasePath,
+                bytes_copied = result.BytesCopied,
+                source_last_write_time_utc = result.SourceLastWriteTimeUtc,
+                destination_last_write_time_utc = result.DestinationLastWriteTimeUtc,
+                operated_on_connected_database = result.OperatedOnConnectedDatabase
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("backup_database", ex);
+        }
+    }
+
+    static object HandleCompactRepairDatabase(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            _ = TryGetOptionalString(arguments, "source_database_path", out var sourceDatabasePath);
+            if (string.IsNullOrWhiteSpace(sourceDatabasePath))
+                sourceDatabasePath = accessService.CurrentDatabasePath ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(sourceDatabasePath))
+            {
+                return new
+                {
+                    success = false,
+                    error = "source_database_path is required when there is no active database connection"
+                };
+            }
+
+            _ = TryGetOptionalString(arguments, "destination_database_path", out var destinationDatabasePath);
+            var overwrite = GetOptionalBool(arguments, "overwrite", false);
+
+            var result = accessService.CompactRepairDatabase(
+                sourceDatabasePath,
+                string.IsNullOrWhiteSpace(destinationDatabasePath) ? null : destinationDatabasePath,
+                overwrite);
+
+            return new
+            {
+                success = true,
+                message = result.InPlace
+                    ? $"Compacted and repaired {result.SourceDatabasePath} in place"
+                    : $"Compacted and repaired {result.SourceDatabasePath} to {result.DestinationDatabasePath}",
+                source_database_path = result.SourceDatabasePath,
+                destination_database_path = result.DestinationDatabasePath,
+                in_place = result.InPlace,
+                source_size_bytes = result.SourceSizeBytes,
+                destination_size_bytes = result.DestinationSizeBytes,
+                destination_last_write_time_utc = result.DestinationLastWriteTimeUtc,
+                operated_on_connected_database = result.OperatedOnConnectedDatabase
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("compact_repair_database", ex);
         }
     }
 

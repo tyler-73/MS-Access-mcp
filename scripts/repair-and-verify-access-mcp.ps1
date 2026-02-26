@@ -1,6 +1,7 @@
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = "Medium")]
 param(
     [string]$DatabasePath = $(if ($env:ACCESS_DATABASE_PATH) { $env:ACCESS_DATABASE_PATH } else { "$env:USERPROFILE\Documents\MyDatabase.accdb" }),
+    [string]$ClaudeConfigPath = "",
     [switch]$UpdateConfigs,
     [switch]$UpdateCodexConfig,
     [switch]$UpdateClaudeConfig,
@@ -8,7 +9,10 @@ param(
     [switch]$SkipTrustedLocation,
     [switch]$SkipRegression,
     [switch]$AllowUnvalidatedBinary,
-    [switch]$AllowX86Fallback
+    [switch]$AllowX86Fallback,
+    [switch]$AllowManifestHeadMismatch,
+    [switch]$RequireRegressionBackedManifest,
+    [switch]$AllowNonRegressionManifest
 )
 
 $ErrorActionPreference = "Stop"
@@ -30,6 +34,260 @@ function Get-FullPath {
     }
 
     return [System.IO.Path]::GetFullPath((Join-Path (Get-Location).Path $Path))
+}
+
+function Resolve-ClaudeConfigPath {
+    param(
+        [Parameter(Mandatory = $false)]
+        [string]$Path
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($Path)) {
+        return Get-FullPath -Path $Path
+    }
+
+    $candidatePaths = New-Object 'System.Collections.Generic.List[string]'
+    if (-not [string]::IsNullOrWhiteSpace($env:APPDATA)) {
+        $candidatePaths.Add((Join-Path $env:APPDATA "Claude\claude_desktop_config.json"))
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+        $candidatePaths.Add((Join-Path $env:USERPROFILE ".claude.json"))
+    }
+
+    foreach ($candidatePath in $candidatePaths) {
+        if (Test-Path -LiteralPath $candidatePath) {
+            return $candidatePath
+        }
+    }
+
+    if ($candidatePaths.Count -eq 0) {
+        throw "Unable to determine default Claude config path because APPDATA and USERPROFILE are both unavailable."
+    }
+
+    return $candidatePaths[0]
+}
+
+function Get-TrimmedString {
+    param([object]$Value)
+
+    if ($null -eq $Value) {
+        return $null
+    }
+
+    $text = [string]$Value
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        return $null
+    }
+
+    return $text.Trim()
+}
+
+function Get-GitHeadCommit {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot
+    )
+
+    try {
+        $commit = (& git -C $RepoRoot rev-parse HEAD 2>$null)
+        if ($LASTEXITCODE -ne 0) {
+            return $null
+        }
+
+        return (Get-TrimmedString -Value $commit)
+    }
+    catch {
+        return $null
+    }
+}
+
+function Read-ValidationManifest {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ManifestPath
+    )
+
+    if (-not (Test-Path -LiteralPath $ManifestPath)) {
+        return [pscustomobject]@{
+            Success  = $false
+            Manifest = $null
+            Error    = "Validation manifest not found."
+        }
+    }
+
+    try {
+        $rawManifest = Get-Content -LiteralPath $ManifestPath -Raw -ErrorAction Stop
+        $manifest = $rawManifest | ConvertFrom-Json -ErrorAction Stop
+        return [pscustomobject]@{
+            Success  = $true
+            Manifest = $manifest
+            Error    = $null
+        }
+    }
+    catch {
+        return [pscustomobject]@{
+            Success  = $false
+            Manifest = $null
+            Error    = $_.Exception.Message
+        }
+    }
+}
+
+function Get-ManifestBooleanValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Manifest,
+        [Parameter(Mandatory = $true)]
+        [string]$PropertyName
+    )
+
+    $property = $Manifest.PSObject.Properties[$PropertyName]
+    if ($null -eq $property) {
+        return [pscustomobject]@{
+            HasValue = $false
+            Value    = $false
+        }
+    }
+
+    $value = $property.Value
+    if ($value -is [bool]) {
+        return [pscustomobject]@{
+            HasValue = $true
+            Value    = [bool]$value
+        }
+    }
+
+    if ($value -is [string]) {
+        $parsed = $false
+        if ([bool]::TryParse($value, [ref]$parsed)) {
+            return [pscustomobject]@{
+                HasValue = $true
+                Value    = $parsed
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        HasValue = $false
+        Value    = $false
+    }
+}
+
+function Test-ValidationManifestSelectionPolicy {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ManifestPath,
+        [string]$ExpectedGitCommit,
+        [switch]$EnforceGitCommitMatch,
+        [switch]$EnforceRegressionBackedManifest
+    )
+
+    $readResult = Read-ValidationManifest -ManifestPath $ManifestPath
+    if (-not $readResult.Success) {
+        return [pscustomobject]@{
+            IsValid            = $false
+            Reason             = "Could not read validation manifest: $($readResult.Error)"
+            ManifestPath       = $ManifestPath
+            ManifestGitCommit  = $null
+            RegressionBacked   = $false
+            SmokeTestPassed    = $false
+            RegressionRun      = $false
+            RegressionPassed   = $false
+            ValidationManifest = $null
+        }
+    }
+
+    $manifest = $readResult.Manifest
+    $manifestGitCommitProperty = $manifest.PSObject.Properties["git_commit"]
+    $manifestGitCommit = if ($null -ne $manifestGitCommitProperty) {
+        Get-TrimmedString -Value $manifestGitCommitProperty.Value
+    }
+    else {
+        $null
+    }
+
+    $smokeTestPassedProperty = Get-ManifestBooleanValue -Manifest $manifest -PropertyName "smoke_test_passed"
+    $regressionRunProperty = Get-ManifestBooleanValue -Manifest $manifest -PropertyName "regression_run"
+    $regressionPassedProperty = Get-ManifestBooleanValue -Manifest $manifest -PropertyName "regression_passed"
+    $regressionBacked = if ($regressionPassedProperty.HasValue) {
+        $regressionPassedProperty.Value
+    }
+    elseif ($regressionRunProperty.HasValue) {
+        $regressionRunProperty.Value
+    }
+    else {
+        $false
+    }
+
+    if ($EnforceGitCommitMatch) {
+        if ([string]::IsNullOrWhiteSpace($ExpectedGitCommit)) {
+            return [pscustomobject]@{
+                IsValid            = $false
+                Reason             = "Git HEAD could not be determined for commit validation."
+                ManifestPath       = $ManifestPath
+                ManifestGitCommit  = $manifestGitCommit
+                RegressionBacked   = $regressionBacked
+                SmokeTestPassed    = $smokeTestPassedProperty.Value
+                RegressionRun      = $regressionRunProperty.Value
+                RegressionPassed   = $regressionPassedProperty.Value
+                ValidationManifest = $manifest
+            }
+        }
+
+        if ([string]::IsNullOrWhiteSpace($manifestGitCommit)) {
+            return [pscustomobject]@{
+                IsValid            = $false
+                Reason             = "Validation manifest is missing git_commit."
+                ManifestPath       = $ManifestPath
+                ManifestGitCommit  = $manifestGitCommit
+                RegressionBacked   = $regressionBacked
+                SmokeTestPassed    = $smokeTestPassedProperty.Value
+                RegressionRun      = $regressionRunProperty.Value
+                RegressionPassed   = $regressionPassedProperty.Value
+                ValidationManifest = $manifest
+            }
+        }
+
+        if (-not [string]::Equals($manifestGitCommit, $ExpectedGitCommit, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return [pscustomobject]@{
+                IsValid            = $false
+                Reason             = "Validation manifest git_commit '$manifestGitCommit' does not match repo HEAD '$ExpectedGitCommit'."
+                ManifestPath       = $ManifestPath
+                ManifestGitCommit  = $manifestGitCommit
+                RegressionBacked   = $regressionBacked
+                SmokeTestPassed    = $smokeTestPassedProperty.Value
+                RegressionRun      = $regressionRunProperty.Value
+                RegressionPassed   = $regressionPassedProperty.Value
+                ValidationManifest = $manifest
+            }
+        }
+    }
+
+    if ($EnforceRegressionBackedManifest -and (-not $regressionBacked)) {
+        return [pscustomobject]@{
+            IsValid            = $false
+            Reason             = "Strict mode requires a regression-backed validation manifest (regression_run/regression_passed=true)."
+            ManifestPath       = $ManifestPath
+            ManifestGitCommit  = $manifestGitCommit
+            RegressionBacked   = $regressionBacked
+            SmokeTestPassed    = $smokeTestPassedProperty.Value
+            RegressionRun      = $regressionRunProperty.Value
+            RegressionPassed   = $regressionPassedProperty.Value
+            ValidationManifest = $manifest
+        }
+    }
+
+    return [pscustomobject]@{
+        IsValid            = $true
+        Reason             = $null
+        ManifestPath       = $ManifestPath
+        ManifestGitCommit  = $manifestGitCommit
+        RegressionBacked   = $regressionBacked
+        SmokeTestPassed    = $smokeTestPassedProperty.Value
+        RegressionRun      = $regressionRunProperty.Value
+        RegressionPassed   = $regressionPassedProperty.Value
+        ValidationManifest = $manifest
+    }
 }
 
 function Stop-StaleAccessProcesses {
@@ -593,17 +851,35 @@ function Update-ClaudeConfigCommand {
     }
 
     $content = Get-Content -LiteralPath $ConfigPath -Raw
-    $regex = [regex]::new('("mcpServers"\s*:\s*\{[\s\S]*?"access-mcp"\s*:\s*\{[\s\S]*?"command"\s*:\s*)"[^"]*"', [System.Text.RegularExpressions.RegexOptions]::None)
-    if (-not $regex.IsMatch($content)) {
+    $patterns = @(
+        [pscustomobject]@{
+            ServerName = "access-mcp-server"
+            Regex      = [regex]::new('("mcpServers"\s*:\s*\{[\s\S]*?"access-mcp-server"\s*:\s*\{[\s\S]*?"command"\s*:\s*)"[^"]*"', [System.Text.RegularExpressions.RegexOptions]::None)
+        },
+        [pscustomobject]@{
+            ServerName = "access-mcp"
+            Regex      = [regex]::new('("mcpServers"\s*:\s*\{[\s\S]*?"access-mcp"\s*:\s*\{[\s\S]*?"command"\s*:\s*)"[^"]*"', [System.Text.RegularExpressions.RegexOptions]::None)
+        }
+    )
+
+    $matchedPattern = $null
+    foreach ($pattern in $patterns) {
+        if ($pattern.Regex.IsMatch($content)) {
+            $matchedPattern = $pattern
+            break
+        }
+    }
+
+    if ($null -eq $matchedPattern) {
         return [pscustomobject]@{
             Path   = $ConfigPath
             Status = "not-found"
-            Detail = "mcpServers.access-mcp.command not found."
+            Detail = "mcpServers.access-mcp-server.command or mcpServers.access-mcp.command not found."
         }
     }
 
     $escapedPath = $SelectedBinary.Replace('\', '\\')
-    $updatedContent = $regex.Replace(
+    $updatedContent = $matchedPattern.Regex.Replace(
         $content,
         {
             param($match)
@@ -620,7 +896,7 @@ function Update-ClaudeConfigCommand {
         }
     }
 
-    if (-not $script:PSCmdlet.ShouldProcess($ConfigPath, "Update mcpServers.access-mcp.command")) {
+    if (-not $script:PSCmdlet.ShouldProcess($ConfigPath, ("Update mcpServers.{0}.command" -f $matchedPattern.ServerName))) {
         return [pscustomobject]@{
             Path   = $ConfigPath
             Status = "whatif"
@@ -632,7 +908,7 @@ function Update-ClaudeConfigCommand {
     return [pscustomobject]@{
         Path   = $ConfigPath
         Status = "updated"
-        Detail = "Updated mcpServers.access-mcp.command."
+        Detail = ("Updated mcpServers.{0}.command." -f $matchedPattern.ServerName)
     }
 }
 
@@ -671,6 +947,10 @@ $summary = [ordered]@{
     TrustedWhatIf      = 0
     SelectedBinary     = $null
     ValidationManifest = $null
+    ExpectedGitCommit  = $null
+    ManifestGitCommit  = $null
+    RegressionBackedManifest = $false
+    StrictManifestMode = "disabled"
     RegressionExitCode = $null
     RegressionStatus   = "not-run"
 }
@@ -712,6 +992,38 @@ if ($existingCandidates.Count -eq 0) {
     throw "No candidate binaries found. Checked: $($candidatePaths -join ', ')"
 }
 
+$enforceGitCommitMatch = -not $AllowManifestHeadMismatch
+$headGitCommit = Get-GitHeadCommit -RepoRoot $repoRoot
+if ($enforceGitCommitMatch) {
+    if ([string]::IsNullOrWhiteSpace($headGitCommit)) {
+        throw "Unable to determine repo HEAD commit for validation-manifest checks. Use -AllowManifestHeadMismatch to bypass commit matching."
+    }
+
+    Write-Host ("Validation policy: manifest git_commit must match repo HEAD ({0})." -f $headGitCommit)
+}
+else {
+    Write-Warning "AllowManifestHeadMismatch enabled; manifest git_commit mismatch checks are bypassed."
+}
+
+$enforceRegressionBackedManifest = $RequireRegressionBackedManifest -and (-not $AllowNonRegressionManifest)
+if ($enforceRegressionBackedManifest) {
+    Write-Host "Validation policy: strict mode enabled, requiring regression-backed validation manifests."
+}
+elseif ($RequireRegressionBackedManifest -and $AllowNonRegressionManifest) {
+    Write-Warning "AllowNonRegressionManifest override enabled; strict regression-backed manifest requirement is bypassed."
+}
+elseif ($AllowNonRegressionManifest) {
+    Write-Warning "AllowNonRegressionManifest has no effect without -RequireRegressionBackedManifest."
+}
+
+$summary.ExpectedGitCommit = $headGitCommit
+if ($enforceRegressionBackedManifest) {
+    $summary.StrictManifestMode = "enabled"
+}
+elseif ($RequireRegressionBackedManifest -and $AllowNonRegressionManifest) {
+    $summary.StrictManifestMode = "override"
+}
+
 $candidateRecords = New-Object 'System.Collections.Generic.List[object]'
 foreach ($candidate in $existingCandidates) {
     $candidateDirectory = Split-Path -Path $candidate -Parent
@@ -719,9 +1031,23 @@ foreach ($candidate in $existingCandidates) {
     $hasManifest = Test-Path -LiteralPath $manifestPath
 
     if ($hasManifest) {
+        $manifestPolicyResult = Test-ValidationManifestSelectionPolicy `
+            -ManifestPath $manifestPath `
+            -ExpectedGitCommit $headGitCommit `
+            -EnforceGitCommitMatch:$enforceGitCommitMatch `
+            -EnforceRegressionBackedManifest:$enforceRegressionBackedManifest
+
+        if (-not $manifestPolicyResult.IsValid) {
+            Write-Warning ("Skipping candidate due to validation manifest policy failure: {0} | {1}" -f $candidate, $manifestPolicyResult.Reason)
+            continue
+        }
+
         $candidateRecords.Add([pscustomobject]@{
                 ExePath = $candidate
                 ValidationManifestPath = $manifestPath
+                ManifestGitCommit = $manifestPolicyResult.ManifestGitCommit
+                ManifestRegressionBacked = $manifestPolicyResult.RegressionBacked
+                ValidationManifest = $manifestPolicyResult.ValidationManifest
             })
         continue
     }
@@ -731,6 +1057,9 @@ foreach ($candidate in $existingCandidates) {
         $candidateRecords.Add([pscustomobject]@{
                 ExePath = $candidate
                 ValidationManifestPath = $null
+                ManifestGitCommit = $null
+                ManifestRegressionBacked = $false
+                ValidationManifest = $null
             })
     }
     else {
@@ -739,7 +1068,7 @@ foreach ($candidate in $existingCandidates) {
 }
 
 if ($candidateRecords.Count -eq 0) {
-    throw "No validated candidate binaries found. Run scripts\publish-and-promote-x64.ps1 without -SkipSmokeTest, or pass -AllowUnvalidatedBinary to bypass this safety check."
+    throw "No candidate binaries satisfied validation policy. Default policy requires release-validation.json with git_commit matching HEAD. Overrides: -AllowManifestHeadMismatch (commit check), -AllowUnvalidatedBinary (missing manifest), -AllowNonRegressionManifest (strict-mode regression bypass)."
 }
 
 $smokeScriptPath = Join-Path $repoRoot "tests\ci_initialize_smoke.ps1"
@@ -759,6 +1088,8 @@ foreach ($candidateRecord in $candidateRecords) {
                 RawOutput    = @($smokeResult.RawOutput)
                 ConnectReply = $null
                 ValidationManifestPath = $candidateRecord.ValidationManifestPath
+                ManifestGitCommit = $candidateRecord.ManifestGitCommit
+                ManifestRegressionBacked = $candidateRecord.ManifestRegressionBacked
             })
         continue
     }
@@ -766,6 +1097,8 @@ foreach ($candidateRecord in $candidateRecords) {
     Write-Host "Connect probe: $candidate"
     $result = Invoke-ConnectProbe -ExePath $candidate -DbPath $resolvedDatabasePath
     $result | Add-Member -NotePropertyName ValidationManifestPath -NotePropertyValue $candidateRecord.ValidationManifestPath
+    $result | Add-Member -NotePropertyName ManifestGitCommit -NotePropertyValue $candidateRecord.ManifestGitCommit
+    $result | Add-Member -NotePropertyName ManifestRegressionBacked -NotePropertyValue $candidateRecord.ManifestRegressionBacked
     $probeResults.Add($result)
     if ($result.Success) {
         Write-Host "Probe success: $candidate"
@@ -787,6 +1120,8 @@ if ($selectedProbe.Count -eq 0) {
 $selectedBinary = $selectedProbe[0].ExePath
 $summary.SelectedBinary = $selectedBinary
 $summary.ValidationManifest = $selectedProbe[0].ValidationManifestPath
+$summary.ManifestGitCommit = $selectedProbe[0].ManifestGitCommit
+$summary.RegressionBackedManifest = [bool]$selectedProbe[0].ManifestRegressionBacked
 
 $shouldUpdateCodex = $UpdateConfigs -or $UpdateCodexConfig
 $shouldUpdateClaude = $UpdateConfigs -or $UpdateClaudeConfig
@@ -797,7 +1132,7 @@ if ($shouldUpdateCodex) {
     $configResults.Add((Update-CodexConfigCommand -ConfigPath $codexPath -SelectedBinary $selectedBinary))
 }
 if ($shouldUpdateClaude) {
-    $claudePath = Join-Path $env:USERPROFILE ".claude.json"
+    $claudePath = Resolve-ClaudeConfigPath -Path $ClaudeConfigPath
     $configResults.Add((Update-ClaudeConfigCommand -ConfigPath $claudePath -SelectedBinary $selectedBinary))
 }
 
@@ -832,10 +1167,19 @@ Write-Host "=== repair-and-verify-access-mcp summary ==="
 Write-Host ("Selected binary : {0}" -f $summary.SelectedBinary)
 if (-not [string]::IsNullOrWhiteSpace([string]$summary.ValidationManifest)) {
     Write-Host ("Validation manifest: {0}" -f $summary.ValidationManifest)
+    Write-Host ("Manifest git_commit: {0}" -f $(if ([string]::IsNullOrWhiteSpace([string]$summary.ManifestGitCommit)) { "<missing>" } else { $summary.ManifestGitCommit }))
+    Write-Host ("Manifest regression-backed: {0}" -f $summary.RegressionBackedManifest)
 }
 else {
     Write-Host "Validation manifest: none (unvalidated mode)"
 }
+if (-not $AllowManifestHeadMismatch) {
+    Write-Host ("Expected git_commit: {0}" -f $summary.ExpectedGitCommit)
+}
+else {
+    Write-Host "Expected git_commit: bypassed by -AllowManifestHeadMismatch"
+}
+Write-Host ("Strict manifest mode: {0}" -f $summary.StrictManifestMode)
 Write-Host ("Processes stopped: {0}" -f $summary.ProcessesStopped)
 Write-Host ("Lock file path   : {0}" -f $summary.LockFilePath)
 Write-Host ("Lock file existed: {0}" -f $summary.LockFileExisted)
@@ -850,6 +1194,12 @@ if ($configResults.Count -gt 0) {
 }
 else {
     Write-Host "Config updates   : skipped"
+}
+
+$failedConfigResults = @($configResults | Where-Object { $_.Status -in @("missing", "not-found", "failed") })
+if ($failedConfigResults.Count -gt 0) {
+    $details = @($failedConfigResults | ForEach-Object { "{0} [{1}]: {2}" -f $_.Path, $_.Status, $_.Detail })
+    throw ("One or more config updates failed: {0}" -f ($details -join "; "))
 }
 
 Write-Host ("Regression status: {0}" -f $summary.RegressionStatus)

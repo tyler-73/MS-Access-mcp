@@ -16,6 +16,8 @@ namespace MS.Access.MCP.Interop
         private OdbcConnection? _odbcConnection;
         private dynamic? _accessApplication;
         private string? _currentDatabasePath;
+        private string? _databasePassword;
+        private string? _systemDatabasePath;
         private int _oleDbReleaseDepth = 0;
         private bool _restoreOleDbAfterRelease = false;
         private DataProviderKind _providerToRestoreAfterRelease = DataProviderKind.None;
@@ -32,6 +34,11 @@ namespace MS.Access.MCP.Interop
         private const int DaoRelationAttributeDeleteCascade = 4096;
         private const string TextModeJson = "json";
         private const string TextModeAccessText = "access_text";
+        private static readonly HashSet<string> SupportedDatabaseExtensions = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ".accdb",
+            ".mdb"
+        };
 
         private enum DataProviderKind
         {
@@ -44,17 +51,26 @@ namespace MS.Access.MCP.Interop
 
         public void Connect(string databasePath)
         {
-            if (!File.Exists(databasePath))
-                throw new FileNotFoundException($"Database file not found: {databasePath}");
+            Connect(databasePath, null, null);
+        }
 
-            _currentDatabasePath = databasePath;
+        public void Connect(string databasePath, string? databasePassword, string? systemDatabasePath)
+        {
+            var normalizedDatabasePath = NormalizeDatabasePath(databasePath, nameof(databasePath), requireExists: true);
+            var normalizedSystemDatabasePath = NormalizeSystemDatabasePath(systemDatabasePath);
+
+            _currentDatabasePath = normalizedDatabasePath;
+            _databasePassword = string.IsNullOrWhiteSpace(databasePassword) ? null : databasePassword;
+            _systemDatabasePath = normalizedSystemDatabasePath;
             try
             {
-                OpenPreferredConnection(databasePath);
+                OpenPreferredConnection(normalizedDatabasePath);
             }
             catch
             {
                 _currentDatabasePath = null;
+                _databasePassword = null;
+                _systemDatabasePath = null;
                 throw;
             }
         }
@@ -64,11 +80,135 @@ namespace MS.Access.MCP.Interop
             ResetTransactionState(attemptRollback: true);
             CloseSqlConnections();
             _currentDatabasePath = null;
+            _databasePassword = null;
+            _systemDatabasePath = null;
             _accessDatabasePath = null;
             _accessDatabaseOpenedExclusive = false;
         }
 
         public bool IsConnected => !string.IsNullOrWhiteSpace(_currentDatabasePath);
+        public string? CurrentDatabasePath => _currentDatabasePath;
+
+        public DatabaseCreateResult CreateDatabase(string databasePath, bool overwrite = false)
+        {
+            var normalizedDatabasePath = NormalizeDatabasePath(databasePath, nameof(databasePath), requireExists: false);
+            var existedBefore = File.Exists(normalizedDatabasePath);
+            if (existedBefore && !overwrite)
+                throw new IOException($"Destination database already exists: {normalizedDatabasePath}. Set overwrite=true to replace it.");
+
+            var directory = Path.GetDirectoryName(normalizedDatabasePath);
+            if (!string.IsNullOrWhiteSpace(directory))
+                Directory.CreateDirectory(directory);
+
+            if (existedBefore)
+                File.Delete(normalizedDatabasePath);
+
+            ExecuteWithTemporaryAccessApplication(accessApp =>
+            {
+                accessApp.NewCurrentDatabase(normalizedDatabasePath);
+                accessApp.CloseCurrentDatabase();
+            });
+
+            var fileInfo = new FileInfo(normalizedDatabasePath);
+            return new DatabaseCreateResult
+            {
+                DatabasePath = normalizedDatabasePath,
+                ExistedBefore = existedBefore,
+                SizeBytes = fileInfo.Exists ? fileInfo.Length : 0,
+                LastWriteTimeUtc = fileInfo.Exists ? fileInfo.LastWriteTimeUtc : DateTime.MinValue
+            };
+        }
+
+        public DatabaseBackupResult BackupDatabase(string sourceDatabasePath, string destinationDatabasePath, bool overwrite = false)
+        {
+            var normalizedSourcePath = NormalizeDatabasePath(sourceDatabasePath, nameof(sourceDatabasePath), requireExists: true);
+            var normalizedDestinationPath = NormalizeDatabasePath(destinationDatabasePath, nameof(destinationDatabasePath), requireExists: false);
+            EnsureDistinctDatabasePaths(normalizedSourcePath, normalizedDestinationPath, nameof(sourceDatabasePath), nameof(destinationDatabasePath));
+
+            var destinationDirectory = Path.GetDirectoryName(normalizedDestinationPath);
+            if (!string.IsNullOrWhiteSpace(destinationDirectory))
+                Directory.CreateDirectory(destinationDirectory);
+
+            var operatedOnConnectedDatabase = IsConnected &&
+                !string.IsNullOrWhiteSpace(_currentDatabasePath) &&
+                PathsMatch(_currentDatabasePath, normalizedSourcePath);
+
+            return ExecuteWithConnectedDatabaseReleased(
+                normalizedSourcePath,
+                nameof(BackupDatabase),
+                () =>
+                {
+                    if (File.Exists(normalizedDestinationPath) && !overwrite)
+                        throw new IOException($"Destination database already exists: {normalizedDestinationPath}. Set overwrite=true to replace it.");
+
+                    File.Copy(normalizedSourcePath, normalizedDestinationPath, overwrite);
+
+                    var sourceInfo = new FileInfo(normalizedSourcePath);
+                    var destinationInfo = new FileInfo(normalizedDestinationPath);
+
+                    return new DatabaseBackupResult
+                    {
+                        SourceDatabasePath = normalizedSourcePath,
+                        DestinationDatabasePath = normalizedDestinationPath,
+                        BytesCopied = destinationInfo.Exists ? destinationInfo.Length : 0,
+                        SourceLastWriteTimeUtc = sourceInfo.Exists ? sourceInfo.LastWriteTimeUtc : DateTime.MinValue,
+                        DestinationLastWriteTimeUtc = destinationInfo.Exists ? destinationInfo.LastWriteTimeUtc : DateTime.MinValue,
+                        OperatedOnConnectedDatabase = operatedOnConnectedDatabase
+                    };
+                });
+        }
+
+        public DatabaseCompactRepairResult CompactRepairDatabase(string sourceDatabasePath, string? destinationDatabasePath = null, bool overwrite = false)
+        {
+            var normalizedSourcePath = NormalizeDatabasePath(sourceDatabasePath, nameof(sourceDatabasePath), requireExists: true);
+            var inPlace = string.IsNullOrWhiteSpace(destinationDatabasePath);
+            var normalizedDestinationPath = inPlace
+                ? BuildCompactTemporaryPath(normalizedSourcePath)
+                : NormalizeDatabasePath(destinationDatabasePath!, nameof(destinationDatabasePath), requireExists: false);
+
+            EnsureDistinctDatabasePaths(normalizedSourcePath, normalizedDestinationPath, nameof(sourceDatabasePath), nameof(destinationDatabasePath));
+
+            var finalDestinationPath = inPlace ? normalizedSourcePath : normalizedDestinationPath;
+            var destinationDirectory = Path.GetDirectoryName(normalizedDestinationPath);
+            if (!string.IsNullOrWhiteSpace(destinationDirectory))
+                Directory.CreateDirectory(destinationDirectory);
+
+            var operatedOnConnectedDatabase = IsConnected &&
+                !string.IsNullOrWhiteSpace(_currentDatabasePath) &&
+                PathsMatch(_currentDatabasePath, normalizedSourcePath);
+
+            return ExecuteWithConnectedDatabaseReleased(
+                normalizedSourcePath,
+                nameof(CompactRepairDatabase),
+                () =>
+                {
+                    if (!inPlace && File.Exists(normalizedDestinationPath) && !overwrite)
+                        throw new IOException($"Destination database already exists: {normalizedDestinationPath}. Set overwrite=true to replace it.");
+
+                    if (File.Exists(normalizedDestinationPath))
+                        File.Delete(normalizedDestinationPath);
+
+                    RunCompactRepair(normalizedSourcePath, normalizedDestinationPath);
+
+                    if (inPlace)
+                    {
+                        ReplaceFileInPlace(normalizedDestinationPath, normalizedSourcePath);
+                    }
+
+                    var sourceInfo = new FileInfo(normalizedSourcePath);
+                    var destinationInfo = new FileInfo(finalDestinationPath);
+                    return new DatabaseCompactRepairResult
+                    {
+                        SourceDatabasePath = normalizedSourcePath,
+                        DestinationDatabasePath = finalDestinationPath,
+                        InPlace = inPlace,
+                        SourceSizeBytes = sourceInfo.Exists ? sourceInfo.Length : 0,
+                        DestinationSizeBytes = destinationInfo.Exists ? destinationInfo.Length : 0,
+                        DestinationLastWriteTimeUtc = destinationInfo.Exists ? destinationInfo.LastWriteTimeUtc : DateTime.MinValue,
+                        OperatedOnConnectedDatabase = operatedOnConnectedDatabase
+                    };
+                });
+        }
 
         #endregion
 
@@ -1572,7 +1712,7 @@ namespace MS.Access.MCP.Interop
             if (string.IsNullOrWhiteSpace(formName)) throw new ArgumentException("Form name is required", nameof(formName));
 
             ExecuteComOperation(
-                accessApp => accessApp.DoCmd.Close(2, formName),
+                accessApp => accessApp.DoCmd.Close(2, formName, 2), // 2 = acSaveNo
                 requireExclusive: false,
                 releaseOleDb: false);
         }
@@ -1594,7 +1734,7 @@ namespace MS.Access.MCP.Interop
             if (string.IsNullOrWhiteSpace(reportName)) throw new ArgumentException("Report name is required", nameof(reportName));
 
             ExecuteComOperation(
-                accessApp => accessApp.DoCmd.Close(3, reportName),
+                accessApp => accessApp.DoCmd.Close(3, reportName, 2), // 2 = acSaveNo
                 requireExclusive: false,
                 releaseOleDb: false);
         }
@@ -1932,7 +2072,7 @@ namespace MS.Access.MCP.Interop
             return ExecuteComOperation(accessApp =>
             {
                 var openedHere = false;
-                var form = EnsureFormOpen(accessApp, formName, false, out openedHere);
+                var form = EnsureFormOpen(accessApp, formName, true, out openedHere);
                 try
                 {
                     var control = GetControlByName(form, controlName)
@@ -2506,7 +2646,14 @@ namespace MS.Access.MCP.Interop
                 // Continue and attempt reopen.
             }
 
-            accessApp.OpenCurrentDatabase(_currentDatabasePath, false);
+            if (string.IsNullOrWhiteSpace(_databasePassword))
+            {
+                accessApp.OpenCurrentDatabase(_currentDatabasePath, false);
+            }
+            else
+            {
+                accessApp.OpenCurrentDatabase(_currentDatabasePath, false, _databasePassword);
+            }
             _accessDatabasePath = _currentDatabasePath;
             _accessDatabaseOpenedExclusive = false;
         }
@@ -3166,6 +3313,247 @@ namespace MS.Access.MCP.Interop
                 throw new InvalidOperationException($"{operationName} is not allowed while a transaction is active. Commit or rollback first.");
         }
 
+        private T ExecuteWithConnectedDatabaseReleased<T>(string sourceDatabasePath, string operationName, Func<T> operation)
+        {
+            var shouldDisconnectCurrent = IsConnected &&
+                !string.IsNullOrWhiteSpace(_currentDatabasePath) &&
+                PathsMatch(_currentDatabasePath, sourceDatabasePath);
+
+            if (!shouldDisconnectCurrent)
+                return operation();
+
+            EnsureNoActiveTransaction(operationName);
+
+            var reconnectPath = _currentDatabasePath!;
+            var reconnectPassword = _databasePassword;
+            var reconnectSystemDatabasePath = _systemDatabasePath;
+            Disconnect();
+
+            Exception? operationError = null;
+            try
+            {
+                return operation();
+            }
+            catch (Exception ex)
+            {
+                operationError = ex;
+                throw;
+            }
+            finally
+            {
+                try
+                {
+                    Connect(reconnectPath, reconnectPassword, reconnectSystemDatabasePath);
+                }
+                catch (Exception reconnectEx)
+                {
+                    if (operationError != null)
+                    {
+                        throw new AggregateException(
+                            $"{operationName} failed and reconnecting to {reconnectPath} also failed.",
+                            operationError,
+                            reconnectEx);
+                    }
+
+                    throw;
+                }
+            }
+        }
+
+        private static void ExecuteWithTemporaryAccessApplication(Action<dynamic> action)
+        {
+            var accessType = Type.GetTypeFromProgID("Access.Application", throwOnError: false);
+            if (accessType == null)
+                throw new InvalidOperationException("Microsoft Access COM automation is not available on this machine.");
+
+            dynamic? accessApp = null;
+            try
+            {
+                accessApp = Activator.CreateInstance(accessType);
+                if (accessApp == null)
+                    throw new InvalidOperationException("Failed to create Access.Application COM instance.");
+
+                try
+                {
+                    accessApp.Visible = false;
+                }
+                catch
+                {
+                    // Best-effort: keep temporary automation instances headless.
+                }
+
+                try
+                {
+                    accessApp.UserControl = false;
+                }
+                catch
+                {
+                    // Best-effort: keep temporary automation instances non-interactive.
+                }
+
+                action(accessApp);
+            }
+            finally
+            {
+                if (accessApp != null)
+                {
+                    try
+                    {
+                        accessApp.Quit(2);
+                    }
+                    catch
+                    {
+                        // Ignore shutdown failures while releasing COM resources.
+                    }
+
+                    try
+                    {
+                        if (Marshal.IsComObject(accessApp))
+                            Marshal.FinalReleaseComObject(accessApp);
+                    }
+                    catch
+                    {
+                        // Ignore RCW cleanup failures.
+                    }
+                }
+            }
+        }
+
+        private static void RunCompactRepair(string sourceDatabasePath, string destinationDatabasePath)
+        {
+            ExecuteWithTemporaryAccessApplication(accessApp =>
+            {
+                var result = accessApp.CompactRepair(sourceDatabasePath, destinationDatabasePath, true);
+                if (result is bool compacted && !compacted)
+                    throw new InvalidOperationException($"Compact/repair operation returned false for destination: {destinationDatabasePath}");
+            });
+
+            if (!File.Exists(destinationDatabasePath))
+                throw new InvalidOperationException($"Compact/repair did not produce destination database: {destinationDatabasePath}");
+        }
+
+        private static void ReplaceFileInPlace(string compactedDatabasePath, string sourceDatabasePath)
+        {
+            var sourceDirectory = Path.GetDirectoryName(sourceDatabasePath);
+            var backupFileName = $"{Path.GetFileName(sourceDatabasePath)}.precompact.{Guid.NewGuid():N}.bak";
+            var backupPath = string.IsNullOrWhiteSpace(sourceDirectory)
+                ? Path.Combine(Path.GetTempPath(), backupFileName)
+                : Path.Combine(sourceDirectory, backupFileName);
+
+            try
+            {
+                File.Replace(compactedDatabasePath, sourceDatabasePath, backupPath, ignoreMetadataErrors: true);
+            }
+            finally
+            {
+                if (File.Exists(backupPath))
+                {
+                    try
+                    {
+                        File.Delete(backupPath);
+                    }
+                    catch
+                    {
+                        // Ignore cleanup failures for temporary backup files.
+                    }
+                }
+
+                if (File.Exists(compactedDatabasePath))
+                {
+                    try
+                    {
+                        File.Delete(compactedDatabasePath);
+                    }
+                    catch
+                    {
+                        // Ignore cleanup failures for temporary compacted files.
+                    }
+                }
+            }
+        }
+
+        private static string BuildCompactTemporaryPath(string sourceDatabasePath)
+        {
+            var sourceDirectory = Path.GetDirectoryName(sourceDatabasePath);
+            var temporaryFileName = $"{Path.GetFileNameWithoutExtension(sourceDatabasePath)}.compact.{Guid.NewGuid():N}{Path.GetExtension(sourceDatabasePath)}";
+            if (string.IsNullOrWhiteSpace(sourceDirectory))
+                return Path.Combine(Path.GetTempPath(), temporaryFileName);
+
+            return Path.Combine(sourceDirectory, temporaryFileName);
+        }
+
+        private static string NormalizeDatabasePath(string databasePath, string paramName, bool requireExists)
+        {
+            if (string.IsNullOrWhiteSpace(databasePath))
+                throw new ArgumentException("Database path is required.", paramName);
+
+            string fullPath;
+            try
+            {
+                fullPath = Path.GetFullPath(databasePath.Trim());
+            }
+            catch (Exception ex)
+            {
+                throw new ArgumentException("Database path is invalid.", paramName, ex);
+            }
+
+            var extension = Path.GetExtension(fullPath);
+            if (!SupportedDatabaseExtensions.Contains(extension))
+                throw new ArgumentException($"Database path must use a .accdb or .mdb extension: {fullPath}", paramName);
+
+            if (requireExists && !File.Exists(fullPath))
+                throw new FileNotFoundException($"Database file not found: {fullPath}");
+
+            return fullPath;
+        }
+
+        private static string? NormalizeSystemDatabasePath(string? systemDatabasePath)
+        {
+            if (string.IsNullOrWhiteSpace(systemDatabasePath))
+                return null;
+
+            string fullPath;
+            try
+            {
+                fullPath = Path.GetFullPath(systemDatabasePath.Trim());
+            }
+            catch (Exception ex)
+            {
+                throw new ArgumentException("System database path is invalid.", nameof(systemDatabasePath), ex);
+            }
+
+            if (!File.Exists(fullPath))
+                throw new FileNotFoundException($"System database file not found: {fullPath}");
+
+            return fullPath;
+        }
+
+        private static void EnsureDistinctDatabasePaths(string sourcePath, string destinationPath, string sourceParamName, string destinationParamName)
+        {
+            if (PathsMatch(sourcePath, destinationPath))
+                throw new ArgumentException($"{sourceParamName} and {destinationParamName} must refer to different files.", destinationParamName);
+        }
+
+        private static string BuildOdbcSecuritySegment(string? databasePassword, string? systemDatabasePath)
+        {
+            var segment = new StringBuilder();
+            if (!string.IsNullOrWhiteSpace(databasePassword))
+                segment.Append("PWD=").Append(EscapeOdbcValue(databasePassword)).Append(';');
+
+            if (!string.IsNullOrWhiteSpace(systemDatabasePath))
+                segment.Append("SystemDB=").Append(EscapeOdbcValue(systemDatabasePath)).Append(';');
+
+            return segment.ToString();
+        }
+
+        private static string EscapeOdbcValue(string value)
+        {
+            if (value.IndexOfAny(new[] { ';', '{', '}', ' ' }) >= 0)
+                return "{" + value.Replace("}", "}}") + "}";
+
+            return value;
+        }
+
         private static string NormalizeLinkSourceDatabasePath(string sourceDatabasePath, string paramName)
         {
             if (string.IsNullOrWhiteSpace(sourceDatabasePath))
@@ -3368,8 +3756,19 @@ namespace MS.Access.MCP.Interop
             ResetTransactionState(attemptRollback: true);
             CloseSqlConnections();
 
-            var connectionString = $"Provider=Microsoft.ACE.OLEDB.12.0;Data Source={databasePath};";
-            _oleDbConnection = new OleDbConnection(connectionString);
+            var connectionStringBuilder = new OleDbConnectionStringBuilder
+            {
+                Provider = "Microsoft.ACE.OLEDB.12.0",
+                DataSource = databasePath
+            };
+
+            if (!string.IsNullOrWhiteSpace(_databasePassword))
+                connectionStringBuilder["Jet OLEDB:Database Password"] = _databasePassword;
+
+            if (!string.IsNullOrWhiteSpace(_systemDatabasePath))
+                connectionStringBuilder["Jet OLEDB:System Database"] = _systemDatabasePath;
+
+            _oleDbConnection = new OleDbConnection(connectionStringBuilder.ConnectionString);
             _oleDbConnection.Open();
             _activeDataProvider = DataProviderKind.OleDb;
             _preferredDataProvider = DataProviderKind.OleDb;
@@ -3381,7 +3780,7 @@ namespace MS.Access.MCP.Interop
             CloseSqlConnections();
 
             Exception? lastError = null;
-            foreach (var connectionString in BuildOdbcConnectionStrings(databasePath))
+            foreach (var connectionString in BuildOdbcConnectionStrings(databasePath, _databasePassword, _systemDatabasePath))
             {
                 try
                 {
@@ -3460,11 +3859,12 @@ namespace MS.Access.MCP.Interop
             }
         }
 
-        private static IEnumerable<string> BuildOdbcConnectionStrings(string databasePath)
+        private static IEnumerable<string> BuildOdbcConnectionStrings(string databasePath, string? databasePassword, string? systemDatabasePath)
         {
-            yield return $"Driver={{Microsoft Access Driver (*.mdb, *.accdb)}};Dbq={databasePath};";
-            yield return $"Driver={{Microsoft Access Driver (*.mdb, *.accdb)}};Dbq={databasePath};ExtendedAnsiSQL=1;";
-            yield return $"Driver={{Microsoft Access Driver (*.mdb)}};Dbq={databasePath};";
+            var securitySegment = BuildOdbcSecuritySegment(databasePassword, systemDatabasePath);
+            yield return $"Driver={{Microsoft Access Driver (*.mdb, *.accdb)}};Dbq={databasePath};{securitySegment}";
+            yield return $"Driver={{Microsoft Access Driver (*.mdb, *.accdb)}};Dbq={databasePath};ExtendedAnsiSQL=1;{securitySegment}";
+            yield return $"Driver={{Microsoft Access Driver (*.mdb)}};Dbq={databasePath};{securitySegment}";
         }
 
         private void EnsureOleDbConnection()
@@ -3667,6 +4067,24 @@ namespace MS.Access.MCP.Interop
                 _accessApplication = Activator.CreateInstance(accessType);
                 if (_accessApplication == null)
                     throw new InvalidOperationException("Failed to create Access.Application COM instance.");
+
+                try
+                {
+                    _accessApplication.Visible = false;
+                }
+                catch
+                {
+                    // Best effort only.
+                }
+
+                try
+                {
+                    _accessApplication.UserControl = false;
+                }
+                catch
+                {
+                    // Best effort only.
+                }
             }
 
             if (openCurrentDatabase && !string.IsNullOrWhiteSpace(_currentDatabasePath))
@@ -3728,7 +4146,14 @@ namespace MS.Access.MCP.Interop
 
             if (shouldOpen)
             {
-                accessApplication.OpenCurrentDatabase(databasePath, requireExclusive);
+                if (string.IsNullOrWhiteSpace(_databasePassword))
+                {
+                    accessApplication.OpenCurrentDatabase(databasePath, requireExclusive);
+                }
+                else
+                {
+                    accessApplication.OpenCurrentDatabase(databasePath, requireExclusive, _databasePassword);
+                }
                 _accessDatabasePath = databasePath;
                 _accessDatabaseOpenedExclusive = requireExclusive;
             }
@@ -4966,6 +5391,35 @@ namespace MS.Access.MCP.Interop
         public bool Active { get; set; }
         public string? IsolationLevel { get; set; }
         public DateTimeOffset? StartedAtUtc { get; set; }
+    }
+
+    public class DatabaseCreateResult
+    {
+        public string DatabasePath { get; set; } = "";
+        public bool ExistedBefore { get; set; }
+        public long SizeBytes { get; set; }
+        public DateTime LastWriteTimeUtc { get; set; }
+    }
+
+    public class DatabaseBackupResult
+    {
+        public string SourceDatabasePath { get; set; } = "";
+        public string DestinationDatabasePath { get; set; } = "";
+        public long BytesCopied { get; set; }
+        public DateTime SourceLastWriteTimeUtc { get; set; }
+        public DateTime DestinationLastWriteTimeUtc { get; set; }
+        public bool OperatedOnConnectedDatabase { get; set; }
+    }
+
+    public class DatabaseCompactRepairResult
+    {
+        public string SourceDatabasePath { get; set; } = "";
+        public string DestinationDatabasePath { get; set; } = "";
+        public bool InPlace { get; set; }
+        public long SourceSizeBytes { get; set; }
+        public long DestinationSizeBytes { get; set; }
+        public DateTime DestinationLastWriteTimeUtc { get; set; }
+        public bool OperatedOnConnectedDatabase { get; set; }
     }
 
     public class FormInfo
