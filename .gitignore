@@ -6,6 +6,10 @@
 mcp-server-official/
 mcp-server-official-x64/
 mcp-server-official-x64-run-*/
+mcp-server-official-x64-smoke*/
+mcp-server-official-x64-next*/
+mcp-server-official-x64-backup-*/
+mcp-server-official-x64-regression-failed-*/
 
 # IDE and user-local files
 .vs/

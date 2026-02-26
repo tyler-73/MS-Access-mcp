@@ -1,6 +1,7 @@
 ﻿using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Linq;
+using System.Runtime.InteropServices;
 using MS.Access.MCP.Interop;
 
 class Program
@@ -125,6 +126,11 @@ class Program
                 new { name = "describe_table", description = "Describe a table schema including columns, nullability, defaults, and primary key columns.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
                 new { name = "create_table", description = "Create a new table in the database", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, fields = new { type = "array", items = new { type = "object", properties = new { name = new { type = "string" }, type = new { type = "string" }, size = new { type = "integer" }, required = new { type = "boolean" }, allow_zero_length = new { type = "boolean" } } } } }, required = new string[] { "table_name", "fields" } } },
                 new { name = "delete_table", description = "Delete a table from the database", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
+                new { name = "add_field", description = "Add a field to an existing table", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, field_type = new { type = "string" }, size = new { type = "integer" }, required = new { type = "boolean" }, allow_zero_length = new { type = "boolean" } }, required = new string[] { "table_name", "field_name", "field_type" } } },
+                new { name = "alter_field", description = "Alter an existing field definition on a table", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, new_field_type = new { type = "string" }, new_size = new { type = "integer" } }, required = new string[] { "table_name", "field_name", "new_field_type" } } },
+                new { name = "drop_field", description = "Drop a field from a table", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" } }, required = new string[] { "table_name", "field_name" } } },
+                new { name = "rename_table", description = "Rename an existing table", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, new_table_name = new { type = "string" } }, required = new string[] { "table_name", "new_table_name" } } },
+                new { name = "rename_field", description = "Rename an existing field on a table", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, new_field_name = new { type = "string" } }, required = new string[] { "table_name", "field_name", "new_field_name" } } },
                 new { name = "get_indexes", description = "Get indexes for a table", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
                 new { name = "create_index", description = "Create an index on one or more columns", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, index_name = new { type = "string" }, columns = new { type = "array", items = new { type = "string" } }, unique = new { type = "boolean" } }, required = new string[] { "table_name", "index_name", "columns" } } },
                 new { name = "delete_index", description = "Delete an index from a table", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, index_name = new { type = "string" } }, required = new string[] { "table_name", "index_name" } } },
@@ -158,11 +164,11 @@ class Program
                 new { name = "get_report_controls", description = "Get list of controls in a report", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" } }, required = new string[] { "report_name" } } },
                 new { name = "get_report_control_properties", description = "Get properties of a report control", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" }, control_name = new { type = "string" } }, required = new string[] { "report_name", "control_name" } } },
                 new { name = "set_report_control_property", description = "Set a property of a report control", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" }, control_name = new { type = "string" }, property_name = new { type = "string" }, value = new { type = "string" } }, required = new string[] { "report_name", "control_name", "property_name", "value" } } },
-                new { name = "export_form_to_text", description = "Export a form to text format", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
-                new { name = "import_form_from_text", description = "Import a form from text format", inputSchema = new { type = "object", properties = new { form_data = new { type = "string" } }, required = new string[] { "form_data" } } },
+                new { name = "export_form_to_text", description = "Export a form to text format", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" }, mode = new { type = "string", @enum = new[] { "json", "access_text" }, description = "Optional mode. Defaults to json." } }, required = new string[] { "form_name" } } },
+                new { name = "import_form_from_text", description = "Import a form from text format", inputSchema = new { type = "object", properties = new { form_data = new { type = "string" }, form_name = new { type = "string", description = "Optional form name override. Required for some access_text payloads." }, mode = new { type = "string", @enum = new[] { "json", "access_text" }, description = "Optional mode. Defaults to json." } }, required = new string[] { "form_data" } } },
                 new { name = "delete_form", description = "Delete a form from the database", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
-                new { name = "export_report_to_text", description = "Export a report to text format", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" } }, required = new string[] { "report_name" } } },
-                new { name = "import_report_from_text", description = "Import a report from text format", inputSchema = new { type = "object", properties = new { report_data = new { type = "string" } }, required = new string[] { "report_data" } } },
+                new { name = "export_report_to_text", description = "Export a report to text format", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" }, mode = new { type = "string", @enum = new[] { "json", "access_text" }, description = "Optional mode. Defaults to json." } }, required = new string[] { "report_name" } } },
+                new { name = "import_report_from_text", description = "Import a report from text format", inputSchema = new { type = "object", properties = new { report_data = new { type = "string" }, report_name = new { type = "string", description = "Optional report name override. Required for some access_text payloads." }, mode = new { type = "string", @enum = new[] { "json", "access_text" }, description = "Optional mode. Defaults to json." } }, required = new string[] { "report_data" } } },
                 new { name = "delete_report", description = "Delete a report from the database", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" } }, required = new string[] { "report_name" } } }
             }
         };
@@ -198,6 +204,11 @@ class Program
             "describe_table" => HandleDescribeTable(accessService, toolArguments),
             "create_table" => HandleCreateTable(accessService, toolArguments),
             "delete_table" => HandleDeleteTable(accessService, toolArguments),
+            "add_field" => HandleAddField(accessService, toolArguments),
+            "alter_field" => HandleAlterField(accessService, toolArguments),
+            "drop_field" => HandleDropField(accessService, toolArguments),
+            "rename_table" => HandleRenameTable(accessService, toolArguments),
+            "rename_field" => HandleRenameField(accessService, toolArguments),
             "get_indexes" => HandleGetIndexes(accessService, toolArguments),
             "create_index" => HandleCreateIndex(accessService, toolArguments),
             "delete_index" => HandleDeleteIndex(accessService, toolArguments),
@@ -266,6 +277,17 @@ class Program
             // Check if database file exists
             if (!File.Exists(databasePath))
                 return new { success = false, error = $"Database file not found: {databasePath}" };
+
+            var preflight = BuildPreflightDiagnostics();
+            if (!preflight.AceOleDbProviderRegistered)
+            {
+                return new
+                {
+                    success = false,
+                    error = $"connect_access preflight failed: Microsoft ACE OLEDB provider (Microsoft.ACE.OLEDB.12.0) is not available for this {preflight.ProcessBitness} process. Install the Access Database Engine with matching bitness (x86/x64) or run a server build with matching bitness.",
+                    preflight = ToPreflightPayload(preflight)
+                };
+            }
                 
             accessService.Connect(databasePath);
             
@@ -277,7 +299,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("connect_access", ex);
         }
     }
 
@@ -316,7 +338,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("get_tables", ex);
         }
     }
 
@@ -329,7 +351,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("get_queries", ex);
         }
     }
 
@@ -342,7 +364,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("get_relationships", ex);
         }
     }
 
@@ -544,7 +566,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("execute_sql", ex);
         }
     }
 
@@ -575,7 +597,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("execute_query_md", ex);
         }
     }
 
@@ -595,7 +617,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("describe_table", ex);
         }
     }
 
@@ -641,6 +663,112 @@ class Program
                 
             accessService.DeleteTable(tableName);
             return new { success = true, message = $"Deleted table {tableName}" };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleAddField(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredStringFromAliases(arguments, new[] { "field_name", "name" }, "field_name", out var fieldName, out var fieldNameError))
+                return fieldNameError;
+            if (!TryGetRequiredStringFromAliases(arguments, new[] { "field_type", "type" }, "field_type", out var fieldType, out var fieldTypeError))
+                return fieldTypeError;
+
+            var field = new FieldInfo
+            {
+                Name = fieldName,
+                Type = fieldType,
+                Size = GetOptionalIntFromAliases(arguments, new[] { "size" }, 0),
+                Required = GetOptionalBool(arguments, "required", false),
+                AllowZeroLength = GetOptionalBool(arguments, "allow_zero_length", false)
+            };
+
+            accessService.AddField(tableName, field);
+            return new { success = true, message = $"Added field {fieldName} to {tableName}" };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleAlterField(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredStringFromAliases(arguments, new[] { "field_name" }, "field_name", out var fieldName, out var fieldNameError))
+                return fieldNameError;
+            if (!TryGetRequiredStringFromAliases(arguments, new[] { "new_field_type", "field_type", "type" }, "new_field_type", out var newFieldType, out var newFieldTypeError))
+                return newFieldTypeError;
+
+            var newSize = GetOptionalIntFromAliases(arguments, new[] { "new_size", "size" }, 0);
+            accessService.AlterField(tableName, fieldName, newFieldType, newSize);
+            return new { success = true, message = $"Altered field {fieldName} on {tableName}" };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleDropField(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredStringFromAliases(arguments, new[] { "field_name" }, "field_name", out var fieldName, out var fieldNameError))
+                return fieldNameError;
+
+            accessService.DropField(tableName, fieldName);
+            return new { success = true, message = $"Dropped field {fieldName} from {tableName}" };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleRenameTable(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredStringFromAliases(arguments, new[] { "table_name", "old_table_name" }, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "new_table_name", out var newTableName, out var newTableNameError))
+                return newTableNameError;
+
+            accessService.RenameTable(tableName, newTableName);
+            return new { success = true, message = $"Renamed table {tableName} to {newTableName}" };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleRenameField(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredStringFromAliases(arguments, new[] { "field_name", "old_field_name" }, "field_name", out var fieldName, out var fieldNameError))
+                return fieldNameError;
+            if (!TryGetRequiredString(arguments, "new_field_name", out var newFieldName, out var newFieldNameError))
+                return newFieldNameError;
+
+            accessService.RenameField(tableName, fieldName, newFieldName);
+            return new { success = true, message = $"Renamed field {fieldName} to {newFieldName} on {tableName}" };
         }
         catch (Exception ex)
         {
@@ -1205,8 +1333,11 @@ class Program
             var formName = arguments.GetProperty("form_name").GetString();
             if (string.IsNullOrEmpty(formName))
                 return new { success = false, error = "Form name is required" };
-                
-            var formData = accessService.ExportFormToText(formName);
+
+            if (!TryGetOptionalMode(arguments, out var mode, out var modeError))
+                return modeError;
+
+            var formData = accessService.ExportFormToText(formName, mode);
             return new { success = true, form_data = formData };
         }
         catch (Exception ex)
@@ -1222,8 +1353,15 @@ class Program
             var formData = arguments.GetProperty("form_data").GetString();
             if (string.IsNullOrEmpty(formData))
                 return new { success = false, error = "Form data is required" };
-                
-            accessService.ImportFormFromText(formData);
+
+            if (!TryGetOptionalMode(arguments, out var mode, out var modeError))
+                return modeError;
+
+            _ = TryGetOptionalString(arguments, "form_name", out var formName);
+            if (string.Equals(mode, "access_text", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(formName))
+                return new { success = false, error = "form_name is required when mode is access_text" };
+
+            accessService.ImportFormFromText(formData, mode, formName);
             return new { success = true, message = "Form imported successfully" };
         }
         catch (Exception ex)
@@ -1256,8 +1394,11 @@ class Program
             var reportName = arguments.GetProperty("report_name").GetString();
             if (string.IsNullOrEmpty(reportName))
                 return new { success = false, error = "Report name is required" };
-                
-            var reportData = accessService.ExportReportToText(reportName);
+
+            if (!TryGetOptionalMode(arguments, out var mode, out var modeError))
+                return modeError;
+
+            var reportData = accessService.ExportReportToText(reportName, mode);
             return new { success = true, report_data = reportData };
         }
         catch (Exception ex)
@@ -1273,8 +1414,15 @@ class Program
             var reportData = arguments.GetProperty("report_data").GetString();
             if (string.IsNullOrEmpty(reportData))
                 return new { success = false, error = "Report data is required" };
-                
-            accessService.ImportReportFromText(reportData);
+
+            if (!TryGetOptionalMode(arguments, out var mode, out var modeError))
+                return modeError;
+
+            _ = TryGetOptionalString(arguments, "report_name", out var reportName);
+            if (string.Equals(mode, "access_text", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(reportName))
+                return new { success = false, error = "report_name is required when mode is access_text" };
+
+            accessService.ImportReportFromText(reportData, mode, reportName);
             return new { success = true, message = "Report imported successfully" };
         }
         catch (Exception ex)
@@ -1324,6 +1472,76 @@ class Program
 
         value = element.GetString() ?? string.Empty;
         return true;
+    }
+
+    static bool TryGetOptionalMode(JsonElement arguments, out string? mode, out object error)
+    {
+        mode = null;
+
+        if (!arguments.TryGetProperty("mode", out var modeElement))
+        {
+            error = new { success = true };
+            return true;
+        }
+
+        if (modeElement.ValueKind != JsonValueKind.String)
+        {
+            error = new { success = false, error = "mode must be a string when provided" };
+            return false;
+        }
+
+        var rawMode = modeElement.GetString();
+        if (string.IsNullOrWhiteSpace(rawMode))
+        {
+            error = new { success = true };
+            return true;
+        }
+
+        var normalizedMode = rawMode.Trim().ToLowerInvariant();
+        if (normalizedMode != "json" && normalizedMode != "access_text")
+        {
+            error = new { success = false, error = "mode must be either 'json' or 'access_text'" };
+            return false;
+        }
+
+        mode = normalizedMode;
+        error = new { success = true };
+        return true;
+    }
+
+    static bool TryGetRequiredStringFromAliases(JsonElement arguments, string[] aliases, string propertyNameForError, out string value, out object error)
+    {
+        value = string.Empty;
+
+        foreach (var alias in aliases)
+        {
+            if (TryGetOptionalString(arguments, alias, out var candidate) && !string.IsNullOrWhiteSpace(candidate))
+            {
+                value = candidate;
+                error = new { success = true };
+                return true;
+            }
+        }
+
+        error = new { success = false, error = $"{propertyNameForError} is required" };
+        return false;
+    }
+
+    static int GetOptionalIntFromAliases(JsonElement arguments, string[] aliases, int defaultValue)
+    {
+        foreach (var alias in aliases)
+        {
+            if (!arguments.TryGetProperty(alias, out var element))
+                continue;
+
+            if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out var numeric))
+                return numeric;
+
+            if (element.ValueKind == JsonValueKind.String && int.TryParse(element.GetString(), out var parsed))
+                return parsed;
+        }
+
+        return defaultValue;
     }
 
     static bool TryGetRequiredStringArray(JsonElement arguments, string propertyName, out List<string> values, out object error)
@@ -1378,6 +1596,129 @@ class Program
             JsonValueKind.String when bool.TryParse(element.GetString(), out var parsed) => parsed,
             _ => defaultValue
         };
+    }
+
+    static object BuildOperationErrorResponse(string operationName, Exception ex)
+    {
+        var preflight = BuildPreflightDiagnostics(ex);
+        var error = BuildRemediatedErrorMessage(operationName, ex, preflight);
+
+        return new
+        {
+            success = false,
+            error,
+            preflight = ToPreflightPayload(preflight)
+        };
+    }
+
+    static PreflightDiagnostics BuildPreflightDiagnostics(Exception? ex = null)
+    {
+        var processBitness = Environment.Is64BitProcess ? "x64" : "x86";
+        var aceProviderRegistered = IsAceOleDbProviderRegistered();
+        var aceProviderIssueDetected = !aceProviderRegistered || (ex != null && HasAceProviderRegistrationIndicator(ex));
+        var trustCenterActiveContentIndicator = ex != null && HasTrustCenterActiveContentIndicator(ex);
+
+        var remediationHints = new List<string>();
+        if (aceProviderIssueDetected)
+        {
+            remediationHints.Add($"Install Microsoft Access Database Engine (ACE) with {processBitness} bitness.");
+            remediationHints.Add("If Office and MCP server bitness differ, run the server build that matches the installed ACE provider.");
+        }
+
+        if (trustCenterActiveContentIndicator)
+        {
+            remediationHints.Add("In Access: File > Options > Trust Center > Trust Center Settings > Trusted Locations, add the database folder.");
+            remediationHints.Add("If the database was downloaded, open file properties and click Unblock before retrying.");
+        }
+
+        return new PreflightDiagnostics
+        {
+            ProcessBitness = processBitness,
+            AceOleDbProviderRegistered = aceProviderRegistered,
+            AceOleDbIssueDetected = aceProviderIssueDetected,
+            TrustCenterActiveContentIndicator = trustCenterActiveContentIndicator,
+            RemediationHints = remediationHints
+        };
+    }
+
+    static object ToPreflightPayload(PreflightDiagnostics preflight)
+    {
+        return new
+        {
+            process_bitness = preflight.ProcessBitness,
+            ace_oledb_provider_registered = preflight.AceOleDbProviderRegistered,
+            ace_oledb_issue_detected = preflight.AceOleDbIssueDetected,
+            trust_center_active_content_indicator = preflight.TrustCenterActiveContentIndicator,
+            remediation_hints = preflight.RemediationHints.ToArray()
+        };
+    }
+
+    static string BuildRemediatedErrorMessage(string operationName, Exception ex, PreflightDiagnostics preflight)
+    {
+        if (preflight.AceOleDbIssueDetected)
+        {
+            return $"{operationName} failed: ACE OLEDB provider (Microsoft.ACE.OLEDB.12.0) is unavailable for this {preflight.ProcessBitness} process. Install matching Access Database Engine bitness or run a matching MCP server build. Original error: {ex.Message}";
+        }
+
+        if (preflight.TrustCenterActiveContentIndicator)
+        {
+            return $"{operationName} failed: Access Trust Center appears to be blocking active content for this database. Add the database folder to Trusted Locations and unblock the file if needed. Original error: {ex.Message}";
+        }
+
+        return ex.Message;
+    }
+
+    static bool IsAceOleDbProviderRegistered()
+    {
+        try
+        {
+            return Type.GetTypeFromProgID("Microsoft.ACE.OLEDB.12.0", throwOnError: false) != null;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    static bool HasAceProviderRegistrationIndicator(Exception ex)
+    {
+        if (ex is COMException comException && (uint)comException.ErrorCode == 0x80040154)
+            return true;
+
+        var message = ex.Message ?? string.Empty;
+        if ((message.IndexOf("Microsoft.ACE.OLEDB.12.0", StringComparison.OrdinalIgnoreCase) >= 0 &&
+             message.IndexOf("not registered", StringComparison.OrdinalIgnoreCase) >= 0) ||
+            message.IndexOf("provider cannot be found", StringComparison.OrdinalIgnoreCase) >= 0 ||
+            message.IndexOf("class not registered", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            return true;
+        }
+
+        return ex.InnerException != null && HasAceProviderRegistrationIndicator(ex.InnerException);
+    }
+
+    static bool HasTrustCenterActiveContentIndicator(Exception ex)
+    {
+        var message = ex.Message ?? string.Empty;
+        if (message.IndexOf("active content", StringComparison.OrdinalIgnoreCase) >= 0 ||
+            message.IndexOf("disabled mode", StringComparison.OrdinalIgnoreCase) >= 0 ||
+            message.IndexOf("trusted location", StringComparison.OrdinalIgnoreCase) >= 0 ||
+            message.IndexOf("security warning", StringComparison.OrdinalIgnoreCase) >= 0 ||
+            message.IndexOf("has blocked", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            return true;
+        }
+
+        return ex.InnerException != null && HasTrustCenterActiveContentIndicator(ex.InnerException);
+    }
+
+    sealed class PreflightDiagnostics
+    {
+        public string ProcessBitness { get; init; } = string.Empty;
+        public bool AceOleDbProviderRegistered { get; init; }
+        public bool AceOleDbIssueDetected { get; init; }
+        public bool TrustCenterActiveContentIndicator { get; init; }
+        public List<string> RemediationHints { get; init; } = new();
     }
 
     static object WrapCallToolResult(object payload)

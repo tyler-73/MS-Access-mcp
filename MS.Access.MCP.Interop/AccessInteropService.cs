@@ -4,6 +4,7 @@ using Microsoft.VisualBasic.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace MS.Access.MCP.Interop
 {
@@ -20,6 +21,8 @@ namespace MS.Access.MCP.Interop
         private const int DaoRelationAttributeDontEnforce = 2;
         private const int DaoRelationAttributeUpdateCascade = 256;
         private const int DaoRelationAttributeDeleteCascade = 4096;
+        private const string TextModeJson = "json";
+        private const string TextModeAccessText = "access_text";
 
         #region 1. Connection Management
 
@@ -428,6 +431,131 @@ namespace MS.Access.MCP.Interop
             EnsureOleDbConnection();
             var command = new OleDbCommand($"DROP TABLE [{tableName}]", _oleDbConnection);
             command.ExecuteNonQuery();
+        }
+
+        public void AddField(string tableName, FieldInfo field)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (field == null) throw new ArgumentNullException(nameof(field));
+
+            var normalizedTableName = NormalizeSchemaIdentifier(tableName, nameof(tableName), "Table name is required");
+            var normalizedFieldName = NormalizeSchemaIdentifier(field.Name, nameof(field), "Field name is required");
+            var typeDeclaration = BuildAccessDataTypeDeclaration(field.Type, field.Size, nameof(field.Type), nameof(field.Size));
+
+            EnsureTableExists(normalizedTableName);
+            if (FieldExists(normalizedTableName, normalizedFieldName))
+                throw new InvalidOperationException($"Field already exists: {normalizedTableName}.{normalizedFieldName}");
+
+            if (typeDeclaration == "COUNTER" && field.Required)
+                throw new ArgumentException("COUNTER fields cannot be explicitly marked as required.", nameof(field));
+
+            var notNullClause = field.Required ? " NOT NULL" : string.Empty;
+            var sql = $"ALTER TABLE [{EscapeSqlIdentifier(normalizedTableName)}] ADD COLUMN [{EscapeSqlIdentifier(normalizedFieldName)}] {typeDeclaration}{notNullClause}";
+            ExecuteSchemaNonQuery(sql);
+        }
+
+        public void AlterField(string tableName, string fieldName, string newType, int size = 0)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            var normalizedTableName = NormalizeSchemaIdentifier(tableName, nameof(tableName), "Table name is required");
+            var normalizedFieldName = NormalizeSchemaIdentifier(fieldName, nameof(fieldName), "Field name is required");
+            var typeDeclaration = BuildAccessDataTypeDeclaration(newType, size, nameof(newType), nameof(size));
+
+            EnsureTableExists(normalizedTableName);
+            if (!FieldExists(normalizedTableName, normalizedFieldName))
+                throw new InvalidOperationException($"Field not found: {normalizedTableName}.{normalizedFieldName}");
+
+            if (typeDeclaration == "COUNTER")
+                throw new ArgumentException("Altering a field to COUNTER is not supported by Access DDL.", nameof(newType));
+
+            var sql = $"ALTER TABLE [{EscapeSqlIdentifier(normalizedTableName)}] ALTER COLUMN [{EscapeSqlIdentifier(normalizedFieldName)}] {typeDeclaration}";
+            ExecuteSchemaNonQuery(sql);
+        }
+
+        public void DropField(string tableName, string fieldName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            var normalizedTableName = NormalizeSchemaIdentifier(tableName, nameof(tableName), "Table name is required");
+            var normalizedFieldName = NormalizeSchemaIdentifier(fieldName, nameof(fieldName), "Field name is required");
+
+            EnsureTableExists(normalizedTableName);
+            if (!FieldExists(normalizedTableName, normalizedFieldName))
+                throw new InvalidOperationException($"Field not found: {normalizedTableName}.{normalizedFieldName}");
+
+            var sql = $"ALTER TABLE [{EscapeSqlIdentifier(normalizedTableName)}] DROP COLUMN [{EscapeSqlIdentifier(normalizedFieldName)}]";
+            ExecuteSchemaNonQuery(sql);
+        }
+
+        public void RenameTable(string tableName, string newTableName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            var normalizedTableName = NormalizeSchemaIdentifier(tableName, nameof(tableName), "Table name is required");
+            var normalizedNewTableName = NormalizeSchemaIdentifier(newTableName, nameof(newTableName), "New table name is required");
+            if (string.Equals(normalizedTableName, normalizedNewTableName, StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("New table name must be different from the existing table name.", nameof(newTableName));
+
+            EnsureTableExists(normalizedTableName);
+            if (TableExists(normalizedNewTableName))
+                throw new InvalidOperationException($"Table already exists: {normalizedNewTableName}");
+
+            try
+            {
+                ExecuteComOperation(accessApp =>
+                {
+                    var tableDef = FindTableDefWithRetry(accessApp, normalizedTableName);
+                    if (tableDef == null)
+                        throw new InvalidOperationException($"Table not found: {normalizedTableName}");
+
+                    SetDynamicProperty(tableDef, "Name", normalizedNewTableName);
+                },
+                requireExclusive: true,
+                releaseOleDb: true);
+            }
+            catch (Exception ex) when (ShouldUseOleDbRenameFallback(ex))
+            {
+                RenameTableViaOleDbCopy(normalizedTableName, normalizedNewTableName);
+            }
+        }
+
+        public void RenameField(string tableName, string fieldName, string newFieldName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            var normalizedTableName = NormalizeSchemaIdentifier(tableName, nameof(tableName), "Table name is required");
+            var normalizedFieldName = NormalizeSchemaIdentifier(fieldName, nameof(fieldName), "Field name is required");
+            var normalizedNewFieldName = NormalizeSchemaIdentifier(newFieldName, nameof(newFieldName), "New field name is required");
+            if (string.Equals(normalizedFieldName, normalizedNewFieldName, StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("New field name must be different from the existing field name.", nameof(newFieldName));
+
+            EnsureTableExists(normalizedTableName);
+            if (!FieldExists(normalizedTableName, normalizedFieldName))
+                throw new InvalidOperationException($"Field not found: {normalizedTableName}.{normalizedFieldName}");
+            if (FieldExists(normalizedTableName, normalizedNewFieldName))
+                throw new InvalidOperationException($"Field already exists: {normalizedTableName}.{normalizedNewFieldName}");
+
+            try
+            {
+                ExecuteComOperation(accessApp =>
+                {
+                    var tableDef = FindTableDefWithRetry(accessApp, normalizedTableName);
+                    if (tableDef == null)
+                        throw new InvalidOperationException($"Table not found: {normalizedTableName}");
+
+                    var sourceField = FindTableField(tableDef, normalizedFieldName)
+                        ?? throw new InvalidOperationException($"Field not found: {normalizedTableName}.{normalizedFieldName}");
+
+                    SetDynamicProperty(sourceField, "Name", normalizedNewFieldName);
+                },
+                requireExclusive: true,
+                releaseOleDb: true);
+            }
+            catch (Exception ex) when (ShouldUseOleDbRenameFallback(ex))
+            {
+                RenameFieldViaOleDbCopy(normalizedTableName, normalizedFieldName, normalizedNewFieldName);
+            }
         }
 
         public List<IndexInfo> GetIndexes(string tableName)
@@ -1562,9 +1690,30 @@ namespace MS.Access.MCP.Interop
 
         #region 7. Persistence & Versioning
 
-        public string ExportFormToText(string formName)
+        public string ExportFormToText(string formName, string? mode = null)
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(formName)) throw new ArgumentException("Form name is required", nameof(formName));
+
+            var normalizedMode = NormalizeTextTransferMode(mode);
+            if (normalizedMode == TextModeAccessText)
+            {
+                return ExecuteComOperation(accessApp =>
+                {
+                    var tempPath = BuildTemporaryTextPath("form_export");
+                    try
+                    {
+                        accessApp.SaveAsText(2, formName, tempPath); // 2 = acForm
+                        return File.ReadAllText(tempPath, Encoding.UTF8);
+                    }
+                    finally
+                    {
+                        TryDeleteFile(tempPath);
+                    }
+                },
+                requireExclusive: true,
+                releaseOleDb: true);
+            }
 
             var formData = new
             {
@@ -1577,9 +1726,36 @@ namespace MS.Access.MCP.Interop
             return JsonSerializer.Serialize(formData, new JsonSerializerOptions { WriteIndented = true });
         }
 
-        public void ImportFormFromText(string formData)
+        public void ImportFormFromText(string formData, string? mode = null, string? formName = null)
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(formData)) throw new ArgumentException("Form data is required", nameof(formData));
+
+            var normalizedMode = NormalizeTextTransferMode(mode);
+            if (normalizedMode == TextModeAccessText)
+            {
+                var resolvedFormName = ResolveAccessTextImportObjectName(formName, formData, "form", "Form_");
+
+                ExecuteComOperation(accessApp =>
+                {
+                    TryDeleteObject(accessApp, 2, resolvedFormName); // 2 = acForm
+
+                    var tempPath = BuildTemporaryTextPath("form_import");
+                    try
+                    {
+                        File.WriteAllText(tempPath, formData, Encoding.UTF8);
+                        accessApp.LoadFromText(2, resolvedFormName, tempPath); // 2 = acForm
+                    }
+                    finally
+                    {
+                        TryDeleteFile(tempPath);
+                    }
+                },
+                requireExclusive: true,
+                releaseOleDb: true);
+
+                return;
+            }
 
             var formInfo = JsonSerializer.Deserialize<FormExportData>(formData);
             if (formInfo == null) throw new ArgumentException("Invalid form data");
@@ -1619,9 +1795,30 @@ namespace MS.Access.MCP.Interop
                 releaseOleDb: true);
         }
 
-        public string ExportReportToText(string reportName)
+        public string ExportReportToText(string reportName, string? mode = null)
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(reportName)) throw new ArgumentException("Report name is required", nameof(reportName));
+
+            var normalizedMode = NormalizeTextTransferMode(mode);
+            if (normalizedMode == TextModeAccessText)
+            {
+                return ExecuteComOperation(accessApp =>
+                {
+                    var tempPath = BuildTemporaryTextPath("report_export");
+                    try
+                    {
+                        accessApp.SaveAsText(3, reportName, tempPath); // 3 = acReport
+                        return File.ReadAllText(tempPath, Encoding.UTF8);
+                    }
+                    finally
+                    {
+                        TryDeleteFile(tempPath);
+                    }
+                },
+                requireExclusive: true,
+                releaseOleDb: true);
+            }
 
             var reportData = new
             {
@@ -1633,9 +1830,36 @@ namespace MS.Access.MCP.Interop
             return JsonSerializer.Serialize(reportData, new JsonSerializerOptions { WriteIndented = true });
         }
 
-        public void ImportReportFromText(string reportData)
+        public void ImportReportFromText(string reportData, string? mode = null, string? reportName = null)
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(reportData)) throw new ArgumentException("Report data is required", nameof(reportData));
+
+            var normalizedMode = NormalizeTextTransferMode(mode);
+            if (normalizedMode == TextModeAccessText)
+            {
+                var resolvedReportName = ResolveAccessTextImportObjectName(reportName, reportData, "report", "Report_");
+
+                ExecuteComOperation(accessApp =>
+                {
+                    TryDeleteObject(accessApp, 3, resolvedReportName); // 3 = acReport
+
+                    var tempPath = BuildTemporaryTextPath("report_import");
+                    try
+                    {
+                        File.WriteAllText(tempPath, reportData, Encoding.UTF8);
+                        accessApp.LoadFromText(3, resolvedReportName, tempPath); // 3 = acReport
+                    }
+                    finally
+                    {
+                        TryDeleteFile(tempPath);
+                    }
+                },
+                requireExclusive: true,
+                releaseOleDb: true);
+
+                return;
+            }
 
             var reportInfo = JsonSerializer.Deserialize<ReportExportData>(reportData);
             if (reportInfo == null) throw new ArgumentException("Invalid report data");
@@ -1715,6 +1939,781 @@ namespace MS.Access.MCP.Interop
             {
                 return 0;
             }
+        }
+
+        private void ExecuteSchemaNonQuery(string sql)
+        {
+            Exception? lastRecoverableError = null;
+
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                EnsureOleDbConnection();
+
+                try
+                {
+                    using var command = new OleDbCommand(sql, _oleDbConnection);
+                    command.ExecuteNonQuery();
+                    RefreshOleDbConnectionAfterSchemaMutation();
+                    return;
+                }
+                catch (Exception ex) when (attempt == 0 && IsRecoverableOleDbLockError(ex) && TryReleaseExclusiveAccessLock())
+                {
+                    lastRecoverableError = ex;
+                    _oleDbConnection?.Close();
+                    _oleDbConnection?.Dispose();
+                    _oleDbConnection = null;
+                }
+            }
+
+            throw lastRecoverableError ?? new InvalidOperationException("Failed to execute schema command.");
+        }
+
+        private void RefreshOleDbConnectionAfterSchemaMutation()
+        {
+            if (string.IsNullOrWhiteSpace(_currentDatabasePath))
+                return;
+
+            try
+            {
+                OpenOleDbConnection(_currentDatabasePath);
+            }
+            catch
+            {
+                // Defer refresh to the next operation when immediate reopen is unavailable.
+                _oleDbConnection?.Close();
+                _oleDbConnection?.Dispose();
+                _oleDbConnection = null;
+            }
+        }
+
+        private void EnsureTableExists(string tableName)
+        {
+            if (!TableExists(tableName))
+                throw new InvalidOperationException($"Table not found: {tableName}");
+        }
+
+        private bool TableExists(string tableName)
+        {
+            EnsureOleDbConnection();
+
+            var schema = _oleDbConnection!.GetSchema("Tables");
+            foreach (DataRow row in schema.Rows)
+            {
+                var currentName = GetRowString(row, "TABLE_NAME");
+                if (!string.Equals(currentName, tableName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var tableType = GetRowString(row, "TABLE_TYPE");
+                if (string.IsNullOrWhiteSpace(tableType))
+                    return true;
+
+                if (tableType.IndexOf("TABLE", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    tableType.IndexOf("LINK", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool FieldExists(string tableName, string fieldName)
+        {
+            EnsureOleDbConnection();
+
+            var schema = _oleDbConnection!.GetSchema("Columns", new string[] { null!, null!, tableName, null! });
+            foreach (DataRow row in schema.Rows)
+            {
+                var currentName = GetRowString(row, "COLUMN_NAME");
+                if (string.Equals(currentName, fieldName, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static dynamic? FindTableDef(dynamic currentDb, string tableName)
+        {
+            var tableDefs = TryGetDynamicProperty(currentDb, "TableDefs");
+            if (tableDefs == null)
+                return null;
+
+            try
+            {
+                var item = InvokeDynamicMethod(tableDefs, "Item", tableName);
+                if (item != null)
+                    return item;
+            }
+            catch
+            {
+                // Fall back to enumeration when direct keyed lookup is unavailable.
+            }
+
+            foreach (var tableDef in tableDefs)
+            {
+                var currentName = SafeToString(TryGetDynamicProperty(tableDef, "Name"));
+                if (string.Equals(currentName, tableName, StringComparison.OrdinalIgnoreCase))
+                    return tableDef;
+            }
+
+            return null;
+        }
+
+        private dynamic? FindTableDefWithRetry(dynamic accessApp, string tableName)
+        {
+            for (var attempt = 0; attempt < 3; attempt++)
+            {
+                var currentDb = TryGetCurrentDb(accessApp);
+                if (currentDb != null)
+                {
+                    TryRefreshTableDefs(currentDb);
+                    var tableDef = FindTableDef(currentDb, tableName);
+                    if (tableDef != null)
+                        return tableDef;
+                }
+
+                if (attempt == 0)
+                {
+                    ReopenCurrentDatabase(accessApp);
+                }
+                else
+                {
+                    System.Threading.Thread.Sleep(100);
+                }
+            }
+
+            return null;
+        }
+
+        private static void TryRefreshTableDefs(dynamic currentDb)
+        {
+            try
+            {
+                var tableDefs = TryGetDynamicProperty(currentDb, "TableDefs");
+                if (tableDefs != null)
+                {
+                    _ = InvokeDynamicMethod(tableDefs, "Refresh");
+                }
+            }
+            catch
+            {
+                // Best-effort metadata refresh.
+            }
+        }
+
+        private void ReopenCurrentDatabase(dynamic accessApp)
+        {
+            if (string.IsNullOrWhiteSpace(_currentDatabasePath))
+                return;
+
+            try
+            {
+                accessApp.CloseCurrentDatabase();
+            }
+            catch
+            {
+                // Continue and attempt reopen.
+            }
+
+            accessApp.OpenCurrentDatabase(_currentDatabasePath, false);
+            _accessDatabasePath = _currentDatabasePath;
+            _accessDatabaseOpenedExclusive = false;
+        }
+
+        private static dynamic? FindTableField(dynamic tableDef, string fieldName)
+        {
+            var fields = TryGetDynamicProperty(tableDef, "Fields");
+            if (fields == null)
+                return null;
+
+            try
+            {
+                var item = InvokeDynamicMethod(fields, "Item", fieldName);
+                if (item != null)
+                    return item;
+            }
+            catch
+            {
+                // Fall back to enumeration when direct keyed lookup is unavailable.
+            }
+
+            foreach (var field in fields)
+            {
+                var currentName = SafeToString(TryGetDynamicProperty(field, "Name"));
+                if (string.Equals(currentName, fieldName, StringComparison.OrdinalIgnoreCase))
+                    return field;
+            }
+
+            return null;
+        }
+
+        private static string NormalizeSchemaIdentifier(string identifier, string paramName, string requiredMessage)
+        {
+            if (string.IsNullOrWhiteSpace(identifier))
+                throw new ArgumentException(requiredMessage, paramName);
+
+            var normalized = identifier.Trim();
+            if (normalized.Length > 64)
+                throw new ArgumentException("Access object names must be 64 characters or fewer.", paramName);
+
+            return normalized;
+        }
+
+        private static string BuildAccessDataTypeDeclaration(string typeName, int size, string typeParamName, string sizeParamName)
+        {
+            if (string.IsNullOrWhiteSpace(typeName))
+                throw new ArgumentException("Field type is required.", typeParamName);
+
+            var normalized = typeName.Trim().ToLowerInvariant();
+            return normalized switch
+            {
+                "text" or "char" or "varchar" or "string" => $"TEXT({ValidateSizedType(size, 1, 255, 255, sizeParamName, "TEXT")})",
+                "memo" or "longtext" or "note" => ValidateUnsizedType(size, sizeParamName, "LONGTEXT"),
+                "byte" => ValidateUnsizedType(size, sizeParamName, "BYTE"),
+                "short" or "smallint" => ValidateUnsizedType(size, sizeParamName, "SHORT"),
+                "long" or "integer" or "int" => ValidateUnsizedType(size, sizeParamName, "INTEGER"),
+                "single" or "float" => ValidateUnsizedType(size, sizeParamName, "SINGLE"),
+                "double" or "real" => ValidateUnsizedType(size, sizeParamName, "DOUBLE"),
+                "decimal" or "numeric" => ValidateUnsizedType(size, sizeParamName, "DECIMAL"),
+                "currency" or "money" => ValidateUnsizedType(size, sizeParamName, "CURRENCY"),
+                "datetime" or "date" or "time" => ValidateUnsizedType(size, sizeParamName, "DATETIME"),
+                "yesno" or "boolean" or "bool" or "bit" => ValidateUnsizedType(size, sizeParamName, "YESNO"),
+                "guid" or "uniqueidentifier" => ValidateUnsizedType(size, sizeParamName, "GUID"),
+                "counter" or "autoincrement" or "identity" => ValidateUnsizedType(size, sizeParamName, "COUNTER"),
+                "binary" => $"BINARY({ValidateSizedType(size, 1, 510, 255, sizeParamName, "BINARY")})",
+                "varbinary" => $"VARBINARY({ValidateSizedType(size, 1, 510, 255, sizeParamName, "VARBINARY")})",
+                _ => throw new ArgumentException($"Unsupported Access field type: {typeName}", typeParamName)
+            };
+        }
+
+        private void RenameTableViaOleDbCopy(string sourceTableName, string targetTableName)
+        {
+            var sourceIndexes = CaptureIndexSnapshots(sourceTableName);
+            var sourceRelationships = CaptureForeignKeySnapshots(snapshot =>
+                string.Equals(snapshot.PrimaryTable, sourceTableName, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(snapshot.ForeignTable, sourceTableName, StringComparison.OrdinalIgnoreCase));
+
+            var escapedSource = EscapeSqlIdentifier(sourceTableName);
+            var escapedTarget = EscapeSqlIdentifier(targetTableName);
+
+            ExecuteSchemaNonQuery($"SELECT * INTO [{escapedTarget}] FROM [{escapedSource}]");
+
+            try
+            {
+                DropForeignKeyConstraints(sourceRelationships);
+                ExecuteSchemaNonQuery($"DROP TABLE [{escapedSource}]");
+            }
+            catch
+            {
+                try
+                {
+                    ExecuteSchemaNonQuery($"DROP TABLE [{escapedTarget}]");
+                }
+                catch
+                {
+                    // Ignore cleanup failures and surface the original drop error.
+                }
+
+                throw;
+            }
+
+            RecreateIndexes(targetTableName, sourceIndexes);
+            RecreateForeignKeyConstraints(
+                sourceRelationships,
+                sourceTableName: sourceTableName,
+                targetTableName: targetTableName);
+        }
+
+        private void RenameFieldViaOleDbCopy(string tableName, string sourceFieldName, string targetFieldName)
+        {
+            var tableDefinition = DescribeTable(tableName);
+            var sourceColumn = tableDefinition.Columns
+                .FirstOrDefault(column => string.Equals(column.Name, sourceFieldName, StringComparison.OrdinalIgnoreCase));
+
+            if (sourceColumn == null)
+                throw new InvalidOperationException($"Field not found: {tableName}.{sourceFieldName}");
+
+            var affectedIndexes = CaptureIndexSnapshots(
+                tableName,
+                index => index.Columns.Any(column => string.Equals(column, sourceFieldName, StringComparison.OrdinalIgnoreCase)));
+            var affectedRelationships = CaptureForeignKeySnapshots(snapshot =>
+                (string.Equals(snapshot.PrimaryTable, tableName, StringComparison.OrdinalIgnoreCase) &&
+                 snapshot.PrimaryColumns.Any(column => string.Equals(column, sourceFieldName, StringComparison.OrdinalIgnoreCase))) ||
+                (string.Equals(snapshot.ForeignTable, tableName, StringComparison.OrdinalIgnoreCase) &&
+                 snapshot.ForeignColumns.Any(column => string.Equals(column, sourceFieldName, StringComparison.OrdinalIgnoreCase))));
+
+            var escapedTableName = EscapeSqlIdentifier(tableName);
+            var escapedSourceFieldName = EscapeSqlIdentifier(sourceFieldName);
+            var escapedTargetFieldName = EscapeSqlIdentifier(targetFieldName);
+            var typeDeclaration = BuildAccessDataTypeDeclarationFromColumn(sourceColumn);
+
+            DropForeignKeyConstraints(affectedRelationships);
+            DropIndexes(tableName, affectedIndexes);
+
+            ExecuteSchemaNonQuery($"ALTER TABLE [{escapedTableName}] ADD COLUMN [{escapedTargetFieldName}] {typeDeclaration}");
+            ExecuteSchemaNonQuery($"UPDATE [{escapedTableName}] SET [{escapedTargetFieldName}] = [{escapedSourceFieldName}]");
+            ExecuteSchemaNonQuery($"ALTER TABLE [{escapedTableName}] DROP COLUMN [{escapedSourceFieldName}]");
+
+            RecreateIndexes(
+                tableName,
+                affectedIndexes,
+                sourceFieldName: sourceFieldName,
+                targetFieldName: targetFieldName);
+            RecreateForeignKeyConstraints(
+                affectedRelationships,
+                fieldRenameTableName: tableName,
+                sourceFieldName: sourceFieldName,
+                targetFieldName: targetFieldName);
+        }
+
+        private List<IndexSnapshot> CaptureIndexSnapshots(string tableName, Func<IndexInfo, bool>? predicate = null)
+        {
+            var indexInfos = GetIndexes(tableName);
+            if (predicate != null)
+            {
+                indexInfos = indexInfos.Where(predicate).ToList();
+            }
+
+            return indexInfos
+                .Where(index => !string.IsNullOrWhiteSpace(index.Name))
+                .Select(index => new IndexSnapshot
+                {
+                    Name = index.Name,
+                    IsUnique = index.IsUnique,
+                    IsPrimaryKey = index.IsPrimaryKey,
+                    Columns = index.Columns
+                        .Where(column => !string.IsNullOrWhiteSpace(column))
+                        .Select(column => column.Trim())
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList()
+                })
+                .Where(index => index.Columns.Count > 0)
+                .OrderBy(index => index.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private List<ForeignKeySnapshot> CaptureForeignKeySnapshots(Func<ForeignKeySnapshot, bool>? predicate = null)
+        {
+            EnsureOleDbConnection();
+
+            var foreignKeyBuilders = new Dictionary<string, ForeignKeySnapshotBuilder>(StringComparer.OrdinalIgnoreCase);
+
+            try
+            {
+                var schema = _oleDbConnection!.GetSchema("ForeignKeys");
+                foreach (DataRow row in schema.Rows)
+                {
+                    var relationshipName = GetRowStringByCandidates(row, "FK_NAME", "CONSTRAINT_NAME", "RELATIONSHIP_NAME");
+                    if (string.IsNullOrWhiteSpace(relationshipName) || relationshipName.StartsWith("~", StringComparison.Ordinal))
+                        continue;
+
+                    var primaryTable = GetRowStringByCandidates(row, "PK_TABLE_NAME", "REFERENCED_TABLE_NAME");
+                    var foreignTable = GetRowStringByCandidates(row, "FK_TABLE_NAME", "TABLE_NAME");
+                    var primaryColumn = GetRowStringByCandidates(row, "PK_COLUMN_NAME", "REFERENCED_COLUMN_NAME");
+                    var foreignColumn = GetRowStringByCandidates(row, "FK_COLUMN_NAME", "COLUMN_NAME");
+
+                    if (string.IsNullOrWhiteSpace(primaryTable) ||
+                        string.IsNullOrWhiteSpace(foreignTable) ||
+                        string.IsNullOrWhiteSpace(primaryColumn) ||
+                        string.IsNullOrWhiteSpace(foreignColumn))
+                    {
+                        continue;
+                    }
+
+                    var ordinal = GetRowIntByCandidates(row, "ORDINAL", "KEY_SEQ", "ORDINAL_POSITION") ?? int.MaxValue;
+                    var updateRule = GetRowIntByCandidates(row, "UPDATE_RULE");
+                    var deleteRule = GetRowIntByCandidates(row, "DELETE_RULE");
+
+                    var dictionaryKey = $"{relationshipName}\u001F{primaryTable}\u001F{foreignTable}";
+                    if (!foreignKeyBuilders.TryGetValue(dictionaryKey, out var builder))
+                    {
+                        builder = new ForeignKeySnapshotBuilder
+                        {
+                            Name = relationshipName,
+                            PrimaryTable = primaryTable,
+                            ForeignTable = foreignTable,
+                            UpdateRule = updateRule,
+                            DeleteRule = deleteRule
+                        };
+                        foreignKeyBuilders[dictionaryKey] = builder;
+                    }
+
+                    builder.Columns.Add((ordinal, primaryColumn, foreignColumn));
+                }
+            }
+            catch
+            {
+                // Foreign key metadata is provider-dependent.
+                return new List<ForeignKeySnapshot>();
+            }
+
+            var snapshots = new List<ForeignKeySnapshot>();
+            foreach (var builder in foreignKeyBuilders.Values)
+            {
+                var orderedColumns = builder.Columns
+                    .OrderBy(column => column.Ordinal)
+                    .ThenBy(column => column.PrimaryColumn, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(column => column.ForeignColumn, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                var primaryColumns = orderedColumns
+                    .Select(column => column.PrimaryColumn)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                var foreignColumns = orderedColumns
+                    .Select(column => column.ForeignColumn)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (primaryColumns.Count == 0 || primaryColumns.Count != foreignColumns.Count)
+                    continue;
+
+                var snapshot = new ForeignKeySnapshot
+                {
+                    Name = builder.Name,
+                    PrimaryTable = builder.PrimaryTable,
+                    ForeignTable = builder.ForeignTable,
+                    PrimaryColumns = primaryColumns,
+                    ForeignColumns = foreignColumns,
+                    CascadeUpdate = builder.UpdateRule == 0,
+                    CascadeDelete = builder.DeleteRule == 0
+                };
+
+                if (predicate == null || predicate(snapshot))
+                {
+                    snapshots.Add(snapshot);
+                }
+            }
+
+            return snapshots
+                .OrderBy(snapshot => snapshot.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(snapshot => snapshot.ForeignTable, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(snapshot => snapshot.PrimaryTable, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private void DropIndexes(string tableName, IReadOnlyList<IndexSnapshot> indexes)
+        {
+            if (indexes.Count == 0)
+                return;
+
+            var escapedTableName = EscapeSqlIdentifier(tableName);
+            foreach (var index in indexes
+                .OrderBy(index => index.IsPrimaryKey)
+                .ThenBy(index => index.Name, StringComparer.OrdinalIgnoreCase))
+            {
+                var escapedIndexName = EscapeSqlIdentifier(index.Name);
+                if (index.IsPrimaryKey)
+                {
+                    ExecuteSchemaNonQuery($"ALTER TABLE [{escapedTableName}] DROP CONSTRAINT [{escapedIndexName}]");
+                    continue;
+                }
+
+                ExecuteSchemaNonQuery($"DROP INDEX [{escapedIndexName}] ON [{escapedTableName}]");
+            }
+        }
+
+        private void RecreateIndexes(
+            string tableName,
+            IReadOnlyList<IndexSnapshot> indexes,
+            string? sourceFieldName = null,
+            string? targetFieldName = null)
+        {
+            if (indexes.Count == 0)
+                return;
+
+            var existingIndexes = CaptureIndexSnapshots(tableName);
+            var existingIndexNames = new HashSet<string>(existingIndexes.Select(index => index.Name), StringComparer.OrdinalIgnoreCase);
+            var hasPrimaryKey = existingIndexes.Any(index => index.IsPrimaryKey);
+            var tableColumns = GetTableColumnSet(tableName);
+            var escapedTableName = EscapeSqlIdentifier(tableName);
+
+            foreach (var index in indexes
+                .OrderByDescending(snapshot => snapshot.IsPrimaryKey)
+                .ThenBy(snapshot => snapshot.Name, StringComparer.OrdinalIgnoreCase))
+            {
+                if (existingIndexNames.Contains(index.Name))
+                    continue;
+
+                var mappedColumns = RemapColumns(index.Columns, sourceFieldName, targetFieldName);
+                if (mappedColumns.Count == 0 || mappedColumns.Any(column => !tableColumns.Contains(column)))
+                    continue;
+
+                var escapedIndexName = EscapeSqlIdentifier(index.Name);
+                var columnSql = BuildColumnListSql(mappedColumns);
+
+                if (index.IsPrimaryKey)
+                {
+                    if (hasPrimaryKey)
+                        continue;
+
+                    ExecuteSchemaNonQuery($"ALTER TABLE [{escapedTableName}] ADD CONSTRAINT [{escapedIndexName}] PRIMARY KEY ({columnSql})");
+                    hasPrimaryKey = true;
+                    existingIndexNames.Add(index.Name);
+                    continue;
+                }
+
+                var uniqueSql = index.IsUnique ? "UNIQUE " : string.Empty;
+                ExecuteSchemaNonQuery($"CREATE {uniqueSql}INDEX [{escapedIndexName}] ON [{escapedTableName}] ({columnSql})");
+                existingIndexNames.Add(index.Name);
+            }
+        }
+
+        private void DropForeignKeyConstraints(IReadOnlyList<ForeignKeySnapshot> foreignKeys)
+        {
+            if (foreignKeys.Count == 0)
+                return;
+
+            foreach (var foreignKey in foreignKeys
+                .OrderBy(snapshot => snapshot.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(snapshot => snapshot.ForeignTable, StringComparer.OrdinalIgnoreCase))
+            {
+                var escapedForeignTable = EscapeSqlIdentifier(foreignKey.ForeignTable);
+                var escapedRelationshipName = EscapeSqlIdentifier(foreignKey.Name);
+                ExecuteSchemaNonQuery($"ALTER TABLE [{escapedForeignTable}] DROP CONSTRAINT [{escapedRelationshipName}]");
+            }
+        }
+
+        private void RecreateForeignKeyConstraints(
+            IReadOnlyList<ForeignKeySnapshot> foreignKeys,
+            string? sourceTableName = null,
+            string? targetTableName = null,
+            string? fieldRenameTableName = null,
+            string? sourceFieldName = null,
+            string? targetFieldName = null)
+        {
+            if (foreignKeys.Count == 0)
+                return;
+
+            foreach (var foreignKey in foreignKeys
+                .OrderBy(snapshot => snapshot.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(snapshot => snapshot.ForeignTable, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(snapshot => snapshot.PrimaryTable, StringComparer.OrdinalIgnoreCase))
+            {
+                var mappedPrimaryTable = RemapIdentifier(foreignKey.PrimaryTable, sourceTableName, targetTableName);
+                var mappedForeignTable = RemapIdentifier(foreignKey.ForeignTable, sourceTableName, targetTableName);
+
+                var mappedPrimaryColumns = string.Equals(mappedPrimaryTable, fieldRenameTableName, StringComparison.OrdinalIgnoreCase)
+                    ? RemapColumns(foreignKey.PrimaryColumns, sourceFieldName, targetFieldName)
+                    : foreignKey.PrimaryColumns.ToList();
+                var mappedForeignColumns = string.Equals(mappedForeignTable, fieldRenameTableName, StringComparison.OrdinalIgnoreCase)
+                    ? RemapColumns(foreignKey.ForeignColumns, sourceFieldName, targetFieldName)
+                    : foreignKey.ForeignColumns.ToList();
+
+                if (mappedPrimaryColumns.Count == 0 || mappedForeignColumns.Count == 0 || mappedPrimaryColumns.Count != mappedForeignColumns.Count)
+                    continue;
+
+                if (!TableExists(mappedPrimaryTable) || !TableExists(mappedForeignTable))
+                    continue;
+
+                var primaryTableColumns = GetTableColumnSet(mappedPrimaryTable);
+                var foreignTableColumns = GetTableColumnSet(mappedForeignTable);
+                if (mappedPrimaryColumns.Any(column => !primaryTableColumns.Contains(column)) ||
+                    mappedForeignColumns.Any(column => !foreignTableColumns.Contains(column)))
+                {
+                    continue;
+                }
+
+                if (ForeignKeyConstraintExists(mappedForeignTable, foreignKey.Name))
+                    continue;
+
+                var foreignColumnsSql = BuildColumnListSql(mappedForeignColumns);
+                var primaryColumnsSql = BuildColumnListSql(mappedPrimaryColumns);
+                var escapedConstraintName = EscapeSqlIdentifier(foreignKey.Name);
+                var escapedForeignTable = EscapeSqlIdentifier(mappedForeignTable);
+                var escapedPrimaryTable = EscapeSqlIdentifier(mappedPrimaryTable);
+
+                var sql = $"ALTER TABLE [{escapedForeignTable}] ADD CONSTRAINT [{escapedConstraintName}] FOREIGN KEY ({foreignColumnsSql}) REFERENCES [{escapedPrimaryTable}] ({primaryColumnsSql})";
+                if (foreignKey.CascadeUpdate)
+                    sql += " ON UPDATE CASCADE";
+                if (foreignKey.CascadeDelete)
+                    sql += " ON DELETE CASCADE";
+
+                ExecuteSchemaNonQuery(sql);
+            }
+        }
+
+        private bool ForeignKeyConstraintExists(string foreignTableName, string relationshipName)
+        {
+            EnsureOleDbConnection();
+
+            try
+            {
+                var schema = _oleDbConnection!.GetSchema("ForeignKeys");
+                foreach (DataRow row in schema.Rows)
+                {
+                    var existingName = GetRowStringByCandidates(row, "FK_NAME", "CONSTRAINT_NAME", "RELATIONSHIP_NAME");
+                    if (!string.Equals(existingName, relationshipName, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var existingForeignTable = GetRowStringByCandidates(row, "FK_TABLE_NAME", "TABLE_NAME");
+                    if (string.Equals(existingForeignTable, foreignTableName, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+            }
+            catch
+            {
+                // Keep behavior best-effort when ForeignKeys metadata is unavailable.
+            }
+
+            return false;
+        }
+
+        private HashSet<string> GetTableColumnSet(string tableName)
+        {
+            EnsureOleDbConnection();
+            var columnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            try
+            {
+                var schema = _oleDbConnection!.GetSchema("Columns", new string[] { null!, null!, tableName, null! });
+                foreach (DataRow row in schema.Rows)
+                {
+                    var columnName = GetRowString(row, "COLUMN_NAME");
+                    if (!string.IsNullOrWhiteSpace(columnName))
+                    {
+                        columnNames.Add(columnName);
+                    }
+                }
+            }
+            catch
+            {
+                // Column metadata may be unavailable for provider-specific objects.
+            }
+
+            return columnNames;
+        }
+
+        private static string BuildColumnListSql(IEnumerable<string> columns)
+        {
+            return string.Join(", ", columns.Select(column => $"[{EscapeSqlIdentifier(column)}]"));
+        }
+
+        private static string RemapIdentifier(string value, string? sourceValue, string? targetValue)
+        {
+            if (string.IsNullOrWhiteSpace(sourceValue) || string.IsNullOrWhiteSpace(targetValue))
+                return value;
+
+            return string.Equals(value, sourceValue, StringComparison.OrdinalIgnoreCase)
+                ? targetValue
+                : value;
+        }
+
+        private static List<string> RemapColumns(IReadOnlyList<string> columns, string? sourceColumn, string? targetColumn)
+        {
+            var result = new List<string>(columns.Count);
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var column in columns)
+            {
+                var mappedColumn = string.IsNullOrWhiteSpace(sourceColumn) || string.IsNullOrWhiteSpace(targetColumn)
+                    ? column
+                    : string.Equals(column, sourceColumn, StringComparison.OrdinalIgnoreCase)
+                        ? targetColumn
+                        : column;
+
+                if (string.IsNullOrWhiteSpace(mappedColumn) || !seen.Add(mappedColumn))
+                    continue;
+
+                result.Add(mappedColumn);
+            }
+
+            return result;
+        }
+
+        private static string? GetRowStringByCandidates(DataRow row, params string[] candidateColumns)
+        {
+            foreach (var candidateColumn in candidateColumns)
+            {
+                var value = GetRowString(row, candidateColumn);
+                if (!string.IsNullOrWhiteSpace(value))
+                    return value;
+            }
+
+            return null;
+        }
+
+        private static int? GetRowIntByCandidates(DataRow row, params string[] candidateColumns)
+        {
+            foreach (var candidateColumn in candidateColumns)
+            {
+                var value = GetRowInt(row, candidateColumn);
+                if (value.HasValue)
+                    return value;
+            }
+
+            return null;
+        }
+
+        private static string BuildAccessDataTypeDeclarationFromColumn(TableColumnDefinition column)
+        {
+            var dataTypeCode = column.DataTypeCode ?? (int)OleDbType.VarWChar;
+            var oleDbType = (OleDbType)dataTypeCode;
+
+            return oleDbType switch
+            {
+                OleDbType.Boolean => "YESNO",
+                OleDbType.UnsignedTinyInt => "BYTE",
+                OleDbType.SmallInt => "SHORT",
+                OleDbType.Integer => "LONG",
+                OleDbType.Single => "SINGLE",
+                OleDbType.Double => "DOUBLE",
+                OleDbType.Currency => "CURRENCY",
+                OleDbType.Decimal or OleDbType.Numeric => BuildDecimalTypeDeclaration(column),
+                OleDbType.Date or OleDbType.DBDate or OleDbType.DBTime or OleDbType.DBTimeStamp => "DATETIME",
+                OleDbType.Guid => "GUID",
+                OleDbType.Binary => "BINARY",
+                OleDbType.LongVarBinary or OleDbType.VarBinary => "LONGBINARY",
+                OleDbType.LongVarChar or OleDbType.LongVarWChar => "LONGTEXT",
+                OleDbType.Char or OleDbType.VarChar or OleDbType.WChar or OleDbType.VarWChar or OleDbType.BSTR =>
+                    $"TEXT({NormalizeTextLength(column.MaxLength)})",
+                _ => "LONGTEXT"
+            };
+        }
+
+        private static string BuildDecimalTypeDeclaration(TableColumnDefinition column)
+        {
+            var precision = Math.Clamp(column.NumericPrecision ?? 18, 1, 28);
+            var scale = Math.Clamp(column.NumericScale ?? 0, 0, precision);
+            return $"DECIMAL({precision},{scale})";
+        }
+
+        private static int NormalizeTextLength(int? maxLength)
+        {
+            if (!maxLength.HasValue || maxLength.Value <= 0)
+                return 255;
+
+            return Math.Clamp(maxLength.Value, 1, 255);
+        }
+
+        private static bool ShouldUseOleDbRenameFallback(Exception ex)
+        {
+            var message = ex.Message ?? string.Empty;
+            if (message.IndexOf("table not found", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                message.IndexOf("field not found", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                message.IndexOf("active content", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+
+            return ex.InnerException != null && ShouldUseOleDbRenameFallback(ex.InnerException);
+        }
+
+        private static int ValidateSizedType(int size, int min, int max, int defaultValue, string sizeParamName, string dataTypeName)
+        {
+            var effectiveSize = size == 0 ? defaultValue : size;
+            if (effectiveSize < min || effectiveSize > max)
+                throw new ArgumentOutOfRangeException(sizeParamName, $"{dataTypeName} size must be between {min} and {max}.");
+
+            return effectiveSize;
+        }
+
+        private static string ValidateUnsizedType(int size, string sizeParamName, string dataTypeName)
+        {
+            if (size != 0)
+                throw new ArgumentOutOfRangeException(sizeParamName, $"{dataTypeName} does not support a size argument.");
+
+            return dataTypeName;
         }
 
         private void OpenOleDbConnection(string databasePath)
@@ -2646,6 +3645,48 @@ namespace MS.Access.MCP.Interop
             return Path.Combine(Path.GetTempPath(), $"{prefix}_{Guid.NewGuid():N}.txt");
         }
 
+        private static string NormalizeTextTransferMode(string? mode)
+        {
+            if (string.IsNullOrWhiteSpace(mode))
+                return TextModeJson;
+
+            var normalized = mode.Trim().ToLowerInvariant();
+            return normalized switch
+            {
+                TextModeJson => TextModeJson,
+                TextModeAccessText => TextModeAccessText,
+                _ => throw new ArgumentException("mode must be either 'json' or 'access_text'.", nameof(mode))
+            };
+        }
+
+        private static string ResolveAccessTextImportObjectName(string? explicitName, string objectText, string objectKind, string vbNamePrefix)
+        {
+            if (!string.IsNullOrWhiteSpace(explicitName))
+                return explicitName.Trim();
+
+            return ExtractObjectNameFromAccessText(objectText, objectKind, vbNamePrefix);
+        }
+
+        private static string ExtractObjectNameFromAccessText(string objectText, string objectKind, string vbNamePrefix)
+        {
+            var vbNameMatch = Regex.Match(
+                objectText,
+                "^\\s*Attribute\\s+VB_Name\\s*=\\s*\"(?<name>[^\"]+)\"\\s*$",
+                RegexOptions.Multiline | RegexOptions.IgnoreCase);
+
+            if (vbNameMatch.Success)
+            {
+                var parsedName = vbNameMatch.Groups["name"].Value.Trim();
+                if (parsedName.StartsWith(vbNamePrefix, StringComparison.OrdinalIgnoreCase))
+                    parsedName = parsedName.Substring(vbNamePrefix.Length);
+
+                if (!string.IsNullOrWhiteSpace(parsedName))
+                    return parsedName;
+            }
+
+            throw new ArgumentException($"Unable to determine {objectKind} name from access_text payload. Provide {objectKind}_name.");
+        }
+
         private static void TryDeleteFile(string path)
         {
             try
@@ -2910,6 +3951,35 @@ namespace MS.Access.MCP.Interop
                 128 => "Union",
                 _ => $"QueryType({typeCode})"
             };
+        }
+
+        private sealed class IndexSnapshot
+        {
+            public string Name { get; set; } = string.Empty;
+            public bool IsUnique { get; set; }
+            public bool IsPrimaryKey { get; set; }
+            public List<string> Columns { get; set; } = new();
+        }
+
+        private sealed class ForeignKeySnapshot
+        {
+            public string Name { get; set; } = string.Empty;
+            public string PrimaryTable { get; set; } = string.Empty;
+            public string ForeignTable { get; set; } = string.Empty;
+            public List<string> PrimaryColumns { get; set; } = new();
+            public List<string> ForeignColumns { get; set; } = new();
+            public bool CascadeUpdate { get; set; }
+            public bool CascadeDelete { get; set; }
+        }
+
+        private sealed class ForeignKeySnapshotBuilder
+        {
+            public string Name { get; set; } = string.Empty;
+            public string PrimaryTable { get; set; } = string.Empty;
+            public string ForeignTable { get; set; } = string.Empty;
+            public int? UpdateRule { get; set; }
+            public int? DeleteRule { get; set; }
+            public List<(int Ordinal, string PrimaryColumn, string ForeignColumn)> Columns { get; } = new();
         }
 
         private HashSet<string> GetPrimaryKeyColumns(string tableName)

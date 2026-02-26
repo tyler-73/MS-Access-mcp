@@ -45,6 +45,62 @@ function Add-ToolCall {
     })
 }
 
+function Invoke-McpBatch {
+    param(
+        [string]$ExePath,
+        [System.Collections.Generic.List[object]]$Calls,
+        [string]$ClientName = "full-regression",
+        [string]$ClientVersion = "1.0"
+    )
+
+    $jsonLines = New-Object 'System.Collections.Generic.List[string]'
+    $jsonLines.Add((@{
+        jsonrpc = "2.0"
+        id = 1
+        method = "initialize"
+        params = @{
+            protocolVersion = "2024-11-05"
+            capabilities = @{}
+            clientInfo = @{
+                name = $ClientName
+                version = $ClientVersion
+            }
+        }
+    } | ConvertTo-Json -Depth 40 -Compress))
+
+    foreach ($call in $Calls) {
+        $jsonLines.Add((@{
+            jsonrpc = "2.0"
+            id = $call.Id
+            method = "tools/call"
+            params = @{
+                name = $call.Name
+                arguments = $call.Arguments
+            }
+        } | ConvertTo-Json -Depth 50 -Compress))
+    }
+
+    $rawLines = @((($jsonLines -join "`n") | & $ExePath))
+    $responses = @{}
+    foreach ($line in $rawLines) {
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            continue
+        }
+
+        try {
+            $parsed = $line | ConvertFrom-Json
+            if ($null -ne $parsed.id) {
+                $responses[[int]$parsed.id] = $parsed
+            }
+        }
+        catch {
+            Write-Host "WARN: Could not parse response line: $line"
+        }
+    }
+
+    return $responses
+}
+
 function Stop-StaleProcesses {
     Get-Process MSACCESS, MS.Access.MCP.Official -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
@@ -59,6 +115,13 @@ function Remove-LockFile {
     Remove-Item -Path $lockFile -ErrorAction SilentlyContinue
 }
 
+function Cleanup-AccessArtifacts {
+    param([string]$DbPath)
+
+    Stop-StaleProcesses
+    Remove-LockFile -DbPath $DbPath
+}
+
 if (-not (Test-Path -LiteralPath $ServerExe)) {
     throw "Server executable not found: $ServerExe"
 }
@@ -68,9 +131,15 @@ if (-not (Test-Path -LiteralPath $DatabasePath)) {
 }
 
 if (-not $NoCleanup) {
-    Stop-StaleProcesses
-    Remove-LockFile -DbPath $DatabasePath
+    Write-Host "Pre-run cleanup: clearing stale Access/MCP processes and locks."
+    Cleanup-AccessArtifacts -DbPath $DatabasePath
 }
+else {
+    Write-Warning "Skipping pre-run cleanup per -NoCleanup; final cleanup will still execute."
+}
+
+$exitCode = 1
+try {
 
 $suffix = [Guid]::NewGuid().ToString("N").Substring(0, 8)
 $tableName = "MCP_Table_$suffix"
@@ -82,6 +151,10 @@ $relationshipName = "MCP_Rel_$suffix"
 $childTableName = "MCP_Child_$suffix"
 $indexName = "MCP_Idx_$suffix"
 $macroName = "MCP_Macro_$suffix"
+$importedMacroName = "MCP_ImportedMacro_$suffix"
+$schemaFieldName = "schema_text"
+$schemaFieldRenamedName = "schema_text_renamed"
+$renamedTableName = "MCP_Renamed_$suffix"
 
 $formData = @{
     Name = $formName
@@ -165,6 +238,51 @@ Add-ToolCall -Calls $calls -Id 8 -Name "create_table" -Arguments @{
     )
 }
 Add-ToolCall -Calls $calls -Id 9 -Name "describe_table" -Arguments @{ table_name = $tableName }
+Add-ToolCall -Calls $calls -Id 69 -Name "add_field" -Arguments @{
+    table_name = $tableName
+    field_name = $schemaFieldName
+    field_type = "TEXT"
+    type = "TEXT"
+    size = 40
+    required = $false
+    allow_zero_length = $true
+}
+Add-ToolCall -Calls $calls -Id 70 -Name "describe_table" -Arguments @{ table_name = $tableName }
+Add-ToolCall -Calls $calls -Id 71 -Name "alter_field" -Arguments @{
+    table_name = $tableName
+    field_name = $schemaFieldName
+    field_type = "TEXT"
+    new_field_type = "TEXT"
+    size = 80
+    new_size = 80
+    required = $false
+    allow_zero_length = $true
+}
+Add-ToolCall -Calls $calls -Id 72 -Name "describe_table" -Arguments @{ table_name = $tableName }
+Add-ToolCall -Calls $calls -Id 73 -Name "rename_field" -Arguments @{
+    table_name = $tableName
+    field_name = $schemaFieldName
+    old_field_name = $schemaFieldName
+    new_field_name = $schemaFieldRenamedName
+}
+Add-ToolCall -Calls $calls -Id 74 -Name "describe_table" -Arguments @{ table_name = $tableName }
+Add-ToolCall -Calls $calls -Id 75 -Name "drop_field" -Arguments @{
+    table_name = $tableName
+    field_name = $schemaFieldRenamedName
+}
+Add-ToolCall -Calls $calls -Id 76 -Name "describe_table" -Arguments @{ table_name = $tableName }
+Add-ToolCall -Calls $calls -Id 77 -Name "rename_table" -Arguments @{
+    table_name = $tableName
+    old_table_name = $tableName
+    new_table_name = $renamedTableName
+}
+Add-ToolCall -Calls $calls -Id 78 -Name "get_tables" -Arguments @{}
+Add-ToolCall -Calls $calls -Id 79 -Name "rename_table" -Arguments @{
+    table_name = $renamedTableName
+    old_table_name = $renamedTableName
+    new_table_name = $tableName
+}
+Add-ToolCall -Calls $calls -Id 80 -Name "get_tables" -Arguments @{}
 Add-ToolCall -Calls $calls -Id 57 -Name "create_index" -Arguments @{
     table_name = $tableName
     index_name = $indexName
@@ -205,6 +323,7 @@ Add-ToolCall -Calls $calls -Id 24 -Name "set_control_property" -Arguments @{
     value = "True"
 }
 Add-ToolCall -Calls $calls -Id 25 -Name "export_form_to_text" -Arguments @{ form_name = $formName }
+Add-ToolCall -Calls $calls -Id 83 -Name "export_form_to_text" -Arguments @{ form_name = $formName; mode = "access_text" }
 Add-ToolCall -Calls $calls -Id 26 -Name "open_form" -Arguments @{ form_name = $formName }
 Add-ToolCall -Calls $calls -Id 27 -Name "close_form" -Arguments @{ form_name = $formName }
 Add-ToolCall -Calls $calls -Id 28 -Name "import_report_from_text" -Arguments @{ report_data = $reportData }
@@ -214,6 +333,7 @@ Add-ToolCall -Calls $calls -Id 52 -Name "get_report_controls" -Arguments @{ repo
 Add-ToolCall -Calls $calls -Id 53 -Name "get_report_control_properties" -Arguments @{ report_name = $reportName; control_name = "lblReport" }
 Add-ToolCall -Calls $calls -Id 54 -Name "set_report_control_property" -Arguments @{ report_name = $reportName; control_name = "lblReport"; property_name = "Visible"; value = "True" }
 Add-ToolCall -Calls $calls -Id 29 -Name "export_report_to_text" -Arguments @{ report_name = $reportName }
+Add-ToolCall -Calls $calls -Id 84 -Name "export_report_to_text" -Arguments @{ report_name = $reportName; mode = "access_text" }
 Add-ToolCall -Calls $calls -Id 30 -Name "delete_report" -Arguments @{ report_name = $reportName }
 Add-ToolCall -Calls $calls -Id 31 -Name "delete_form" -Arguments @{ form_name = $formName }
 Add-ToolCall -Calls $calls -Id 32 -Name "get_forms" -Arguments @{}
@@ -228,6 +348,8 @@ Add-ToolCall -Calls $calls -Id 65 -Name "update_macro" -Arguments @{ macro_name 
 Add-ToolCall -Calls $calls -Id 66 -Name "export_macro_to_text" -Arguments @{ macro_name = $macroName }
 Add-ToolCall -Calls $calls -Id 67 -Name "delete_macro" -Arguments @{ macro_name = $macroName }
 Add-ToolCall -Calls $calls -Id 68 -Name "get_macros" -Arguments @{}
+Add-ToolCall -Calls $calls -Id 81 -Name "import_macro_from_text" -Arguments @{ macro_name = $importedMacroName; macro_data = $macroDataInitial; overwrite = $true }
+Add-ToolCall -Calls $calls -Id 82 -Name "get_macros" -Arguments @{}
 Add-ToolCall -Calls $calls -Id 40 -Name "create_query" -Arguments @{ query_name = $queryName; sql = "SELECT id, name FROM [$tableName]" }
 Add-ToolCall -Calls $calls -Id 41 -Name "get_queries" -Arguments @{}
 Add-ToolCall -Calls $calls -Id 42 -Name "update_query" -Arguments @{ query_name = $queryName; sql = "SELECT id FROM [$tableName] WHERE id >= 1" }
@@ -271,50 +393,7 @@ Add-ToolCall -Calls $calls -Id 37 -Name "disconnect_access" -Arguments @{}
 Add-ToolCall -Calls $calls -Id 38 -Name "is_connected" -Arguments @{}
 Add-ToolCall -Calls $calls -Id 39 -Name "close_access" -Arguments @{}
 
-$jsonLines = New-Object 'System.Collections.Generic.List[string]'
-$jsonLines.Add((@{
-    jsonrpc = "2.0"
-    id = 1
-    method = "initialize"
-    params = @{
-        protocolVersion = "2024-11-05"
-        capabilities = @{}
-        clientInfo = @{
-            name = "full-regression"
-            version = "1.0"
-        }
-    }
-} | ConvertTo-Json -Depth 40 -Compress))
-
-foreach ($call in $calls) {
-    $jsonLines.Add((@{
-        jsonrpc = "2.0"
-        id = $call.Id
-        method = "tools/call"
-        params = @{
-            name = $call.Name
-            arguments = $call.Arguments
-        }
-    } | ConvertTo-Json -Depth 50 -Compress))
-}
-
-$rawLines = @((($jsonLines -join "`n") | & $ServerExe))
-$responses = @{}
-foreach ($line in $rawLines) {
-    if ([string]::IsNullOrWhiteSpace($line)) {
-        continue
-    }
-
-    try {
-        $parsed = $line | ConvertFrom-Json
-        if ($null -ne $parsed.id) {
-            $responses[[int]$parsed.id] = $parsed
-        }
-    }
-    catch {
-        Write-Host "WARN: Could not parse response line: $line"
-    }
-}
+$responses = Invoke-McpBatch -ExePath $ServerExe -Calls $calls -ClientName "full-regression" -ClientVersion "1.0"
 
 $idLabels = @{
     2 = "connect_access"
@@ -325,6 +404,18 @@ $idLabels = @{
     7 = "get_relationships"
     8 = "create_table"
     9 = "describe_table"
+    69 = "add_field"
+    70 = "describe_table_after_add_field"
+    71 = "alter_field"
+    72 = "describe_table_after_alter_field"
+    73 = "rename_field"
+    74 = "describe_table_after_rename_field"
+    75 = "drop_field"
+    76 = "describe_table_after_drop_field"
+    77 = "rename_table_away"
+    78 = "get_tables_after_rename_table_away"
+    79 = "rename_table_back"
+    80 = "get_tables_after_rename_table_back"
     57 = "create_index"
     58 = "get_indexes_after_create_index"
     10 = "execute_sql_insert"
@@ -343,6 +434,7 @@ $idLabels = @{
     23 = "get_control_properties"
     24 = "set_control_property"
     25 = "export_form_to_text"
+    83 = "export_form_to_text_access_text"
     26 = "open_form"
     27 = "close_form"
     28 = "import_report_from_text"
@@ -352,6 +444,7 @@ $idLabels = @{
     53 = "get_report_control_properties"
     54 = "set_report_control_property"
     29 = "export_report_to_text"
+    84 = "export_report_to_text_access_text"
     30 = "delete_report"
     31 = "delete_form"
     32 = "get_forms"
@@ -366,6 +459,8 @@ $idLabels = @{
     66 = "export_macro_to_text_after_update"
     67 = "delete_macro"
     68 = "get_macros_after_delete_macro"
+    81 = "import_macro_from_text"
+    82 = "get_macros_after_import_macro"
     40 = "create_query"
     41 = "get_queries_after_create_query"
     42 = "update_query"
@@ -387,6 +482,8 @@ $idLabels = @{
 }
 
 $failed = 0
+$formAccessTextData = $null
+$reportAccessTextData = $null
 foreach ($id in ($idLabels.Keys | Sort-Object)) {
     $label = $idLabels[$id]
     $decoded = Decode-McpResult -Response $responses[[int]$id]
@@ -421,6 +518,79 @@ foreach ($id in ($idLabels.Keys | Sort-Object)) {
             if ($decoded.connected -ne $false) {
                 $failed++
                 Write-Host ('{0}: FAIL expected connected=false' -f $label)
+                continue
+            }
+        }
+        "describe_table_after_add_field" {
+            $columns = if ($decoded.table -and $decoded.table.Columns) { @($decoded.table.Columns) } elseif ($decoded.table -and $decoded.table.columns) { @($decoded.table.columns) } else { @() }
+            $matched = $columns | Where-Object { [string]$_.Name -eq $schemaFieldName -or [string]$_.name -eq $schemaFieldName }
+            if (@($matched).Count -eq 0) {
+                $failed++
+                Write-Host ('{0}: FAIL expected field {1}' -f $label, $schemaFieldName)
+                continue
+            }
+
+            $column = $matched | Select-Object -First 1
+            $maxLengthValue = if ($null -ne $column.MaxLength) { [int]$column.MaxLength } elseif ($null -ne $column.maxLength) { [int]$column.maxLength } elseif ($null -ne $column.size) { [int]$column.size } else { -1 }
+            if ($maxLengthValue -ne 40) {
+                $failed++
+                Write-Host ('{0}: FAIL expected MaxLength=40 for field {1}, got {2}' -f $label, $schemaFieldName, $maxLengthValue)
+                continue
+            }
+        }
+        "describe_table_after_alter_field" {
+            $columns = if ($decoded.table -and $decoded.table.Columns) { @($decoded.table.Columns) } elseif ($decoded.table -and $decoded.table.columns) { @($decoded.table.columns) } else { @() }
+            $matched = $columns | Where-Object { [string]$_.Name -eq $schemaFieldName -or [string]$_.name -eq $schemaFieldName }
+            if (@($matched).Count -eq 0) {
+                $failed++
+                Write-Host ('{0}: FAIL expected field {1}' -f $label, $schemaFieldName)
+                continue
+            }
+
+            $column = $matched | Select-Object -First 1
+            $maxLengthValue = if ($null -ne $column.MaxLength) { [int]$column.MaxLength } elseif ($null -ne $column.maxLength) { [int]$column.maxLength } elseif ($null -ne $column.size) { [int]$column.size } else { -1 }
+            if ($maxLengthValue -ne 80) {
+                $failed++
+                Write-Host ('{0}: FAIL expected MaxLength=80 for field {1}, got {2}' -f $label, $schemaFieldName, $maxLengthValue)
+                continue
+            }
+        }
+        "describe_table_after_rename_field" {
+            $columns = if ($decoded.table -and $decoded.table.Columns) { @($decoded.table.Columns) } elseif ($decoded.table -and $decoded.table.columns) { @($decoded.table.columns) } else { @() }
+            $oldMatched = $columns | Where-Object { [string]$_.Name -eq $schemaFieldName -or [string]$_.name -eq $schemaFieldName }
+            $newMatched = $columns | Where-Object { [string]$_.Name -eq $schemaFieldRenamedName -or [string]$_.name -eq $schemaFieldRenamedName }
+            if (@($oldMatched).Count -ne 0 -or @($newMatched).Count -eq 0) {
+                $failed++
+                Write-Host ('{0}: FAIL expected old field {1} replaced by {2}' -f $label, $schemaFieldName, $schemaFieldRenamedName)
+                continue
+            }
+        }
+        "describe_table_after_drop_field" {
+            $columns = if ($decoded.table -and $decoded.table.Columns) { @($decoded.table.Columns) } elseif ($decoded.table -and $decoded.table.columns) { @($decoded.table.columns) } else { @() }
+            $matched = $columns | Where-Object { [string]$_.Name -eq $schemaFieldRenamedName -or [string]$_.name -eq $schemaFieldRenamedName }
+            if (@($matched).Count -ne 0) {
+                $failed++
+                Write-Host ('{0}: FAIL expected field {1} to be dropped' -f $label, $schemaFieldRenamedName)
+                continue
+            }
+        }
+        "get_tables_after_rename_table_away" {
+            $tables = @($decoded.tables)
+            $oldMatched = $tables | Where-Object { [string]$_.Name -eq $tableName -or [string]$_.name -eq $tableName }
+            $newMatched = $tables | Where-Object { [string]$_.Name -eq $renamedTableName -or [string]$_.name -eq $renamedTableName }
+            if (@($oldMatched).Count -ne 0 -or @($newMatched).Count -eq 0) {
+                $failed++
+                Write-Host ('{0}: FAIL expected table rename {1} -> {2}' -f $label, $tableName, $renamedTableName)
+                continue
+            }
+        }
+        "get_tables_after_rename_table_back" {
+            $tables = @($decoded.tables)
+            $oldMatched = $tables | Where-Object { [string]$_.Name -eq $tableName -or [string]$_.name -eq $tableName }
+            $renamedMatched = $tables | Where-Object { [string]$_.Name -eq $renamedTableName -or [string]$_.name -eq $renamedTableName }
+            if (@($oldMatched).Count -eq 0 -or @($renamedMatched).Count -ne 0) {
+                $failed++
+                Write-Host ('{0}: FAIL expected table rename rollback {1} -> {2}' -f $label, $renamedTableName, $tableName)
                 continue
             }
         }
@@ -523,6 +693,15 @@ foreach ($id in ($idLabels.Keys | Sort-Object)) {
                 continue
             }
         }
+        "get_macros_after_import_macro" {
+            $macros = @($decoded.macros)
+            $matchedMacro = $macros | Where-Object { [string]$_.name -eq $importedMacroName }
+            if (@($matchedMacro).Count -eq 0) {
+                $failed++
+                Write-Host ('{0}: FAIL expected imported macro {1}' -f $label, $importedMacroName)
+                continue
+            }
+        }
         "get_vba_code" {
             $codeText = [string]$decoded.code
             if ($codeText.IndexOf("Pong", [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
@@ -583,10 +762,36 @@ foreach ($id in ($idLabels.Keys | Sort-Object)) {
                 continue
             }
         }
+        "export_form_to_text_access_text" {
+            $formAccessTextData = [string]$decoded.form_data
+            if ([string]::IsNullOrWhiteSpace($formAccessTextData)) {
+                $failed++
+                Write-Host ('{0}: FAIL empty form export payload' -f $label)
+                continue
+            }
+            if ($formAccessTextData.IndexOf('Version =', [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
+                $failed++
+                Write-Host ('{0}: FAIL expected Access text payload marker `Version =`' -f $label)
+                continue
+            }
+        }
         "export_report_to_text" {
             if ([string]::IsNullOrWhiteSpace([string]$decoded.report_data)) {
                 $failed++
                 Write-Host ('{0}: FAIL empty report export payload' -f $label)
+                continue
+            }
+        }
+        "export_report_to_text_access_text" {
+            $reportAccessTextData = [string]$decoded.report_data
+            if ([string]::IsNullOrWhiteSpace($reportAccessTextData)) {
+                $failed++
+                Write-Host ('{0}: FAIL empty report export payload' -f $label)
+                continue
+            }
+            if ($reportAccessTextData.IndexOf('Version =', [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
+                $failed++
+                Write-Host ('{0}: FAIL expected Access text payload marker `Version =`' -f $label)
                 continue
             }
         }
@@ -595,9 +800,127 @@ foreach ($id in ($idLabels.Keys | Sort-Object)) {
     Write-Host ('{0}: OK' -f $label)
 }
 
-Write-Host ("TOTAL_FAIL={0}" -f $failed)
-if ($failed -gt 0) {
-    exit 1
+if ([string]::IsNullOrWhiteSpace($formAccessTextData)) {
+    $failed++
+    Write-Host "access_text_form_roundtrip_source: FAIL missing export payload"
 }
 
-exit 0
+if ([string]::IsNullOrWhiteSpace($reportAccessTextData)) {
+    $failed++
+    Write-Host "access_text_report_roundtrip_source: FAIL missing export payload"
+}
+
+if (-not [string]::IsNullOrWhiteSpace($formAccessTextData) -and -not [string]::IsNullOrWhiteSpace($reportAccessTextData)) {
+    Write-Host "Intermediate cleanup: clearing stale Access/MCP processes and locks before access_text round-trip."
+    Cleanup-AccessArtifacts -DbPath $DatabasePath
+    Start-Sleep -Milliseconds 300
+
+    $accessTextCalls = New-Object 'System.Collections.Generic.List[object]'
+    Add-ToolCall -Calls $accessTextCalls -Id 201 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
+    Add-ToolCall -Calls $accessTextCalls -Id 202 -Name "import_form_from_text" -Arguments @{ form_data = $formAccessTextData; form_name = $formName; mode = "access_text" }
+    Add-ToolCall -Calls $accessTextCalls -Id 203 -Name "form_exists" -Arguments @{ form_name = $formName }
+    Add-ToolCall -Calls $accessTextCalls -Id 204 -Name "export_form_to_text" -Arguments @{ form_name = $formName; mode = "access_text" }
+    Add-ToolCall -Calls $accessTextCalls -Id 205 -Name "delete_form" -Arguments @{ form_name = $formName }
+    Add-ToolCall -Calls $accessTextCalls -Id 206 -Name "import_report_from_text" -Arguments @{ report_data = $reportAccessTextData; report_name = $reportName; mode = "access_text" }
+    Add-ToolCall -Calls $accessTextCalls -Id 207 -Name "get_report_controls" -Arguments @{ report_name = $reportName }
+    Add-ToolCall -Calls $accessTextCalls -Id 208 -Name "export_report_to_text" -Arguments @{ report_name = $reportName; mode = "access_text" }
+    Add-ToolCall -Calls $accessTextCalls -Id 209 -Name "delete_report" -Arguments @{ report_name = $reportName }
+    Add-ToolCall -Calls $accessTextCalls -Id 210 -Name "disconnect_access" -Arguments @{}
+    Add-ToolCall -Calls $accessTextCalls -Id 211 -Name "close_access" -Arguments @{}
+
+    $accessTextResponses = Invoke-McpBatch -ExePath $ServerExe -Calls $accessTextCalls -ClientName "full-regression-access-text" -ClientVersion "1.0"
+    $accessTextIdLabels = @{
+        201 = "access_text_connect_access"
+        202 = "access_text_import_form_from_text"
+        203 = "access_text_form_exists"
+        204 = "access_text_export_form_to_text"
+        205 = "access_text_delete_form"
+        206 = "access_text_import_report_from_text"
+        207 = "access_text_get_report_controls"
+        208 = "access_text_export_report_to_text"
+        209 = "access_text_delete_report"
+        210 = "access_text_disconnect_access"
+        211 = "access_text_close_access"
+    }
+
+    foreach ($id in ($accessTextIdLabels.Keys | Sort-Object)) {
+        $label = $accessTextIdLabels[$id]
+        $decoded = Decode-McpResult -Response $accessTextResponses[[int]$id]
+
+        if ($null -eq $decoded) {
+            $failed++
+            Write-Host ('{0}: FAIL missing-response' -f $label)
+            continue
+        }
+
+        if ($decoded -is [string]) {
+            $failed++
+            Write-Host ('{0}: FAIL raw-string-response' -f $label)
+            continue
+        }
+
+        if ($decoded.success -ne $true) {
+            $failed++
+            Write-Host ('{0}: FAIL {1}' -f $label, $decoded.error)
+            continue
+        }
+
+        switch ($label) {
+            "access_text_form_exists" {
+                if ($decoded.exists -ne $true) {
+                    $failed++
+                    Write-Host ('{0}: FAIL expected exists=true' -f $label)
+                    continue
+                }
+            }
+            "access_text_export_form_to_text" {
+                $formDataRoundTrip = [string]$decoded.form_data
+                if ([string]::IsNullOrWhiteSpace($formDataRoundTrip)) {
+                    $failed++
+                    Write-Host ('{0}: FAIL empty form export payload' -f $label)
+                    continue
+                }
+                if ($formDataRoundTrip.IndexOf('Version =', [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
+                    $failed++
+                    Write-Host ('{0}: FAIL expected Access text payload marker `Version =`' -f $label)
+                    continue
+                }
+            }
+            "access_text_get_report_controls" {
+                $controls = @($decoded.controls)
+                if ($controls.Count -lt 1) {
+                    $failed++
+                    Write-Host ('{0}: FAIL expected at least one report control' -f $label)
+                    continue
+                }
+            }
+            "access_text_export_report_to_text" {
+                $reportDataRoundTrip = [string]$decoded.report_data
+                if ([string]::IsNullOrWhiteSpace($reportDataRoundTrip)) {
+                    $failed++
+                    Write-Host ('{0}: FAIL empty report export payload' -f $label)
+                    continue
+                }
+                if ($reportDataRoundTrip.IndexOf('Version =', [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
+                    $failed++
+                    Write-Host ('{0}: FAIL expected Access text payload marker `Version =`' -f $label)
+                    continue
+                }
+            }
+        }
+
+        Write-Host ('{0}: OK' -f $label)
+    }
+}
+
+Write-Host ("TOTAL_FAIL={0}" -f $failed)
+if ($failed -eq 0) {
+    $exitCode = 0
+}
+}
+finally {
+    Write-Host "Final cleanup: clearing stale Access/MCP processes and locks."
+    Cleanup-AccessArtifacts -DbPath $DatabasePath
+}
+
+exit $exitCode

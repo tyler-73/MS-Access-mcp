@@ -1,0 +1,60 @@
+name: Windows Self-Hosted Access Regression
+
+on:
+  workflow_dispatch:
+    inputs:
+      access_database_path:
+        description: "Absolute path to .accdb/.mdb on the self-hosted runner (overrides secret ACCESS_DATABASE_PATH)."
+        required: false
+        type: string
+  schedule:
+    - cron: "0 7 * * 1"
+
+jobs:
+  full-regression:
+    name: Full toolset regression (requires Access)
+    runs-on:
+      - self-hosted
+      - windows
+    env:
+      ACCESS_DATABASE_PATH: ${{ github.event.inputs.access_database_path || secrets.ACCESS_DATABASE_PATH }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Publish server
+        shell: pwsh
+        run: |
+          $publishDir = Join-Path $env:RUNNER_TEMP "mcp-server-official-x64"
+          dotnet publish MS.Access.MCP.Official/MS.Access.MCP.Official.csproj -c Release -r win-x64 --self-contained true -o $publishDir
+
+      - name: Validate ACCESS_DATABASE_PATH
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:ACCESS_DATABASE_PATH)) {
+            throw "ACCESS_DATABASE_PATH is not set. Provide workflow_dispatch input access_database_path or configure secret ACCESS_DATABASE_PATH."
+          }
+
+          if (-not (Test-Path -LiteralPath $env:ACCESS_DATABASE_PATH)) {
+            throw "ACCESS_DATABASE_PATH does not exist on this runner: $env:ACCESS_DATABASE_PATH"
+          }
+
+      - name: Run full regression
+        shell: pwsh
+        run: |
+          $publishDir = Join-Path $env:RUNNER_TEMP "mcp-server-official-x64"
+          $serverExe = Join-Path $publishDir "MS.Access.MCP.Official.exe"
+          if (-not (Test-Path -LiteralPath $serverExe)) {
+            throw "Server executable not found: $serverExe"
+          }
+
+          & .\tests\full_toolset_regression.ps1 -ServerExe $serverExe -DatabasePath $env:ACCESS_DATABASE_PATH
+          if ($LASTEXITCODE -ne 0) {
+            throw "Regression script failed with exit code $LASTEXITCODE."
+          }

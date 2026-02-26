@@ -1,0 +1,38 @@
+name: Windows Hosted Build + MCP Smoke
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-smoke:
+    name: Build and initialize smoke (no Access required)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Publish server
+        shell: pwsh
+        run: |
+          $publishDir = Join-Path $env:RUNNER_TEMP "mcp-server-official-x64"
+          dotnet publish MS.Access.MCP.Official/MS.Access.MCP.Official.csproj -c Release -r win-x64 --self-contained true -o $publishDir
+
+      - name: MCP initialize smoke
+        shell: pwsh
+        run: |
+          $publishDir = Join-Path $env:RUNNER_TEMP "mcp-server-official-x64"
+          $serverExe = Join-Path $publishDir "MS.Access.MCP.Official.exe"
+          if (-not (Test-Path -LiteralPath $serverExe)) {
+            throw "Server executable not found: $serverExe"
+          }
+          & .\tests\ci_initialize_smoke.ps1 -ServerExe $serverExe
+          if ($LASTEXITCODE -ne 0) {
+            throw "CI initialize smoke failed with exit code $LASTEXITCODE."
+          }

@@ -39,8 +39,104 @@ The solution consists of two main components:
    ```
 3. Publish the official server:
    ```bash
-   dotnet publish MS.Access.MCP.Official/MS.Access.MCP.Official.csproj -c Release -o ./mcp-server-official --self-contained
+   dotnet publish MS.Access.MCP.Official/MS.Access.MCP.Official.csproj -c Release -r win-x64 --self-contained true -o ./mcp-server-official-x64
    ```
+
+### Repeatable x64 Publish + Promotion
+
+Use this from repo root for repeatable release promotion with backup safety:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\publish-and-promote-x64.ps1
+```
+
+What this script does:
+1. Publishes to a timestamped staging folder (`mcp-server-official-x64-run-*`)
+2. Stops running `MS.Access.MCP.Official` processes (default behavior) to unlock the target folder
+3. Renames the active target to `mcp-server-official-x64-backup-*`
+4. Promotes staging to `mcp-server-official-x64`
+5. Runs an MCP `initialize` smoke test against the promoted exe
+
+If promotion fails with `Access denied`, one or more server processes are still running under a context this shell cannot terminate. Rerun from an elevated PowerShell session after stopping `MS.Access.MCP.Official`.
+
+Rollback behavior:
+1. If promotion fails after a backup was created, the script attempts to restore the previous target from `mcp-server-official-x64-backup-*`.
+2. If `-RunRegression` is enabled and regression fails after promotion, the script archives the promoted target as `mcp-server-official-x64-regression-failed-*` and restores the backup target.
+3. If backup restore fails in step 2, the script attempts to restore the archived promoted target so an active target remains.
+
+Backup retention options:
+
+```powershell
+# Keep all backups (default behavior)
+powershell -ExecutionPolicy Bypass -File .\scripts\publish-and-promote-x64.ps1 -BackupRetentionCount 0
+
+# Keep only the newest 5 backup directories
+powershell -ExecutionPolicy Bypass -File .\scripts\publish-and-promote-x64.ps1 -BackupRetentionCount 5
+```
+
+Cleanup stale release folders:
+
+```powershell
+# Prune stale run/smoke folders, keep newest 5 in each set (default)
+powershell -ExecutionPolicy Bypass -File .\scripts\prune-release-artifacts.ps1
+
+# Preview cleanup without deleting anything
+powershell -ExecutionPolicy Bypass -File .\scripts\prune-release-artifacts.ps1 -WhatIf
+
+# Also prune backups explicitly, keeping newest 3 backups
+powershell -ExecutionPolicy Bypass -File .\scripts\prune-release-artifacts.ps1 -IncludeBackups -BackupRetentionCount 3
+```
+
+If you need to skip automatic server process shutdown:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\publish-and-promote-x64.ps1 -StopServerProcesses $false
+```
+
+If you need a framework-dependent publish instead of self-contained output:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\publish-and-promote-x64.ps1 -SelfContained $false
+```
+
+Optional full regression invocation as part of release:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\publish-and-promote-x64.ps1 `
+  -RunRegression `
+  -RegressionDatabasePath "C:\path\to\database.accdb"
+```
+
+### Repair + Verify Hardening
+
+Use this from repo root to clean stale state, enforce trusted location, probe candidate binaries with `connect_access`, and run full regression.
+
+```powershell
+# Full hardening run (includes regression and both config updates)
+powershell -ExecutionPolicy Bypass -File .\scripts\repair-and-verify-access-mcp.ps1 `
+  -DatabasePath "C:\path\to\database.accdb" `
+  -UpdateConfigs
+
+# Dry-run / WhatIf
+powershell -ExecutionPolicy Bypass -File .\scripts\repair-and-verify-access-mcp.ps1 `
+  -DatabasePath "C:\path\to\database.accdb" `
+  -UpdateConfigs `
+  -WhatIf
+
+# Config update toggle: update only Codex config
+powershell -ExecutionPolicy Bypass -File .\scripts\repair-and-verify-access-mcp.ps1 `
+  -DatabasePath "C:\path\to\database.accdb" `
+  -UpdateCodexConfig
+
+# Config update toggle: update only Claude config
+powershell -ExecutionPolicy Bypass -File .\scripts\repair-and-verify-access-mcp.ps1 `
+  -DatabasePath "C:\path\to\database.accdb" `
+  -UpdateClaudeConfig
+
+# x86 fallback when x86 binary is missing (no extra flag required)
+powershell -ExecutionPolicy Bypass -File .\scripts\repair-and-verify-access-mcp.ps1 `
+  -DatabasePath "C:\path\to\database.accdb"
+```
 
 ## Configuration
 
@@ -85,6 +181,11 @@ The MCP server provides comprehensive tools across all seven capability areas:
 - **describe_table**: Describe table schema, key columns, and defaults
 - **create_table**: Create a new table in the database
 - **delete_table**: Delete a table from the database
+- **add_field**: Add a new field to an existing table
+- **alter_field**: Alter an existing field definition on a table
+- **rename_field**: Rename a field on an existing table
+- **drop_field**: Drop a field from an existing table
+- **rename_table**: Rename an existing table
 - **get_indexes**: Get index metadata for a table
 - **create_index**: Create an index on one or more columns
 - **delete_index**: Delete an index from a table
@@ -134,6 +235,10 @@ The MCP server provides comprehensive tools across all seven capability areas:
 - **export_macro_to_text**: Export a macro to text representation
 - **import_macro_from_text**: Import a macro from text representation
 - **delete_macro**: Delete a macro from the database
+
+`access_text` note:
+- For `import_form_from_text` with `mode="access_text"`, pass `form_name` (object name to import).
+- For `import_report_from_text` with `mode="access_text"`, pass `report_name` (object name to import).
 
 ## Usage Examples
 
@@ -197,6 +302,13 @@ The MCP server provides comprehensive tools across all seven capability areas:
 }
 ```
 
+## CI
+
+This repository includes two GitHub Actions workflows with different coverage goals:
+
+- `windows-hosted-build-smoke.yml` runs on GitHub-hosted `windows-latest` for `push` and `pull_request`. It validates publish/build health and runs an MCP `initialize` smoke test that does not require Microsoft Access.
+- `windows-self-hosted-access-regression.yml` runs on self-hosted Windows (`workflow_dispatch` plus weekly schedule) and executes `tests\full_toolset_regression.ps1`. It requires Microsoft Access on the runner and an `ACCESS_DATABASE_PATH` value provided by dispatch input (`access_database_path`) or secret (`ACCESS_DATABASE_PATH`).
+
 ## Testing
 
 ### Running the Full Regression Test
@@ -218,11 +330,13 @@ powershell -ExecutionPolicy Bypass -File .\tests\full_toolset_regression.ps1 `
 The script verifies:
 1. Connection lifecycle and status checks
 2. Table creation/query/description/deletion
-3. SQL execution and markdown query output
-4. VBA set/add/get/compile flows
-5. Form import/export/control discovery/edit/delete
-6. Report import/export/delete
-7. Metadata discovery and Access COM automation calls
+3. Deterministic schema evolution coverage (`add_field`, `alter_field`, `rename_field`, `drop_field`, `rename_table`)
+4. SQL execution and markdown query output
+5. VBA set/add/get/compile flows
+6. Form import/export/control discovery/edit/delete in JSON mode, plus `mode="access_text"` export/import round-trip persistence checks
+7. Report import/export/delete in JSON mode, plus `mode="access_text"` export/import round-trip persistence checks
+8. Macro create/export/run/update/delete plus `import_macro_from_text` round-trip verification
+9. Metadata discovery and Access COM automation calls
 
 Pass criterion: `TOTAL_FAIL=0` and process exit code `0`.
 
@@ -272,6 +386,21 @@ The Interop library includes comprehensive data models for:
 3. **Permission errors**: Ensure the application has permission to access the database file
 4. **COM errors**: May indicate Access is not properly installed or registered
 5. **Stale lock state (`.laccdb`)**: Close leftover `MSACCESS` processes and remove the sibling `.laccdb` file before rerunning tests
+
+### MCP Preflight Diagnostics (Error Responses)
+
+`connect_access`, `get_tables`, `get_queries`, `get_relationships`, `execute_sql`, `execute_query_md`, and `describe_table` now include a `preflight` object when `success=false`.
+
+Preflight fields:
+- `process_bitness`: Current MCP process bitness (`x86` or `x64`)
+- `ace_oledb_provider_registered`: Whether `Microsoft.ACE.OLEDB.12.0` is registered for this process bitness
+- `ace_oledb_issue_detected`: True when ACE provider availability/bitness mismatch is likely blocking operations
+- `trust_center_active_content_indicator`: True when the failure message suggests Access Trust Center active-content blocking
+- `remediation_hints`: Suggested next steps
+
+Use these indicators for fast remediation:
+1. If `ace_oledb_issue_detected=true`, install the Access Database Engine with matching bitness or run a matching MCP build.
+2. If `trust_center_active_content_indicator=true`, add the database folder to Access Trusted Locations and unblock downloaded database files.
 
 PowerShell cleanup snippet:
 
