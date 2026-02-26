@@ -6,11 +6,14 @@ param(
     [switch]$UpdateClaudeConfig,
     [switch]$SkipCleanup,
     [switch]$SkipTrustedLocation,
-    [switch]$SkipRegression
+    [switch]$SkipRegression,
+    [switch]$AllowUnvalidatedBinary,
+    [switch]$AllowX86Fallback
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+$validationManifestName = "release-validation.json"
 
 function Get-RepoRoot {
     return (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -429,6 +432,59 @@ function Invoke-ConnectProbe {
     }
 }
 
+function Invoke-InitializeSmokeProbe {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ExePath,
+        [Parameter(Mandatory = $true)]
+        [string]$SmokeScriptPath
+    )
+
+    if (-not (Test-Path -LiteralPath $SmokeScriptPath)) {
+        return [pscustomobject]@{
+            ExePath   = $ExePath
+            ExitCode  = -1
+            Success   = $false
+            Error     = "Smoke script not found: $SmokeScriptPath"
+            RawOutput = @()
+        }
+    }
+
+    $powershellExe = Get-PowerShellHostExecutable
+    $nativePrefVar = Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue
+    if ($nativePrefVar) {
+        $previousNativePreference = $nativePrefVar.Value
+        $PSNativeCommandUseErrorActionPreference = $false
+    }
+
+    try {
+        $rawOutput = @(& $powershellExe -NoProfile -ExecutionPolicy Bypass -File $SmokeScriptPath -ServerExe $ExePath 2>&1)
+    }
+    finally {
+        if ($nativePrefVar) {
+            $PSNativeCommandUseErrorActionPreference = $previousNativePreference
+        }
+    }
+
+    $exitCode = $LASTEXITCODE
+    $success = ($exitCode -eq 0)
+    $errorText = $null
+    if (-not $success) {
+        $errorText = (@($rawOutput) | Select-Object -Last 5) -join [Environment]::NewLine
+        if ([string]::IsNullOrWhiteSpace($errorText)) {
+            $errorText = "Initialize smoke failed with exit code $exitCode."
+        }
+    }
+
+    return [pscustomobject]@{
+        ExePath   = $ExePath
+        ExitCode  = $exitCode
+        Success   = $success
+        Error     = $errorText
+        RawOutput = @($rawOutput)
+    }
+}
+
 function Update-CodexConfigCommand {
     param(
         [Parameter(Mandatory = $true)]
@@ -614,6 +670,7 @@ $summary = [ordered]@{
     TrustedFailed      = 0
     TrustedWhatIf      = 0
     SelectedBinary     = $null
+    ValidationManifest = $null
     RegressionExitCode = $null
     RegressionStatus   = "not-run"
 }
@@ -644,19 +701,71 @@ else {
 
 $candidatePaths = @(
     (Join-Path $repoRoot "mcp-server-official-x64\MS.Access.MCP.Official.exe")
-    (Join-Path $repoRoot "mcp-server-official-x86\MS.Access.MCP.Official.exe")
 )
+if ($AllowX86Fallback) {
+    Write-Warning "AllowX86Fallback enabled; including mcp-server-official-x86 candidate."
+    $candidatePaths += (Join-Path $repoRoot "mcp-server-official-x86\MS.Access.MCP.Official.exe")
+}
 
 $existingCandidates = @($candidatePaths | Where-Object { Test-Path -LiteralPath $_ })
 if ($existingCandidates.Count -eq 0) {
     throw "No candidate binaries found. Checked: $($candidatePaths -join ', ')"
 }
 
-Write-Host "Probing candidate binaries via JSON-RPC connect_access..."
-$probeResults = New-Object 'System.Collections.Generic.List[object]'
+$candidateRecords = New-Object 'System.Collections.Generic.List[object]'
 foreach ($candidate in $existingCandidates) {
-    Write-Host "Probe: $candidate"
+    $candidateDirectory = Split-Path -Path $candidate -Parent
+    $manifestPath = Join-Path $candidateDirectory $validationManifestName
+    $hasManifest = Test-Path -LiteralPath $manifestPath
+
+    if ($hasManifest) {
+        $candidateRecords.Add([pscustomobject]@{
+                ExePath = $candidate
+                ValidationManifestPath = $manifestPath
+            })
+        continue
+    }
+
+    if ($AllowUnvalidatedBinary) {
+        Write-Warning "Including unvalidated candidate by request: $candidate"
+        $candidateRecords.Add([pscustomobject]@{
+                ExePath = $candidate
+                ValidationManifestPath = $null
+            })
+    }
+    else {
+        Write-Warning "Skipping candidate without validation manifest ($validationManifestName): $candidate"
+    }
+}
+
+if ($candidateRecords.Count -eq 0) {
+    throw "No validated candidate binaries found. Run scripts\publish-and-promote-x64.ps1 without -SkipSmokeTest, or pass -AllowUnvalidatedBinary to bypass this safety check."
+}
+
+$smokeScriptPath = Join-Path $repoRoot "tests\ci_initialize_smoke.ps1"
+Write-Host "Validating candidate binaries (initialize smoke + connect_access)..."
+$probeResults = New-Object 'System.Collections.Generic.List[object]'
+foreach ($candidateRecord in $candidateRecords) {
+    $candidate = $candidateRecord.ExePath
+    Write-Host "Initialize smoke: $candidate"
+    $smokeResult = Invoke-InitializeSmokeProbe -ExePath $candidate -SmokeScriptPath $smokeScriptPath
+    if (-not $smokeResult.Success) {
+        Write-Warning ("Initialize smoke failed: {0} | ExitCode={1} | Reason={2}" -f $candidate, $smokeResult.ExitCode, $smokeResult.Error)
+        $probeResults.Add([pscustomobject]@{
+                ExePath      = $candidate
+                ExitCode     = $smokeResult.ExitCode
+                Success      = $false
+                Error        = "initialize smoke failed: $($smokeResult.Error)"
+                RawOutput    = @($smokeResult.RawOutput)
+                ConnectReply = $null
+                ValidationManifestPath = $candidateRecord.ValidationManifestPath
+            })
+        continue
+    }
+
+    Write-Host "Connect probe: $candidate"
     $result = Invoke-ConnectProbe -ExePath $candidate -DbPath $resolvedDatabasePath
+    $result | Add-Member -NotePropertyName ValidationManifestPath -NotePropertyValue $candidateRecord.ValidationManifestPath
     $probeResults.Add($result)
     if ($result.Success) {
         Write-Host "Probe success: $candidate"
@@ -677,6 +786,7 @@ if ($selectedProbe.Count -eq 0) {
 
 $selectedBinary = $selectedProbe[0].ExePath
 $summary.SelectedBinary = $selectedBinary
+$summary.ValidationManifest = $selectedProbe[0].ValidationManifestPath
 
 $shouldUpdateCodex = $UpdateConfigs -or $UpdateCodexConfig
 $shouldUpdateClaude = $UpdateConfigs -or $UpdateClaudeConfig
@@ -720,6 +830,12 @@ else {
 Write-Host ""
 Write-Host "=== repair-and-verify-access-mcp summary ==="
 Write-Host ("Selected binary : {0}" -f $summary.SelectedBinary)
+if (-not [string]::IsNullOrWhiteSpace([string]$summary.ValidationManifest)) {
+    Write-Host ("Validation manifest: {0}" -f $summary.ValidationManifest)
+}
+else {
+    Write-Host "Validation manifest: none (unvalidated mode)"
+}
 Write-Host ("Processes stopped: {0}" -f $summary.ProcessesStopped)
 Write-Host ("Lock file path   : {0}" -f $summary.LockFilePath)
 Write-Host ("Lock file existed: {0}" -f $summary.LockFileExisted)

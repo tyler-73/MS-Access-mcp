@@ -14,6 +14,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+$validationManifestName = "release-validation.json"
 
 if ($BackupRetentionCount -lt 0) {
     throw "BackupRetentionCount cannot be negative."
@@ -425,6 +426,45 @@ if ($RunRegression) {
     }
 }
 
+$validationManifestPath = Join-Path $targetPath $validationManifestName
+if (-not $SkipSmokeTest) {
+    $validatedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+    $gitCommit = $null
+    try {
+        $gitCommit = (& git -C $repoRoot rev-parse HEAD 2>$null)
+        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($gitCommit)) {
+            $gitCommit = $gitCommit.Trim()
+        }
+        else {
+            $gitCommit = $null
+        }
+    }
+    catch {
+        $gitCommit = $null
+    }
+
+    $validationManifest = [ordered]@{
+        validated_at_utc = $validatedAtUtc
+        server_exe = $promotedExe
+        configuration = $Configuration
+        runtime_identifier = $RuntimeIdentifier
+        self_contained = $SelfContained
+        smoke_test_passed = $true
+        regression_run = [bool]$RunRegression
+        git_commit = $gitCommit
+    }
+
+    $validationManifestJson = $validationManifest | ConvertTo-Json -Depth 10
+    Set-Content -LiteralPath $validationManifestPath -Value $validationManifestJson -Encoding utf8
+    Write-Host "Validation manifest written: $validationManifestPath"
+}
+else {
+    if (Test-Path -LiteralPath $validationManifestPath) {
+        Remove-Item -LiteralPath $validationManifestPath -Force
+    }
+    Write-Warning "Smoke test was skipped; validation manifest was not written."
+}
+
 if ($BackupRetentionCount -gt 0) {
     $backupPrefix = "$TargetDirectoryName-backup-"
     $backups = Get-ChildItem -Path $repoRoot -Directory |
@@ -444,6 +484,9 @@ else {
 Write-Host "Release complete."
 Write-Host "Active target: $targetPath"
 Write-Host "Server executable: $promotedExe"
+if (Test-Path -LiteralPath $validationManifestPath) {
+    Write-Host "Validation manifest: $validationManifestPath"
+}
 if (Test-Path -LiteralPath $backupPath) {
     Write-Host "Backup created: $backupPath"
 }

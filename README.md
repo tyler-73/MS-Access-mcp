@@ -56,6 +56,7 @@ What this script does:
 3. Renames the active target to `mcp-server-official-x64-backup-*`
 4. Promotes staging to `mcp-server-official-x64`
 5. Runs an MCP `initialize` smoke test against the promoted exe
+6. Writes `mcp-server-official-x64\release-validation.json` after smoke success
 
 If promotion fails with `Access denied`, one or more server processes are still running under a context this shell cannot terminate. Rerun from an elevated PowerShell session after stopping `MS.Access.MCP.Official`.
 
@@ -99,6 +100,8 @@ If you need a framework-dependent publish instead of self-contained output:
 powershell -ExecutionPolicy Bypass -File .\scripts\publish-and-promote-x64.ps1 -SelfContained $false
 ```
 
+Use framework-dependent output only for targeted diagnostics; normal MCP client/runtime config should keep using the validated `mcp-server-official-x64` promoted binary.
+
 Optional full regression invocation as part of release:
 
 ```powershell
@@ -109,7 +112,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\publish-and-promote-x64.ps1 `
 
 ### Repair + Verify Hardening
 
-Use this from repo root to clean stale state, enforce trusted location, probe candidate binaries with `connect_access`, and run full regression.
+Use this from repo root to clean stale state, enforce trusted location, validate candidate binaries with `initialize` smoke + `connect_access`, and run full regression.
 
 ```powershell
 # Full hardening run (includes regression and both config updates)
@@ -133,9 +136,19 @@ powershell -ExecutionPolicy Bypass -File .\scripts\repair-and-verify-access-mcp.
   -DatabasePath "C:\path\to\database.accdb" `
   -UpdateClaudeConfig
 
-# x86 fallback when x86 binary is missing (no extra flag required)
+# Default: require validated x64 promoted binary (release-validation.json present)
 powershell -ExecutionPolicy Bypass -File .\scripts\repair-and-verify-access-mcp.ps1 `
   -DatabasePath "C:\path\to\database.accdb"
+
+# Optional: allow unvalidated binaries (diagnostics only)
+powershell -ExecutionPolicy Bypass -File .\scripts\repair-and-verify-access-mcp.ps1 `
+  -DatabasePath "C:\path\to\database.accdb" `
+  -AllowUnvalidatedBinary
+
+# Optional: include x86 candidate
+powershell -ExecutionPolicy Bypass -File .\scripts\repair-and-verify-access-mcp.ps1 `
+  -DatabasePath "C:\path\to\database.accdb" `
+  -AllowX86Fallback
 ```
 
 ## Configuration
@@ -148,7 +161,7 @@ Add the following to your Claude Desktop configuration file (`%APPDATA%\Claude\c
 {
   "mcpServers": {
     "access-mcp-server": {
-      "command": "C:\\Users\\brickly\\Desktop\\MS-Access-MCP\\mcp-server-official\\MS.Access.MCP.Official.exe",
+      "command": "C:\\Users\\brickly\\Desktop\\MS-Access-MCP\\mcp-server-official-x64\\MS.Access.MCP.Official.exe",
       "args": []
     }
   }
@@ -346,8 +359,8 @@ The script verifies:
 7. Report import/export/delete in JSON mode, plus `mode="access_text"` export/import round-trip persistence checks
 8. Macro create/export/run/update/delete plus `import_macro_from_text` round-trip verification
 9. Metadata discovery and Access COM automation calls
-10. Linked-table tranche-1 coverage using a local copied `.accdb` source (no external database server dependency)
-11. Transaction tranche-1 coverage validating rollback/commit visibility through deterministic SQL checks
+10. Linked-table tranche-1 coverage using a local copied `.accdb` source (no external database server dependency), including explicit alias-path calls beyond candidate resolution (`link_table`, `refresh_link`, `relink_table`, `unlink_table` when exposed)
+11. Transaction tranche-1 coverage validating rollback/commit visibility through deterministic SQL checks, including explicit alias-path begin coverage (`start_transaction` when exposed)
 
 When linked-table and transaction tranche-1 tools are not exposed by `tools/list`, the harness records `SKIP` lines for those sections and preserves the existing pass criterion.
 
@@ -358,7 +371,7 @@ Pass criterion: `TOTAL_FAIL=0` and process exit code `0`.
 To test the server manually:
 
 ```bash
-echo {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}} | dotnet run --project MS.Access.MCP.Official/MS.Access.MCP.Official.csproj
+echo {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}} | .\mcp-server-official-x64\MS.Access.MCP.Official.exe
 ```
 
 This should return a proper MCP initialize response with server information.

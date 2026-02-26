@@ -26,9 +26,19 @@ powershell -ExecutionPolicy Bypass -File .\scripts\repair-and-verify-access-mcp.
   -DatabasePath "C:\path\to\database.accdb" `
   -UpdateClaudeConfig
 
-# x86 fallback when x86 binary is missing (no extra flag required)
+# Default: require validated x64 promoted binary
 powershell -ExecutionPolicy Bypass -File .\scripts\repair-and-verify-access-mcp.ps1 `
   -DatabasePath "C:\path\to\database.accdb"
+
+# Optional: diagnostics override for unvalidated binaries
+powershell -ExecutionPolicy Bypass -File .\scripts\repair-and-verify-access-mcp.ps1 `
+  -DatabasePath "C:\path\to\database.accdb" `
+  -AllowUnvalidatedBinary
+
+# Optional: include x86 fallback candidate
+powershell -ExecutionPolicy Bypass -File .\scripts\repair-and-verify-access-mcp.ps1 `
+  -DatabasePath "C:\path\to\database.accdb" `
+  -AllowX86Fallback
 ```
 
 ## 2. Publish + Promote x64 (default smoke verification)
@@ -42,6 +52,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\publish-and-promote-x64.ps1
 Expected result:
 - Promotion completes to `.\mcp-server-official-x64`
 - Output contains `Smoke test passed.`
+- Output contains `Validation manifest written: ...\mcp-server-official-x64\release-validation.json`
 - A backup directory is preserved as `.\mcp-server-official-x64-backup-*` when a prior target existed
 - If promotion fails after backup creation, the script attempts rollback to the previous target
 - If `-RunRegression` is used and regression fails after promotion, the script archives the promoted target and restores the backup target when available

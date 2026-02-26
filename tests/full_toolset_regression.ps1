@@ -175,6 +175,26 @@ function Resolve-ToolName {
     return $null
 }
 
+function Resolve-AlternateToolName {
+    param(
+        [System.Collections.Generic.Dictionary[string, object]]$ToolByName,
+        [string]$PrimaryName,
+        [string[]]$Candidates
+    )
+
+    foreach ($candidate in $Candidates) {
+        if ($candidate -eq $PrimaryName) {
+            continue
+        }
+
+        if ($ToolByName.ContainsKey($candidate)) {
+            return $candidate
+        }
+    }
+
+    return $null
+}
+
 function Stop-StaleProcesses {
     Get-Process MSACCESS, MS.Access.MCP.Official -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
@@ -250,11 +270,16 @@ $createLinkedTableToolName = Resolve-ToolName -ToolByName $toolByName -Candidate
 $refreshLinkedTableToolName = Resolve-ToolName -ToolByName $toolByName -Candidates @("refresh_linked_table", "refresh_link")
 $updateLinkedTableToolName = Resolve-ToolName -ToolByName $toolByName -Candidates @("update_linked_table", "relink_table")
 $deleteLinkedTableToolName = Resolve-ToolName -ToolByName $toolByName -Candidates @("delete_linked_table", "unlink_table")
+$createLinkedTableAliasToolName = Resolve-AlternateToolName -ToolByName $toolByName -PrimaryName $createLinkedTableToolName -Candidates @("create_linked_table", "link_table")
+$refreshLinkedTableAliasToolName = Resolve-AlternateToolName -ToolByName $toolByName -PrimaryName $refreshLinkedTableToolName -Candidates @("refresh_linked_table", "refresh_link")
+$updateLinkedTableAliasToolName = Resolve-AlternateToolName -ToolByName $toolByName -PrimaryName $updateLinkedTableToolName -Candidates @("update_linked_table", "relink_table")
+$deleteLinkedTableAliasToolName = Resolve-AlternateToolName -ToolByName $toolByName -PrimaryName $deleteLinkedTableToolName -Candidates @("delete_linked_table", "unlink_table")
 
 $beginTransactionToolName = Resolve-ToolName -ToolByName $toolByName -Candidates @("begin_transaction", "start_transaction")
 $commitTransactionToolName = Resolve-ToolName -ToolByName $toolByName -Candidates @("commit_transaction")
 $rollbackTransactionToolName = Resolve-ToolName -ToolByName $toolByName -Candidates @("rollback_transaction")
 $transactionStatusToolName = Resolve-ToolName -ToolByName $toolByName -Candidates @("transaction_status")
+$beginTransactionAliasToolName = Resolve-AlternateToolName -ToolByName $toolByName -PrimaryName $beginTransactionToolName -Candidates @("begin_transaction", "start_transaction")
 
 $formData = @{
     Name = $formName
@@ -1017,11 +1042,23 @@ if (-not [string]::IsNullOrWhiteSpace($createLinkedTableToolName) -and
     -not [string]::IsNullOrWhiteSpace($deleteLinkedTableToolName) -and
     -not [string]::IsNullOrWhiteSpace($listLinkedTablesToolName)) {
     $linkedCoverageToolNames = @($createLinkedTableToolName, $deleteLinkedTableToolName, $listLinkedTablesToolName)
+    if (-not [string]::IsNullOrWhiteSpace($createLinkedTableAliasToolName)) {
+        $linkedCoverageToolNames += $createLinkedTableAliasToolName
+    }
     if (-not [string]::IsNullOrWhiteSpace($refreshLinkedTableToolName)) {
         $linkedCoverageToolNames += $refreshLinkedTableToolName
     }
+    if (-not [string]::IsNullOrWhiteSpace($refreshLinkedTableAliasToolName)) {
+        $linkedCoverageToolNames += $refreshLinkedTableAliasToolName
+    }
     if (-not [string]::IsNullOrWhiteSpace($updateLinkedTableToolName)) {
         $linkedCoverageToolNames += $updateLinkedTableToolName
+    }
+    if (-not [string]::IsNullOrWhiteSpace($updateLinkedTableAliasToolName)) {
+        $linkedCoverageToolNames += $updateLinkedTableAliasToolName
+    }
+    if (-not [string]::IsNullOrWhiteSpace($deleteLinkedTableAliasToolName)) {
+        $linkedCoverageToolNames += $deleteLinkedTableAliasToolName
     }
     Write-Host ('linked_table_coverage: INFO using tools {0}' -f ($linkedCoverageToolNames -join ", "))
 
@@ -1100,28 +1137,55 @@ if (-not [string]::IsNullOrWhiteSpace($createLinkedTableToolName) -and
             external_database_path = $linkedSourceDatabasePath
             connection_string = "MS Access;DATABASE=$linkedSourceDatabasePath"
             connect_string = "DATABASE=$linkedSourceDatabasePath"
+            overwrite = $true
         }
 
         $deleteLinkedArguments = @{
             table_name = $linkedTableName
             linked_table_name = $linkedTableName
         }
+        $linkedAliasDeleteTableName = "${linkedTableName}_AliasDelete"
 
         $linkedCalls = New-Object 'System.Collections.Generic.List[object]'
         Add-ToolCall -Calls $linkedCalls -Id 321 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
         Add-ToolCall -Calls $linkedCalls -Id 322 -Name $createLinkedTableToolName -Arguments $createLinkedArguments
+        if (-not [string]::IsNullOrWhiteSpace($createLinkedTableAliasToolName)) {
+            Add-ToolCall -Calls $linkedCalls -Id 333 -Name $createLinkedTableAliasToolName -Arguments $createLinkedArguments
+        }
         Add-ToolCall -Calls $linkedCalls -Id 323 -Name $listLinkedTablesToolName -Arguments @{}
         Add-ToolCall -Calls $linkedCalls -Id 324 -Name "execute_sql" -Arguments @{ sql = "SELECT id, payload FROM [$linkedTableName]" }
         if (-not [string]::IsNullOrWhiteSpace($refreshLinkedTableToolName)) {
             Add-ToolCall -Calls $linkedCalls -Id 325 -Name $refreshLinkedTableToolName -Arguments $createLinkedArguments
             Add-ToolCall -Calls $linkedCalls -Id 326 -Name "execute_sql" -Arguments @{ sql = "SELECT id, payload FROM [$linkedTableName]" }
+            if (-not [string]::IsNullOrWhiteSpace($refreshLinkedTableAliasToolName)) {
+                Add-ToolCall -Calls $linkedCalls -Id 334 -Name $refreshLinkedTableAliasToolName -Arguments $createLinkedArguments
+                Add-ToolCall -Calls $linkedCalls -Id 339 -Name "execute_sql" -Arguments @{ sql = "SELECT id, payload FROM [$linkedTableName]" }
+            }
         }
         if (-not [string]::IsNullOrWhiteSpace($updateLinkedTableToolName)) {
             Add-ToolCall -Calls $linkedCalls -Id 331 -Name $updateLinkedTableToolName -Arguments $createLinkedArguments
             Add-ToolCall -Calls $linkedCalls -Id 332 -Name "execute_sql" -Arguments @{ sql = "SELECT id, payload FROM [$linkedTableName]" }
+            if (-not [string]::IsNullOrWhiteSpace($updateLinkedTableAliasToolName)) {
+                Add-ToolCall -Calls $linkedCalls -Id 335 -Name $updateLinkedTableAliasToolName -Arguments $createLinkedArguments
+                Add-ToolCall -Calls $linkedCalls -Id 340 -Name "execute_sql" -Arguments @{ sql = "SELECT id, payload FROM [$linkedTableName]" }
+            }
         }
         Add-ToolCall -Calls $linkedCalls -Id 327 -Name $deleteLinkedTableToolName -Arguments $deleteLinkedArguments
         Add-ToolCall -Calls $linkedCalls -Id 328 -Name $listLinkedTablesToolName -Arguments @{}
+        if (-not [string]::IsNullOrWhiteSpace($deleteLinkedTableAliasToolName)) {
+            $aliasCreateArguments = [hashtable]$createLinkedArguments.Clone()
+            $aliasCreateArguments["table_name"] = $linkedAliasDeleteTableName
+            $aliasCreateArguments["linked_table_name"] = $linkedAliasDeleteTableName
+
+            $aliasDeleteArguments = @{
+                table_name = $linkedAliasDeleteTableName
+                linked_table_name = $linkedAliasDeleteTableName
+            }
+
+            Add-ToolCall -Calls $linkedCalls -Id 336 -Name $createLinkedTableToolName -Arguments $aliasCreateArguments
+            Add-ToolCall -Calls $linkedCalls -Id 337 -Name $deleteLinkedTableAliasToolName -Arguments $aliasDeleteArguments
+            Add-ToolCall -Calls $linkedCalls -Id 338 -Name $listLinkedTablesToolName -Arguments @{}
+        }
         Add-ToolCall -Calls $linkedCalls -Id 329 -Name "disconnect_access" -Arguments @{}
         Add-ToolCall -Calls $linkedCalls -Id 330 -Name "close_access" -Arguments @{}
 
@@ -1139,10 +1203,26 @@ if (-not [string]::IsNullOrWhiteSpace($createLinkedTableToolName) -and
         if (-not [string]::IsNullOrWhiteSpace($refreshLinkedTableToolName)) {
             $linkedIdLabels[325] = "linked_table_refresh_linked_table"
             $linkedIdLabels[326] = "linked_table_execute_sql_select_after_refresh"
+            if (-not [string]::IsNullOrWhiteSpace($refreshLinkedTableAliasToolName)) {
+                $linkedIdLabels[334] = "linked_table_refresh_linked_table_alias_path"
+                $linkedIdLabels[339] = "linked_table_execute_sql_select_after_refresh_alias"
+            }
         }
         if (-not [string]::IsNullOrWhiteSpace($updateLinkedTableToolName)) {
             $linkedIdLabels[331] = "linked_table_update_linked_table"
             $linkedIdLabels[332] = "linked_table_execute_sql_select_after_update"
+            if (-not [string]::IsNullOrWhiteSpace($updateLinkedTableAliasToolName)) {
+                $linkedIdLabels[335] = "linked_table_update_linked_table_alias_path"
+                $linkedIdLabels[340] = "linked_table_execute_sql_select_after_update_alias"
+            }
+        }
+        if (-not [string]::IsNullOrWhiteSpace($createLinkedTableAliasToolName)) {
+            $linkedIdLabels[333] = "linked_table_create_linked_table_alias_path"
+        }
+        if (-not [string]::IsNullOrWhiteSpace($deleteLinkedTableAliasToolName)) {
+            $linkedIdLabels[336] = "linked_table_create_for_delete_alias_path"
+            $linkedIdLabels[337] = "linked_table_delete_linked_table_alias_path"
+            $linkedIdLabels[338] = "linked_table_list_linked_tables_after_alias_delete"
         }
 
         foreach ($id in ($linkedIdLabels.Keys | Sort-Object)) {
@@ -1201,11 +1281,27 @@ if (-not [string]::IsNullOrWhiteSpace($createLinkedTableToolName) -and
                         continue
                     }
                 }
+                "linked_table_execute_sql_select_after_refresh_alias" {
+                    $rows = @($decoded.rows)
+                    if ($rows.Count -lt 1) {
+                        $failed++
+                        Write-Host ('{0}: FAIL expected at least one row after linked table refresh alias path' -f $label)
+                        continue
+                    }
+                }
                 "linked_table_execute_sql_select_after_update" {
                     $rows = @($decoded.rows)
                     if ($rows.Count -lt 1) {
                         $failed++
                         Write-Host ('{0}: FAIL expected at least one row after linked table update' -f $label)
+                        continue
+                    }
+                }
+                "linked_table_execute_sql_select_after_update_alias" {
+                    $rows = @($decoded.rows)
+                    if ($rows.Count -lt 1) {
+                        $failed++
+                        Write-Host ('{0}: FAIL expected at least one row after linked table update alias path' -f $label)
                         continue
                     }
                 }
@@ -1226,6 +1322,23 @@ if (-not [string]::IsNullOrWhiteSpace($createLinkedTableToolName) -and
                         continue
                     }
                 }
+                "linked_table_list_linked_tables_after_alias_delete" {
+                    $tables = @($decoded.linked_tables)
+                    if ($tables.Count -eq 0 -and $null -ne $decoded.tables) {
+                        $tables = @($decoded.tables)
+                    }
+                    $linkedMatch = $tables | Where-Object {
+                        [string]$_.Name -eq $linkedAliasDeleteTableName -or
+                        [string]$_.name -eq $linkedAliasDeleteTableName -or
+                        [string]$_.TableName -eq $linkedAliasDeleteTableName -or
+                        [string]$_.table_name -eq $linkedAliasDeleteTableName
+                    }
+                    if (@($linkedMatch).Count -ne 0) {
+                        $failed++
+                        Write-Host ('{0}: FAIL expected linked table {1} to be deleted through alias path' -f $label, $linkedAliasDeleteTableName)
+                        continue
+                    }
+                }
             }
 
             Write-Host ('{0}: OK' -f $label)
@@ -1240,8 +1353,11 @@ if (-not [string]::IsNullOrWhiteSpace($beginTransactionToolName) -and
     -not [string]::IsNullOrWhiteSpace($commitTransactionToolName) -and
     -not [string]::IsNullOrWhiteSpace($rollbackTransactionToolName) -and
     -not [string]::IsNullOrWhiteSpace($transactionStatusToolName)) {
-    Write-Host ('transaction_coverage: INFO using tools {0}, {1}, {2}, {3}' -f
-        $beginTransactionToolName, $commitTransactionToolName, $rollbackTransactionToolName, $transactionStatusToolName)
+    $transactionCoverageToolNames = @($beginTransactionToolName, $commitTransactionToolName, $rollbackTransactionToolName, $transactionStatusToolName)
+    if (-not [string]::IsNullOrWhiteSpace($beginTransactionAliasToolName)) {
+        $transactionCoverageToolNames += $beginTransactionAliasToolName
+    }
+    Write-Host ('transaction_coverage: INFO using tools {0}' -f ($transactionCoverageToolNames -join ", "))
 
     $transactionCalls = New-Object 'System.Collections.Generic.List[object]'
     Add-ToolCall -Calls $transactionCalls -Id 341 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
@@ -1265,6 +1381,12 @@ if (-not [string]::IsNullOrWhiteSpace($beginTransactionToolName) -and
     Add-ToolCall -Calls $transactionCalls -Id 350 -Name $commitTransactionToolName -Arguments @{}
     Add-ToolCall -Calls $transactionCalls -Id 358 -Name $transactionStatusToolName -Arguments @{}
     Add-ToolCall -Calls $transactionCalls -Id 351 -Name "execute_sql" -Arguments @{ sql = "SELECT id FROM [$transactionTableName] WHERE id = 3" }
+    if (-not [string]::IsNullOrWhiteSpace($beginTransactionAliasToolName)) {
+        Add-ToolCall -Calls $transactionCalls -Id 359 -Name $beginTransactionAliasToolName -Arguments @{}
+        Add-ToolCall -Calls $transactionCalls -Id 360 -Name $transactionStatusToolName -Arguments @{}
+        Add-ToolCall -Calls $transactionCalls -Id 361 -Name $rollbackTransactionToolName -Arguments @{}
+        Add-ToolCall -Calls $transactionCalls -Id 362 -Name $transactionStatusToolName -Arguments @{}
+    }
     Add-ToolCall -Calls $transactionCalls -Id 352 -Name "delete_table" -Arguments @{ table_name = $transactionTableName }
     Add-ToolCall -Calls $transactionCalls -Id 353 -Name "disconnect_access" -Arguments @{}
     Add-ToolCall -Calls $transactionCalls -Id 354 -Name "close_access" -Arguments @{}
@@ -1289,6 +1411,12 @@ if (-not [string]::IsNullOrWhiteSpace($beginTransactionToolName) -and
         352 = "transaction_delete_table"
         353 = "transaction_disconnect_access"
         354 = "transaction_close_access"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($beginTransactionAliasToolName)) {
+        $transactionIdLabels[359] = "transaction_begin_alias_path"
+        $transactionIdLabels[360] = "transaction_status_after_begin_alias_path"
+        $transactionIdLabels[361] = "transaction_rollback_after_begin_alias_path"
+        $transactionIdLabels[362] = "transaction_status_after_alias_rollback"
     }
 
     foreach ($id in ($transactionIdLabels.Keys | Sort-Object)) {
@@ -1365,6 +1493,25 @@ if (-not [string]::IsNullOrWhiteSpace($beginTransactionToolName) -and
                 if ($null -eq $decoded.transaction -or $decoded.transaction.active -ne $false) {
                     $failed++
                     Write-Host ('{0}: FAIL expected no active transaction after commit' -f $label)
+                    continue
+                }
+            }
+            "transaction_status_after_begin_alias_path" {
+                if ($decoded.connected -ne $true) {
+                    $failed++
+                    Write-Host ('{0}: FAIL expected connected=true' -f $label)
+                    continue
+                }
+                if ($null -eq $decoded.transaction -or $decoded.transaction.active -ne $true) {
+                    $failed++
+                    Write-Host ('{0}: FAIL expected active transaction after alias begin' -f $label)
+                    continue
+                }
+            }
+            "transaction_status_after_alias_rollback" {
+                if ($null -eq $decoded.transaction -or $decoded.transaction.active -ne $false) {
+                    $failed++
+                    Write-Host ('{0}: FAIL expected no active transaction after alias rollback' -f $label)
                     continue
                 }
             }
