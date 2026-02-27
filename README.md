@@ -293,6 +293,22 @@ The MCP server provides comprehensive tools across all seven capability areas:
 - For `import_form_from_text` with `mode="access_text"`, pass `form_name` (object name to import).
 - For `import_report_from_text` with `mode="access_text"`, pass `report_name` (object name to import).
 
+### podbc Compatibility Layer
+
+Drop-in replacement for the 7 core data tools from `pyodbc-access` (OpenLink `mcp-pyodbc-server`). SPARQL/RDF tools (`podbc_spasql_query`, `podbc_sparql_*`, `podbc_virtuoso_support_ai`) are not implemented — those are specific to OpenLink Virtuoso and have no Access equivalent.
+
+- **podbc_get_schemas**: List schemas visible from a DSN-backed connection
+- **podbc_get_tables**: List tables for a schema (or connection default)
+- **podbc_filter_table_names**: Filter tables by substring match
+- **podbc_describe_table**: Return column/key metadata for a table
+- **podbc_query_database**: Execute SQL and return JSONL rows
+- **podbc_execute_query**: Execute SQL and return JSONL rows with `max_rows` support
+- **podbc_execute_query_md**: Execute SQL and return markdown table output
+
+`podbc` usage note:
+- This layer is a compatibility surface for the core ODBC data tools; pass `dsn` (and `user`/`password` when needed) per tool schema.
+- Access-native lifecycle/COM coverage remains on the primary MCP toolset; compatibility coverage is validated separately via `tests\podbc_compat_regression.ps1` (`PODBC_COMPAT_PASS=1`).
+
 ## Usage Examples
 
 ### Basic Connection and Discovery
@@ -360,7 +376,7 @@ The MCP server provides comprehensive tools across all seven capability areas:
 This repository includes two GitHub Actions workflows with different coverage goals:
 
 - `windows-hosted-build-smoke.yml` runs on GitHub-hosted `windows-latest` for `push` and `pull_request`. It validates publish/build health and runs an MCP `initialize` smoke test that does not require Microsoft Access.
-- `windows-self-hosted-access-regression.yml` runs on self-hosted Windows (`workflow_dispatch` plus weekly schedule) and executes both `tests\full_toolset_regression.ps1` and `tests\full_toolset_negative_paths.ps1`. It requires Microsoft Access on the runner and an `ACCESS_DATABASE_PATH` value provided by dispatch input (`access_database_path`) or secret (`ACCESS_DATABASE_PATH`), and asserts that database-lifecycle and secure-connect coverage markers are present in logs.
+- `windows-self-hosted-access-regression.yml` runs on self-hosted Windows (`workflow_dispatch` plus weekly schedule) and executes `tests\full_toolset_regression.ps1`, `tests\full_toolset_negative_paths.ps1`, and `tests\podbc_compat_regression.ps1`. It requires Microsoft Access on the runner and an `ACCESS_DATABASE_PATH` value provided by dispatch input (`access_database_path`) or secret (`ACCESS_DATABASE_PATH`), and asserts that database-lifecycle, secure-connect, and podbc compatibility coverage markers are present in logs.
 
 Bootstrap GitHub auth/secret/workflow setup from terminal:
 

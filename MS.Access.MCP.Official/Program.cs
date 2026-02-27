@@ -7,6 +7,7 @@ using MS.Access.MCP.Interop;
 class Program
 {
     static readonly JsonElement EmptyJsonObject = JsonSerializer.Deserialize<JsonElement>("{}");
+    const string PodbcDefaultSchema = "AccessCatalog";
 
     static async Task Main(string[] args)
     {
@@ -135,6 +136,13 @@ class Program
                 new { name = "delete_relationship", description = "Delete an existing relationship by name", inputSchema = new { type = "object", properties = new { relationship_name = new { type = "string" } }, required = new string[] { "relationship_name" } } },
                 new { name = "execute_sql", description = "Execute a SQL statement against the connected Access database. For SELECT queries, returns columns and rows. For action queries, returns rows_affected.", inputSchema = new { type = "object", properties = new { sql = new { type = "string" }, max_rows = new { type = "integer" } }, required = new string[] { "sql" } } },
                 new { name = "execute_query_md", description = "Execute a SQL statement and return result as a markdown table (or action-query summary).", inputSchema = new { type = "object", properties = new { sql = new { type = "string" }, max_rows = new { type = "integer" } }, required = new string[] { "sql" } } },
+                new { name = "podbc_get_schemas", description = "PyODBC-compat: retrieve schema names using Access fallback behavior.", inputSchema = new { type = "object", properties = new { Schema = new { type = "string" }, user = new { type = "string" }, password = new { type = "string" }, dsn = new { type = "string" } } } },
+                new { name = "podbc_get_tables", description = "PyODBC-compat: retrieve tables with optional schema filter argument (ignored for Access).", inputSchema = new { type = "object", properties = new { Schema = new { type = "string" }, user = new { type = "string" }, password = new { type = "string" }, dsn = new { type = "string" } } } },
+                new { name = "podbc_describe_table", description = "PyODBC-compat: describe a table schema using Access table metadata.", inputSchema = new { type = "object", properties = new { table = new { type = "string" }, table_name = new { type = "string" }, Schema = new { type = "string" }, user = new { type = "string" }, password = new { type = "string" }, dsn = new { type = "string" } }, required = new string[] { "table" } } },
+                new { name = "podbc_filter_table_names", description = "PyODBC-compat: list tables whose names contain substring q.", inputSchema = new { type = "object", properties = new { q = new { type = "string" }, Schema = new { type = "string" }, user = new { type = "string" }, password = new { type = "string" }, dsn = new { type = "string" } }, required = new string[] { "q" } } },
+                new { name = "podbc_execute_query", description = "PyODBC-compat: execute SQL and return structured results.", inputSchema = new { type = "object", properties = new { query = new { type = "string" }, sql = new { type = "string" }, max_rows = new { type = "integer" }, @params = new { type = "array", description = "Unsupported in Access fallback when non-empty." }, Schema = new { type = "string" }, user = new { type = "string" }, password = new { type = "string" }, dsn = new { type = "string" } }, required = new string[] { "query" } } },
+                new { name = "podbc_execute_query_md", description = "PyODBC-compat: execute SQL and return markdown output.", inputSchema = new { type = "object", properties = new { query = new { type = "string" }, sql = new { type = "string" }, max_rows = new { type = "integer" }, @params = new { type = "array", description = "Unsupported in Access fallback when non-empty." }, Schema = new { type = "string" }, user = new { type = "string" }, password = new { type = "string" }, dsn = new { type = "string" } }, required = new string[] { "query" } } },
+                new { name = "podbc_query_database", description = "PyODBC-compat alias of podbc_execute_query.", inputSchema = new { type = "object", properties = new { query = new { type = "string" }, sql = new { type = "string" }, max_rows = new { type = "integer" }, @params = new { type = "array", description = "Unsupported in Access fallback when non-empty." }, Schema = new { type = "string" }, user = new { type = "string" }, password = new { type = "string" }, dsn = new { type = "string" } }, required = new string[] { "query" } } },
                 new { name = "begin_transaction", description = "Begin an explicit database transaction", inputSchema = new { type = "object", properties = new { isolation_level = new { type = "string", description = "Optional isolation level: read_committed, read_uncommitted, repeatable_read, serializable, chaos, unspecified" } } } },
                 new { name = "start_transaction", description = "Alias for begin_transaction", inputSchema = new { type = "object", properties = new { isolation_level = new { type = "string", description = "Optional isolation level: read_committed, read_uncommitted, repeatable_read, serializable, chaos, unspecified" } } } },
                 new { name = "commit_transaction", description = "Commit the active transaction", inputSchema = new { type = "object", properties = new { } } },
@@ -230,6 +238,13 @@ class Program
             "delete_relationship" => HandleDeleteRelationship(accessService, toolArguments),
             "execute_sql" => HandleExecuteSql(accessService, toolArguments),
             "execute_query_md" => HandleExecuteQueryMd(accessService, toolArguments),
+            "podbc_get_schemas" => HandlePodbcGetSchemas(accessService, toolArguments),
+            "podbc_get_tables" => HandlePodbcGetTables(accessService, toolArguments),
+            "podbc_describe_table" => HandlePodbcDescribeTable(accessService, toolArguments),
+            "podbc_filter_table_names" => HandlePodbcFilterTableNames(accessService, toolArguments),
+            "podbc_execute_query" => HandlePodbcExecuteQuery(accessService, toolArguments),
+            "podbc_execute_query_md" => HandlePodbcExecuteQueryMd(accessService, toolArguments),
+            "podbc_query_database" => HandlePodbcQueryDatabase(accessService, toolArguments),
             "begin_transaction" => HandleBeginTransaction(accessService, toolArguments),
             "start_transaction" => HandleBeginTransaction(accessService, toolArguments),
             "commit_transaction" => HandleCommitTransaction(accessService, toolArguments),
@@ -965,6 +980,274 @@ class Program
         {
             return BuildOperationErrorResponse("describe_table", ex);
         }
+    }
+
+    static object HandlePodbcGetSchemas(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            _ = TryGetOptionalString(arguments, "Schema", out var requestedSchema);
+
+            var inferredSchemas = accessService.GetTables()
+                .Select(GetTableNameValue)
+                .Select(ParsePodbcTableIdentifier)
+                .Select(parts => parts.SchemaName)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (!string.IsNullOrWhiteSpace(requestedSchema) &&
+                !inferredSchemas.Contains(requestedSchema, StringComparer.OrdinalIgnoreCase))
+            {
+                inferredSchemas.Insert(0, requestedSchema.Trim());
+            }
+
+            if (inferredSchemas.Count == 0)
+                inferredSchemas.Add(PodbcDefaultSchema);
+
+            var schemaRows = inferredSchemas
+                .Select(name => new
+                {
+                    TABLE_CAT = name,
+                    TABLE_SCHEM = name,
+                    schema_name = name
+                })
+                .ToArray();
+
+            var metadata = BuildPyodbcCompatMetadata(arguments);
+
+            return new
+            {
+                success = true,
+                schemas = inferredSchemas.ToArray(),
+                results = schemaRows,
+                metadata
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("podbc_get_schemas", ex);
+        }
+    }
+
+    static object HandlePodbcGetTables(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            _ = TryGetOptionalString(arguments, "Schema", out var requestedSchema);
+            var tableDetails = accessService.GetTables().ToArray();
+            var tableRows = BuildPodbcTableRows(tableDetails.Cast<object>(), requestedSchema);
+            var metadata = BuildPyodbcCompatMetadata(arguments);
+
+            return new
+            {
+                success = true,
+                tables = tableRows,
+                table_names = tableRows.Select(row => row.TABLE_NAME).ToArray(),
+                table_details = tableDetails,
+                results = tableRows,
+                metadata
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("podbc_get_tables", ex);
+        }
+    }
+
+    static object HandlePodbcDescribeTable(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredStringFromAliases(arguments, new[] { "table", "table_name" }, "table", out var tableName, out var tableError))
+                return tableError;
+
+            var description = accessService.DescribeTable(tableName);
+            _ = TryGetOptionalString(arguments, "Schema", out var requestedSchema);
+            var parsedIdentifier = ParsePodbcTableIdentifier(description.TableName);
+            var effectiveSchema = !string.IsNullOrWhiteSpace(requestedSchema)
+                ? requestedSchema.Trim()
+                : string.IsNullOrWhiteSpace(parsedIdentifier.SchemaName)
+                    ? PodbcDefaultSchema
+                    : parsedIdentifier.SchemaName;
+            var effectiveTableName = string.IsNullOrWhiteSpace(parsedIdentifier.TableName)
+                ? description.TableName
+                : parsedIdentifier.TableName;
+            var primaryKeyNames = new HashSet<string>(description.PrimaryKeyColumns, StringComparer.OrdinalIgnoreCase);
+            var columns = description.Columns.Select(column => new
+            {
+                name = column.Name,
+                type = column.DataType,
+                column_size = column.MaxLength,
+                num_prec_radix = column.NumericPrecision,
+                nullable = column.IsNullable,
+                @default = column.DefaultValue,
+                primary_key = primaryKeyNames.Contains(column.Name),
+                ordinal_position = column.OrdinalPosition,
+                data_type_code = column.DataTypeCode,
+                numeric_scale = column.NumericScale
+            }).ToArray();
+            var table = new
+            {
+                TABLE_CAT = effectiveSchema,
+                TABLE_SCHEM = effectiveSchema,
+                TABLE_NAME = effectiveTableName,
+                columns,
+                primary_keys = description.PrimaryKeyColumns.ToArray()
+            };
+            var metadata = BuildPyodbcCompatMetadata(arguments);
+
+            return new
+            {
+                success = true,
+                table,
+                table_definition = description,
+                table_name = effectiveTableName,
+                results = table,
+                metadata
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("podbc_describe_table", ex);
+        }
+    }
+
+    static object HandlePodbcFilterTableNames(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "q", out var queryText, out var queryTextError))
+                return queryTextError;
+
+            _ = TryGetOptionalString(arguments, "Schema", out var requestedSchema);
+
+            var filteredDetails = accessService.GetTables()
+                .Where(table =>
+                {
+                    var name = GetTableNameValue(table);
+                    return name.IndexOf(queryText, StringComparison.OrdinalIgnoreCase) >= 0;
+                })
+                .ToArray();
+            var filteredRows = BuildPodbcTableRows(filteredDetails.Cast<object>(), requestedSchema);
+
+            var metadata = BuildPyodbcCompatMetadata(arguments);
+
+            return new
+            {
+                success = true,
+                q = queryText,
+                tables = filteredRows,
+                table_names = filteredRows.Select(row => row.TABLE_NAME).ToArray(),
+                table_details = filteredDetails,
+                results = filteredRows,
+                metadata
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("podbc_filter_table_names", ex);
+        }
+    }
+
+    static object HandlePodbcExecuteQuery(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            return HandlePodbcExecuteQueryCore(accessService, arguments, "podbc_execute_query", 200);
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("podbc_execute_query", ex);
+        }
+    }
+
+    static object HandlePodbcExecuteQueryMd(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredStringFromAliases(arguments, new[] { "query", "sql" }, "query", out var query, out var queryError))
+                return queryError;
+
+            if (!TryValidatePodbcParams(arguments, "podbc_execute_query_md", out var paramsError))
+                return paramsError;
+
+            var maxRows = GetOptionalIntFromAliases(arguments, new[] { "max_rows" }, 100);
+            if (maxRows <= 0)
+                return new { success = false, error = "max_rows must be greater than 0" };
+
+            var markdown = accessService.ExecuteQueryMarkdown(query, maxRows);
+            var metadata = BuildPyodbcCompatMetadata(arguments);
+
+            return new
+            {
+                success = true,
+                query,
+                markdown,
+                max_rows = maxRows,
+                results = markdown,
+                metadata
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("podbc_execute_query_md", ex);
+        }
+    }
+
+    static object HandlePodbcQueryDatabase(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            return HandlePodbcExecuteQueryCore(accessService, arguments, "podbc_query_database", 200);
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("podbc_query_database", ex);
+        }
+    }
+
+    static object HandlePodbcExecuteQueryCore(AccessInteropService accessService, JsonElement arguments, string operationName, int defaultMaxRows)
+    {
+        if (!TryGetRequiredStringFromAliases(arguments, new[] { "query", "sql" }, "query", out var query, out var queryError))
+            return queryError;
+
+        if (!TryValidatePodbcParams(arguments, operationName, out var paramsError))
+            return paramsError;
+
+        var maxRows = GetOptionalIntFromAliases(arguments, new[] { "max_rows" }, defaultMaxRows);
+        if (maxRows <= 0)
+            return new { success = false, error = "max_rows must be greater than 0" };
+
+        var result = accessService.ExecuteSql(query, maxRows);
+        var metadata = BuildPyodbcCompatMetadata(arguments);
+
+        if (result.IsQuery)
+        {
+            return new
+            {
+                success = true,
+                query,
+                is_query = true,
+                columns = result.Columns,
+                rows = result.Rows,
+                row_count = result.RowCount,
+                truncated = result.Truncated,
+                max_rows = maxRows,
+                results = result.Rows,
+                metadata
+            };
+        }
+
+        return new
+        {
+            success = true,
+            query,
+            is_query = false,
+            rows_affected = result.RowsAffected,
+            results = Array.Empty<object>(),
+            metadata
+        };
     }
 
     static object HandleCreateTable(AccessInteropService accessService, JsonElement arguments)
@@ -1855,6 +2138,114 @@ class Program
         return true;
     }
 
+    static bool TryValidatePodbcParams(JsonElement arguments, string toolName, out object error)
+    {
+        error = new { success = true };
+
+        if (!arguments.TryGetProperty("params", out var paramsElement))
+            return true;
+
+        var hasUnsupportedParams = paramsElement.ValueKind switch
+        {
+            JsonValueKind.Null => false,
+            JsonValueKind.Undefined => false,
+            JsonValueKind.String => !string.IsNullOrWhiteSpace(paramsElement.GetString()),
+            JsonValueKind.Array => paramsElement.EnumerateArray().Any(),
+            JsonValueKind.Object => paramsElement.EnumerateObject().Any(),
+            _ => true
+        };
+
+        if (!hasUnsupportedParams)
+            return true;
+
+        error = new
+        {
+            success = false,
+            error = $"{toolName} does not support non-empty params in Access fallback mode",
+            metadata = BuildPyodbcCompatMetadata(arguments),
+            unsupported_params = true
+        };
+        return false;
+    }
+
+    static string GetTableNameValue(object tableEntry)
+    {
+        if (tableEntry is null)
+            return string.Empty;
+
+        if (tableEntry is string tableName)
+            return tableName;
+
+        var runtimeType = tableEntry.GetType();
+        var nameProperty = runtimeType.GetProperty("Name") ?? runtimeType.GetProperty("name");
+        if (nameProperty?.GetValue(tableEntry) is string namedTable && !string.IsNullOrWhiteSpace(namedTable))
+            return namedTable;
+
+        return tableEntry.ToString() ?? string.Empty;
+    }
+
+    static (string? SchemaName, string TableName) ParsePodbcTableIdentifier(string tableIdentifier)
+    {
+        if (string.IsNullOrWhiteSpace(tableIdentifier))
+            return (null, string.Empty);
+
+        var trimmed = tableIdentifier.Trim();
+        var separatorIndex = trimmed.IndexOf('.');
+        if (separatorIndex <= 0 || separatorIndex == trimmed.Length - 1)
+            return (null, trimmed);
+
+        var schemaName = trimmed[..separatorIndex].Trim();
+        var tableName = trimmed[(separatorIndex + 1)..].Trim();
+        if (string.IsNullOrWhiteSpace(schemaName) || string.IsNullOrWhiteSpace(tableName))
+            return (null, trimmed);
+
+        return (schemaName, tableName);
+    }
+
+    static PodbcTableRow[] BuildPodbcTableRows(IEnumerable<object> tableEntries, string? requestedSchema)
+    {
+        var schemaOverride = string.IsNullOrWhiteSpace(requestedSchema) ? null : requestedSchema.Trim();
+
+        return tableEntries
+            .Select(GetTableNameValue)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name =>
+            {
+                var parsed = ParsePodbcTableIdentifier(name);
+                var tableSchema = !string.IsNullOrWhiteSpace(schemaOverride)
+                    ? schemaOverride
+                    : string.IsNullOrWhiteSpace(parsed.SchemaName)
+                        ? PodbcDefaultSchema
+                        : parsed.SchemaName;
+                var tableName = string.IsNullOrWhiteSpace(parsed.TableName) ? name : parsed.TableName;
+
+                return new PodbcTableRow
+                {
+                    TABLE_CAT = tableSchema ?? PodbcDefaultSchema,
+                    TABLE_SCHEM = tableSchema ?? PodbcDefaultSchema,
+                    TABLE_NAME = tableName
+                };
+            })
+            .ToArray();
+    }
+
+    static object BuildPyodbcCompatMetadata(JsonElement arguments)
+    {
+        _ = TryGetOptionalString(arguments, "Schema", out var schema);
+        _ = TryGetOptionalString(arguments, "user", out var user);
+        _ = TryGetOptionalString(arguments, "password", out var password);
+        _ = TryGetOptionalString(arguments, "dsn", out var dsn);
+
+        return new
+        {
+            schema = string.IsNullOrWhiteSpace(schema) ? null : schema,
+            user = string.IsNullOrWhiteSpace(user) ? null : user,
+            password_provided = !string.IsNullOrWhiteSpace(password),
+            dsn = string.IsNullOrWhiteSpace(dsn) ? null : dsn,
+            ignored_arguments = new[] { "Schema", "user", "password", "dsn" }
+        };
+    }
+
     static bool TryGetRequiredStringFromAliases(JsonElement arguments, string[] aliases, string propertyNameForError, out string value, out object error)
     {
         value = string.Empty;
@@ -2065,6 +2456,13 @@ class Program
         public bool AceOleDbIssueDetected { get; init; }
         public bool TrustCenterActiveContentIndicator { get; init; }
         public List<string> RemediationHints { get; init; } = new();
+    }
+
+    sealed class PodbcTableRow
+    {
+        public string TABLE_CAT { get; init; } = string.Empty;
+        public string TABLE_SCHEM { get; init; } = string.Empty;
+        public string TABLE_NAME { get; init; } = string.Empty;
     }
 
     static object WrapCallToolResult(object payload)

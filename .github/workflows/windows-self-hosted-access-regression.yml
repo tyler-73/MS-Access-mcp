@@ -90,3 +90,27 @@ jobs:
           if ($negativeRegressionOutput -notmatch "connect_access_secure_arg_detected=") {
             throw "Negative-path output did not include secure connect argument coverage marker."
           }
+
+      - name: Run podbc compatibility regression
+        shell: pwsh
+        run: |
+          $publishDir = Join-Path $env:RUNNER_TEMP "mcp-server-official-x64"
+          $serverExe = Join-Path $publishDir "MS.Access.MCP.Official.exe"
+          $podbcCompatLog = Join-Path $env:RUNNER_TEMP "podbc_compat_regression.log"
+          $podbcCompatScript = ".\tests\podbc_compat_regression.ps1"
+          if (-not (Test-Path -LiteralPath $serverExe)) {
+            throw "Server executable not found: $serverExe"
+          }
+          if (-not (Test-Path -LiteralPath $podbcCompatScript)) {
+            throw "podbc compatibility regression script not found: $podbcCompatScript"
+          }
+
+          & $podbcCompatScript -ServerExe $serverExe -DatabasePath $env:ACCESS_DATABASE_PATH 2>&1 | Tee-Object -FilePath $podbcCompatLog
+          if ($LASTEXITCODE -ne 0) {
+            throw "podbc compatibility regression failed with exit code $LASTEXITCODE."
+          }
+
+          $podbcCompatOutput = Get-Content -LiteralPath $podbcCompatLog -Raw
+          if ($podbcCompatOutput -notmatch "PODBC_COMPAT_PASS=1") {
+            throw "podbc compatibility output did not contain PODBC_COMPAT_PASS=1."
+          }

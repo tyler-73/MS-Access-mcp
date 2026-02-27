@@ -126,6 +126,10 @@ powershell -ExecutionPolicy Bypass -File .\tests\full_toolset_regression.ps1 `
 powershell -ExecutionPolicy Bypass -File .\tests\full_toolset_negative_paths.ps1 `
   -ServerExe ".\mcp-server-official-x64\MS.Access.MCP.Official.exe" `
   -DatabasePath "C:\path\to\database.accdb"
+
+powershell -ExecutionPolicy Bypass -File .\tests\podbc_compat_regression.ps1 `
+  -ServerExe ".\mcp-server-official-x64\MS.Access.MCP.Official.exe" `
+  -DatabasePath "C:\path\to\database.accdb"
 ```
 
 Note:
@@ -136,6 +140,7 @@ Pass criteria:
 - Script exits with code `0`
 - Output contains `TOTAL_FAIL=0`
 - Output contains `NEGATIVE_PATHS_PASS=1`
+- Output contains `PODBC_COMPAT_PASS=1`
 - Full regression output includes `database_file_tools_coverage: INFO` (or explicit `SKIP` only when `-AllowCoverageSkips` is intentionally used)
 - Negative-path output includes `connect_access_secure_arg_detected=`
 

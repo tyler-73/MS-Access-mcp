@@ -16,6 +16,9 @@ mcp-server-official-x64-regression-failed-*/
 *.user
 *.suo
 
+# Build artifacts (dotnet publish intermediate output)
+artifacts/
+
 # Access transient lock files
 *.laccdb
 *.ldb
