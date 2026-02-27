@@ -168,6 +168,16 @@ class Program
                 new { name = "close_object", description = "Close an Access object using DoCmd.Close.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string", description = "table, query, form, report, macro, module, or Access enum integer value as string" }, object_name = new { type = "string" }, save = new { type = "string", description = "prompt, yes, no, or Access enum integer value as string" } } } },
                 new { name = "transfer_database", description = "Transfer database objects using DoCmd.TransferDatabase.", inputSchema = new { type = "object", properties = new { transfer_type = new { type = "string", description = "import, export, link, or Access enum integer value as string" }, database_type = new { type = "string", description = "Database type such as Microsoft Access" }, database_name = new { type = "string", description = "External database path or DSN" }, object_type = new { type = "string", description = "table, query, form, report, macro, module, or Access enum integer value as string" }, source = new { type = "string", description = "Source object name" }, destination = new { type = "string", description = "Destination object name when importing/exporting" }, structure_only = new { type = "boolean" }, store_login = new { type = "boolean" } }, required = new string[] { "transfer_type", "database_type", "database_name", "object_type", "source" } } },
                 new { name = "run_command", description = "Run an Access command using DoCmd.RunCommand.", inputSchema = new { type = "object", properties = new { command = new { type = "string", description = "acCommand integer value as string (or supported acCmd constant name)" } }, required = new string[] { "command" } } },
+                new { name = "goto_page", description = "Navigate to a form page using DoCmd.GoToPage.", inputSchema = new { type = "object", properties = new { page_number = new { type = "string" }, right = new { type = "string" }, down = new { type = "string" } }, required = new string[] { "page_number" } } },
+                new { name = "goto_control", description = "Move focus to a control using DoCmd.GoToControl.", inputSchema = new { type = "object", properties = new { control_name = new { type = "string" } }, required = new string[] { "control_name" } } },
+                new { name = "move_size", description = "Move or resize the active window using DoCmd.MoveSize.", inputSchema = new { type = "object", properties = new { right = new { type = "integer" }, down = new { type = "integer" }, width = new { type = "integer" }, height = new { type = "integer" } } } },
+                new { name = "requery", description = "Requery data using DoCmd.Requery.", inputSchema = new { type = "object", properties = new { control_name = new { type = "string" } } } },
+                new { name = "repaint_object", description = "Repaint an object using DoCmd.RepaintObject.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string", description = "table, query, form, report, macro, module, or Access enum integer value as string" }, object_name = new { type = "string" } } } },
+                new { name = "send_object", description = "Send an Access object as email attachment using DoCmd.SendObject.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string", description = "table, query, form, report, macro, module, or Access enum integer value as string" }, object_name = new { type = "string" }, output_format = new { type = "string" }, to = new { type = "string" }, cc = new { type = "string" }, bcc = new { type = "string" }, subject = new { type = "string" }, message_text = new { type = "string" }, edit_message = new { type = "boolean" }, template_file = new { type = "string" } } } },
+                new { name = "browse_to", description = "Browse to an Access object path using DoCmd.BrowseTo.", inputSchema = new { type = "object", properties = new { object_name = new { type = "string" }, object_type = new { type = "string", description = "table, query, form, report, macro, module, or Access enum integer value as string" }, path_to_subform_control = new { type = "string" }, where_condition = new { type = "string" }, page = new { type = "string" } }, required = new string[] { "object_name" } } },
+                new { name = "lock_navigation_pane", description = "Lock or unlock the Access navigation pane using DoCmd.LockNavigationPane.", inputSchema = new { type = "object", properties = new { lock_navigation_pane = new { type = "boolean" } } } },
+                new { name = "navigate_to", description = "Navigate to an Access navigation category using DoCmd.NavigateTo.", inputSchema = new { type = "object", properties = new { navigation_category = new { type = "string" } }, required = new string[] { "navigation_category" } } },
+                new { name = "beep", description = "Play the system beep using DoCmd.Beep.", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_database_summary_properties", description = "Get Access database summary properties (Title, Author, Subject, Keywords, Comments).", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "set_database_summary_properties", description = "Set Access database summary properties.", inputSchema = new { type = "object", properties = new { title = new { type = "string" }, author = new { type = "string" }, subject = new { type = "string" }, keywords = new { type = "string" }, comments = new { type = "string" } } } },
                 new { name = "get_database_properties", description = "List database properties, including custom properties.", inputSchema = new { type = "object", properties = new { include_system = new { type = "boolean" } } } },
@@ -336,6 +346,16 @@ class Program
             "close_object" => HandleCloseObject(accessService, toolArguments),
             "transfer_database" => HandleTransferDatabase(accessService, toolArguments),
             "run_command" => HandleRunCommand(accessService, toolArguments),
+            "goto_page" => HandleGoToPage(accessService, toolArguments),
+            "goto_control" => HandleGoToControl(accessService, toolArguments),
+            "move_size" => HandleMoveSize(accessService, toolArguments),
+            "requery" => HandleRequery(accessService, toolArguments),
+            "repaint_object" => HandleRepaintObject(accessService, toolArguments),
+            "send_object" => HandleSendObject(accessService, toolArguments),
+            "browse_to" => HandleBrowseTo(accessService, toolArguments),
+            "lock_navigation_pane" => HandleLockNavigationPane(accessService, toolArguments),
+            "navigate_to" => HandleNavigateTo(accessService, toolArguments),
+            "beep" => HandleBeep(accessService, toolArguments),
             "get_database_summary_properties" => HandleGetDatabaseSummaryProperties(accessService, toolArguments),
             "set_database_summary_properties" => HandleSetDatabaseSummaryProperties(accessService, toolArguments),
             "get_database_properties" => HandleGetDatabaseProperties(accessService, toolArguments),
@@ -1320,6 +1340,239 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("run_command", ex);
+        }
+    }
+
+    static object HandleGoToPage(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "page_number", out var pageNumber, out var pageNumberError))
+                return pageNumberError;
+
+            _ = TryGetOptionalString(arguments, "right", out var right);
+            _ = TryGetOptionalString(arguments, "down", out var down);
+
+            accessService.GoToPage(
+                pageNumber,
+                string.IsNullOrWhiteSpace(right) ? null : right,
+                string.IsNullOrWhiteSpace(down) ? null : down);
+
+            return new
+            {
+                success = true,
+                page_number = pageNumber,
+                right = string.IsNullOrWhiteSpace(right) ? null : right,
+                down = string.IsNullOrWhiteSpace(down) ? null : down
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("goto_page", ex);
+        }
+    }
+
+    static object HandleGoToControl(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "control_name", out var controlName, out var controlNameError))
+                return controlNameError;
+
+            accessService.GoToControl(controlName);
+            return new { success = true, control_name = controlName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("goto_control", ex);
+        }
+    }
+
+    static object HandleMoveSize(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetOptionalInt(arguments, "right", out var right, out var rightError))
+                return rightError;
+            if (!TryGetOptionalInt(arguments, "down", out var down, out var downError))
+                return downError;
+            if (!TryGetOptionalInt(arguments, "width", out var width, out var widthError))
+                return widthError;
+            if (!TryGetOptionalInt(arguments, "height", out var height, out var heightError))
+                return heightError;
+
+            accessService.MoveSize(right, down, width, height);
+            return new { success = true, right, down, width, height };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("move_size", ex);
+        }
+    }
+
+    static object HandleRequery(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            _ = TryGetOptionalString(arguments, "control_name", out var controlName);
+            accessService.Requery(string.IsNullOrWhiteSpace(controlName) ? null : controlName);
+            return new { success = true, control_name = string.IsNullOrWhiteSpace(controlName) ? null : controlName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("requery", ex);
+        }
+    }
+
+    static object HandleRepaintObject(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            _ = TryGetOptionalString(arguments, "object_type", out var objectType);
+            _ = TryGetOptionalString(arguments, "object_name", out var objectName);
+
+            accessService.RepaintObject(
+                string.IsNullOrWhiteSpace(objectType) ? null : objectType,
+                string.IsNullOrWhiteSpace(objectName) ? null : objectName);
+
+            return new
+            {
+                success = true,
+                object_type = string.IsNullOrWhiteSpace(objectType) ? null : objectType,
+                object_name = string.IsNullOrWhiteSpace(objectName) ? null : objectName
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("repaint_object", ex);
+        }
+    }
+
+    static object HandleSendObject(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            _ = TryGetOptionalString(arguments, "object_type", out var objectType);
+            _ = TryGetOptionalString(arguments, "object_name", out var objectName);
+            _ = TryGetOptionalString(arguments, "output_format", out var outputFormat);
+            _ = TryGetOptionalString(arguments, "to", out var to);
+            _ = TryGetOptionalString(arguments, "cc", out var cc);
+            _ = TryGetOptionalString(arguments, "bcc", out var bcc);
+            _ = TryGetOptionalString(arguments, "subject", out var subject);
+            _ = TryGetOptionalString(arguments, "message_text", out var messageText);
+            _ = TryGetOptionalString(arguments, "template_file", out var templateFile);
+
+            if (!TryGetOptionalBoolNullable(arguments, "edit_message", out var editMessage, out var editMessageError))
+                return editMessageError;
+
+            accessService.SendObject(
+                string.IsNullOrWhiteSpace(objectType) ? null : objectType,
+                string.IsNullOrWhiteSpace(objectName) ? null : objectName,
+                string.IsNullOrWhiteSpace(outputFormat) ? null : outputFormat,
+                string.IsNullOrWhiteSpace(to) ? null : to,
+                string.IsNullOrWhiteSpace(cc) ? null : cc,
+                string.IsNullOrWhiteSpace(bcc) ? null : bcc,
+                string.IsNullOrWhiteSpace(subject) ? null : subject,
+                string.IsNullOrWhiteSpace(messageText) ? null : messageText,
+                editMessage,
+                string.IsNullOrWhiteSpace(templateFile) ? null : templateFile);
+
+            return new
+            {
+                success = true,
+                object_type = string.IsNullOrWhiteSpace(objectType) ? null : objectType,
+                object_name = string.IsNullOrWhiteSpace(objectName) ? null : objectName,
+                output_format = string.IsNullOrWhiteSpace(outputFormat) ? null : outputFormat,
+                to = string.IsNullOrWhiteSpace(to) ? null : to,
+                cc = string.IsNullOrWhiteSpace(cc) ? null : cc,
+                bcc = string.IsNullOrWhiteSpace(bcc) ? null : bcc,
+                subject = string.IsNullOrWhiteSpace(subject) ? null : subject,
+                message_text = string.IsNullOrWhiteSpace(messageText) ? null : messageText,
+                edit_message = editMessage,
+                template_file = string.IsNullOrWhiteSpace(templateFile) ? null : templateFile
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("send_object", ex);
+        }
+    }
+
+    static object HandleBrowseTo(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "object_name", out var objectName, out var objectNameError))
+                return objectNameError;
+
+            _ = TryGetOptionalString(arguments, "object_type", out var objectType);
+            _ = TryGetOptionalString(arguments, "path_to_subform_control", out var pathToSubformControl);
+            _ = TryGetOptionalString(arguments, "where_condition", out var whereCondition);
+            _ = TryGetOptionalString(arguments, "page", out var page);
+
+            accessService.BrowseTo(
+                objectName,
+                string.IsNullOrWhiteSpace(objectType) ? null : objectType,
+                string.IsNullOrWhiteSpace(pathToSubformControl) ? null : pathToSubformControl,
+                string.IsNullOrWhiteSpace(whereCondition) ? null : whereCondition,
+                string.IsNullOrWhiteSpace(page) ? null : page);
+
+            return new
+            {
+                success = true,
+                object_name = objectName,
+                object_type = string.IsNullOrWhiteSpace(objectType) ? null : objectType,
+                path_to_subform_control = string.IsNullOrWhiteSpace(pathToSubformControl) ? null : pathToSubformControl,
+                where_condition = string.IsNullOrWhiteSpace(whereCondition) ? null : whereCondition,
+                page = string.IsNullOrWhiteSpace(page) ? null : page
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("browse_to", ex);
+        }
+    }
+
+    static object HandleLockNavigationPane(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var lockNavigationPane = GetOptionalBool(arguments, "lock_navigation_pane", true);
+            accessService.LockNavigationPane(lockNavigationPane);
+            return new { success = true, lock_navigation_pane = lockNavigationPane };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("lock_navigation_pane", ex);
+        }
+    }
+
+    static object HandleNavigateTo(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "navigation_category", out var navigationCategory, out var navigationCategoryError))
+                return navigationCategoryError;
+
+            accessService.NavigateTo(navigationCategory);
+            return new { success = true, navigation_category = navigationCategory };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("navigate_to", ex);
+        }
+    }
+
+    static object HandleBeep(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            accessService.Beep();
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("beep", ex);
         }
     }
 

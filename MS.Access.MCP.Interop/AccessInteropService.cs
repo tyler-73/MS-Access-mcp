@@ -2357,6 +2357,209 @@ namespace MS.Access.MCP.Interop
             releaseOleDb: false);
         }
 
+        public void GoToPage(string pageNumber, string? right = null, string? down = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(pageNumber)) throw new ArgumentException("Page number is required.", nameof(pageNumber));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+                _ = InvokeDynamicMethod(
+                    doCmd,
+                    "GoToPage",
+                    NormalizeDoCmdVariant(pageNumber),
+                    NormalizeDoCmdVariant(right),
+                    NormalizeDoCmdVariant(down));
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void GoToControl(string controlName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(controlName)) throw new ArgumentException("Control name is required.", nameof(controlName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+                _ = InvokeDynamicMethod(doCmd, "GoToControl", controlName.Trim());
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void MoveSize(int? right = null, int? down = null, int? width = null, int? height = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+                _ = InvokeDynamicMethod(
+                    doCmd,
+                    "MoveSize",
+                    right.HasValue ? right.Value : Type.Missing,
+                    down.HasValue ? down.Value : Type.Missing,
+                    width.HasValue ? width.Value : Type.Missing,
+                    height.HasValue ? height.Value : Type.Missing);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void Requery(string? controlName = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+                _ = InvokeDynamicMethod(doCmd, "Requery", NormalizeDoCmdVariant(controlName));
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void RepaintObject(string? objectType = null, string? objectName = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            var objectTypeValue = string.IsNullOrWhiteSpace(objectType)
+                ? Type.Missing
+                : ParseDoCmdObjectType(objectType, nameof(objectType));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+                _ = InvokeDynamicMethod(
+                    doCmd,
+                    "RepaintObject",
+                    objectTypeValue,
+                    string.IsNullOrWhiteSpace(objectName) ? Type.Missing : objectName.Trim());
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void SendObject(
+            string? objectType = null,
+            string? objectName = null,
+            string? outputFormat = null,
+            string? to = null,
+            string? cc = null,
+            string? bcc = null,
+            string? subject = null,
+            string? messageText = null,
+            bool? editMessage = null,
+            string? templateFile = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            var objectTypeValue = string.IsNullOrWhiteSpace(objectType)
+                ? Type.Missing
+                : ParseDoCmdObjectType(objectType, nameof(objectType));
+            var outputFormatValue = string.IsNullOrWhiteSpace(outputFormat)
+                ? Type.Missing
+                : ParseOutputFormat(outputFormat);
+
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+                _ = InvokeDynamicMethod(
+                    doCmd,
+                    "SendObject",
+                    objectTypeValue,
+                    string.IsNullOrWhiteSpace(objectName) ? Type.Missing : objectName.Trim(),
+                    outputFormatValue,
+                    string.IsNullOrWhiteSpace(to) ? Type.Missing : to.Trim(),
+                    string.IsNullOrWhiteSpace(cc) ? Type.Missing : cc.Trim(),
+                    string.IsNullOrWhiteSpace(bcc) ? Type.Missing : bcc.Trim(),
+                    string.IsNullOrWhiteSpace(subject) ? Type.Missing : subject.Trim(),
+                    string.IsNullOrWhiteSpace(messageText) ? Type.Missing : messageText.Trim(),
+                    editMessage.HasValue ? editMessage.Value : Type.Missing,
+                    string.IsNullOrWhiteSpace(templateFile) ? Type.Missing : templateFile.Trim());
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void BrowseTo(string objectName, string? objectType = null, string? pathToSubformControl = null, string? whereCondition = null, string? page = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(objectName)) throw new ArgumentException("Object name is required.", nameof(objectName));
+
+            var objectTypeValue = string.IsNullOrWhiteSpace(objectType)
+                ? Type.Missing
+                : ParseDoCmdObjectType(objectType, nameof(objectType));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+                _ = InvokeDynamicMethod(
+                    doCmd,
+                    "BrowseTo",
+                    objectName.Trim(),
+                    objectTypeValue,
+                    string.IsNullOrWhiteSpace(pathToSubformControl) ? Type.Missing : pathToSubformControl.Trim(),
+                    string.IsNullOrWhiteSpace(whereCondition) ? Type.Missing : whereCondition.Trim(),
+                    NormalizeDoCmdVariant(page));
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void LockNavigationPane(bool lockNavigationPane = true)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+                _ = InvokeDynamicMethod(doCmd, "LockNavigationPane", lockNavigationPane);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void NavigateTo(string navigationCategory)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(navigationCategory)) throw new ArgumentException("Navigation category is required.", nameof(navigationCategory));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+                _ = InvokeDynamicMethod(doCmd, "NavigateTo", navigationCategory.Trim());
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void Beep()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+                _ = InvokeDynamicMethod(doCmd, "Beep");
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
         public StartupPropertiesInfo GetStartupProperties()
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
