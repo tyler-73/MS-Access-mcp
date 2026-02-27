@@ -7977,6 +7977,220 @@ namespace MS.Access.MCP.Interop
 
         #endregion
 
+        #region 13. Control Methods & AccessObject Metadata
+
+        public void ControlSetFocus(string formName, string controlName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(app =>
+            {
+                var forms = TryGetDynamicProperty(app, "Forms");
+                var form = TryGetDynamicProperty(forms, "Item", formName);
+                var controls = TryGetDynamicProperty(form, "Controls");
+                var control = TryGetDynamicProperty(controls, "Item", controlName);
+                InvokeDynamicMethod(control, "SetFocus");
+            }, requireExclusive: false, releaseOleDb: false);
+        }
+
+        public void ControlRequery(string formName, string controlName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(app =>
+            {
+                var forms = TryGetDynamicProperty(app, "Forms");
+                var form = TryGetDynamicProperty(forms, "Item", formName);
+                var controls = TryGetDynamicProperty(form, "Controls");
+                var control = TryGetDynamicProperty(controls, "Item", controlName);
+                InvokeDynamicMethod(control, "Requery");
+            }, requireExclusive: false, releaseOleDb: false);
+        }
+
+        public void ControlUndo(string formName, string controlName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(app =>
+            {
+                var forms = TryGetDynamicProperty(app, "Forms");
+                var form = TryGetDynamicProperty(forms, "Item", formName);
+                var controls = TryGetDynamicProperty(form, "Controls");
+                var control = TryGetDynamicProperty(controls, "Item", controlName);
+                InvokeDynamicMethod(control, "Undo");
+            }, requireExclusive: false, releaseOleDb: false);
+        }
+
+        public void ComboboxDropdown(string formName, string controlName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(app =>
+            {
+                var forms = TryGetDynamicProperty(app, "Forms");
+                var form = TryGetDynamicProperty(forms, "Item", formName);
+                var controls = TryGetDynamicProperty(form, "Controls");
+                var control = TryGetDynamicProperty(controls, "Item", controlName);
+                InvokeDynamicMethod(control, "Dropdown");
+            }, requireExclusive: false, releaseOleDb: false);
+        }
+
+        public void ListboxAddItem(string formName, string controlName, string item, int? index)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(app =>
+            {
+                var forms = TryGetDynamicProperty(app, "Forms");
+                var form = TryGetDynamicProperty(forms, "Item", formName);
+                var controls = TryGetDynamicProperty(form, "Controls");
+                var control = TryGetDynamicProperty(controls, "Item", controlName);
+                if (index.HasValue)
+                    InvokeDynamicMethod(control, "AddItem", item, index.Value);
+                else
+                    InvokeDynamicMethod(control, "AddItem", item);
+            }, requireExclusive: false, releaseOleDb: false);
+        }
+
+        public void ListboxRemoveItem(string formName, string controlName, int index)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(app =>
+            {
+                var forms = TryGetDynamicProperty(app, "Forms");
+                var form = TryGetDynamicProperty(forms, "Item", formName);
+                var controls = TryGetDynamicProperty(form, "Controls");
+                var control = TryGetDynamicProperty(controls, "Item", controlName);
+                InvokeDynamicMethod(control, "RemoveItem", index);
+            }, requireExclusive: false, releaseOleDb: false);
+        }
+
+        public object ListboxGetItems(string formName, string controlName, int maxItems = 100)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            object? result = null;
+            ExecuteComOperation(app =>
+            {
+                var forms = TryGetDynamicProperty(app, "Forms");
+                var form = TryGetDynamicProperty(forms, "Item", formName);
+                var controls = TryGetDynamicProperty(form, "Controls");
+                var control = TryGetDynamicProperty(controls, "Item", controlName);
+
+                var listCount = Convert.ToInt32(TryGetDynamicProperty(control, "ListCount"));
+                var columnCount = Convert.ToInt32(TryGetDynamicProperty(control, "ColumnCount"));
+                var items = new List<List<string?>>();
+
+                var count = Math.Min(listCount, maxItems);
+                for (int row = 0; row < count; row++)
+                {
+                    var rowData = new List<string?>();
+                    for (int col = 0; col < columnCount; col++)
+                    {
+                        var val = InvokeDynamicMethod(control, "Column", col, row);
+                        rowData.Add(val?.ToString());
+                    }
+                    items.Add(rowData);
+                }
+
+                result = new { listCount, columnCount, items, truncated = listCount > maxItems };
+            }, requireExclusive: false, releaseOleDb: false);
+            return result!;
+        }
+
+        public ObjectDatesInfo GetObjectDates(string objectType, string objectName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            var result = new ObjectDatesInfo();
+            ExecuteComOperation(app =>
+            {
+                var collectionName = objectType.ToLowerInvariant() switch
+                {
+                    "table" => "AllTables",
+                    "query" => "AllQueries",
+                    "form" => "AllForms",
+                    "report" => "AllReports",
+                    "macro" => "AllMacros",
+                    "module" => "AllModules",
+                    _ => throw new ArgumentException($"Invalid object type: {objectType}")
+                };
+
+                var project = TryGetDynamicProperty(app, "CurrentProject");
+                var collection = TryGetDynamicProperty(project, collectionName);
+                var obj = TryGetDynamicProperty(collection, "Item", objectName);
+                result.DateCreated = TryGetDynamicProperty(obj, "DateCreated")?.ToString();
+                result.DateModified = TryGetDynamicProperty(obj, "DateModified")?.ToString();
+            }, requireExclusive: false, releaseOleDb: false);
+            return result;
+        }
+
+        public bool IsObjectLoaded(string objectType, string objectName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            bool result = false;
+            ExecuteComOperation(app =>
+            {
+                var collectionName = objectType.ToLowerInvariant() switch
+                {
+                    "table" => "AllTables",
+                    "query" => "AllQueries",
+                    "form" => "AllForms",
+                    "report" => "AllReports",
+                    "macro" => "AllMacros",
+                    "module" => "AllModules",
+                    _ => throw new ArgumentException($"Invalid object type: {objectType}")
+                };
+
+                var project = TryGetDynamicProperty(app, "CurrentProject");
+                var collection = TryGetDynamicProperty(project, collectionName);
+                var obj = TryGetDynamicProperty(collection, "Item", objectName);
+                result = Convert.ToBoolean(TryGetDynamicProperty(obj, "IsLoaded"));
+            }, requireExclusive: false, releaseOleDb: false);
+            return result;
+        }
+
+        public object IsVbaCompiled()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            object? result = null;
+            ExecuteComOperation(app =>
+            {
+                var isCompiled = Convert.ToBoolean(TryGetDynamicProperty(app, "IsCompiled"));
+
+                // Check for broken references
+                var brokenRefs = new List<string>();
+                try
+                {
+                    var vbe = TryGetDynamicProperty(app, "VBE");
+                    var activeVBProject = TryGetDynamicProperty(vbe, "ActiveVBProject");
+                    var references = TryGetDynamicProperty(activeVBProject, "References");
+                    foreach (var r in references)
+                    {
+                        try
+                        {
+                            var isBroken = Convert.ToBoolean(TryGetDynamicProperty(r, "IsBroken"));
+                            if (isBroken)
+                            {
+                                var name = TryGetDynamicProperty(r, "Name")?.ToString() ?? "Unknown";
+                                brokenRefs.Add(name);
+                            }
+                        }
+                        catch { }
+                    }
+                }
+                catch { }
+
+                result = new { isCompiled, brokenReferences = brokenRefs, brokenReferenceCount = brokenRefs.Count };
+            }, requireExclusive: false, releaseOleDb: false);
+            return result!;
+        }
+
+        #endregion
+
         #region Helper Methods
 
         private List<FieldInfo> GetTableFields(string tableName)
@@ -12715,6 +12929,12 @@ namespace MS.Access.MCP.Interop
         public bool BOF { get; set; }
         public bool EOF { get; set; }
         public int AbsolutePosition { get; set; }
+    }
+
+    public class ObjectDatesInfo
+    {
+        public string? DateCreated { get; set; }
+        public string? DateModified { get; set; }
     }
 
     #endregion

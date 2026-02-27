@@ -442,7 +442,18 @@ class Program
                 new { name = "set_form_printer", description = "Assign a specific printer to a form (Form.Printer).", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the form" }, printer_name = new { type = "string", description = "Name of the printer to assign" } }, required = new string[] { "form_name", "printer_name" } } },
                 new { name = "set_report_printer", description = "Assign a specific printer to a report (Report.Printer).", inputSchema = new { type = "object", properties = new { report_name = new { type = "string", description = "Name of the report" }, printer_name = new { type = "string", description = "Name of the printer to assign" } }, required = new string[] { "report_name", "printer_name" } } },
                 new { name = "list_printers", description = "Enumerate all installed printers with their properties (Application.Printers).", inputSchema = new { type = "object", properties = new { }, required = new string[] { } } },
-                new { name = "get_database_engine_info", description = "Get DAO database engine info: version, updatable flag, records affected, collating order.", inputSchema = new { type = "object", properties = new { }, required = new string[] { } } }
+                new { name = "get_database_engine_info", description = "Get DAO database engine info: version, updatable flag, records affected, collating order.", inputSchema = new { type = "object", properties = new { }, required = new string[] { } } },
+                // Priority 22: Control Methods + AccessObject Metadata
+                new { name = "control_set_focus", description = "Set focus to a specific control on an open form (Control.SetFocus).", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the open form" }, control_name = new { type = "string", description = "Name of the control" } }, required = new string[] { "form_name", "control_name" } } },
+                new { name = "control_requery", description = "Requery a specific control (e.g., combo box, list box) on an open form (Control.Requery).", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the open form" }, control_name = new { type = "string", description = "Name of the control to requery" } }, required = new string[] { "form_name", "control_name" } } },
+                new { name = "control_undo", description = "Undo changes to a specific control on an open form (Control.Undo).", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the open form" }, control_name = new { type = "string", description = "Name of the control" } }, required = new string[] { "form_name", "control_name" } } },
+                new { name = "combobox_dropdown", description = "Open a combo box dropdown programmatically (ComboBox.Dropdown).", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the open form" }, control_name = new { type = "string", description = "Name of the combo box control" } }, required = new string[] { "form_name", "control_name" } } },
+                new { name = "listbox_add_item", description = "Add an item to a value-list combo box or list box (Control.AddItem).", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the open form" }, control_name = new { type = "string", description = "Name of the combo/list box" }, item = new { type = "string", description = "Item text to add (use semicolons to separate column values)" }, index = new { type = "integer", description = "Optional 0-based position to insert the item" } }, required = new string[] { "form_name", "control_name", "item" } } },
+                new { name = "listbox_remove_item", description = "Remove an item from a value-list combo box or list box (Control.RemoveItem).", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the open form" }, control_name = new { type = "string", description = "Name of the combo/list box" }, index = new { type = "integer", description = "0-based index of the item to remove" } }, required = new string[] { "form_name", "control_name", "index" } } },
+                new { name = "listbox_get_items", description = "Get items, item count, and column count from a combo box or list box.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the open form" }, control_name = new { type = "string", description = "Name of the combo/list box" }, max_items = new { type = "integer", description = "Maximum number of items to return (default 100)" } }, required = new string[] { "form_name", "control_name" } } },
+                new { name = "get_object_dates", description = "Get DateCreated and DateModified for any database object (AccessObject).", inputSchema = new { type = "object", properties = new { object_type = new { type = "string", @enum = new[] { "Table", "Query", "Form", "Report", "Macro", "Module" }, description = "Type of the database object" }, object_name = new { type = "string", description = "Name of the database object" } }, required = new string[] { "object_type", "object_name" } } },
+                new { name = "is_object_loaded", description = "Check if a specific database object is currently open (AccessObject.IsLoaded).", inputSchema = new { type = "object", properties = new { object_type = new { type = "string", @enum = new[] { "Table", "Query", "Form", "Report", "Macro", "Module" }, description = "Type of the database object" }, object_name = new { type = "string", description = "Name of the database object" } }, required = new string[] { "object_type", "object_name" } } },
+                new { name = "is_vba_compiled", description = "Check if VBA code is compiled and check for broken references (Application.IsCompiled + References).", inputSchema = new { type = "object", properties = new { }, required = new string[] { } } }
             }
         };
     }
@@ -765,6 +776,17 @@ class Program
             "set_report_printer" => HandleSetReportPrinter(accessService, toolArguments),
             "list_printers" => HandleListPrinters(accessService, toolArguments),
             "get_database_engine_info" => HandleGetDatabaseEngineInfo(accessService, toolArguments),
+            // Priority 22: Control Methods + AccessObject Metadata
+            "control_set_focus" => HandleControlSetFocus(accessService, toolArguments),
+            "control_requery" => HandleControlRequery(accessService, toolArguments),
+            "control_undo" => HandleControlUndo(accessService, toolArguments),
+            "combobox_dropdown" => HandleComboboxDropdown(accessService, toolArguments),
+            "listbox_add_item" => HandleListboxAddItem(accessService, toolArguments),
+            "listbox_remove_item" => HandleListboxRemoveItem(accessService, toolArguments),
+            "listbox_get_items" => HandleListboxGetItems(accessService, toolArguments),
+            "get_object_dates" => HandleGetObjectDates(accessService, toolArguments),
+            "is_object_loaded" => HandleIsObjectLoaded(accessService, toolArguments),
+            "is_vba_compiled" => HandleIsVbaCompiled(accessService, toolArguments),
             _ => new { success = false, error = $"Unknown tool: {toolName}" }
         };
     }
@@ -6910,6 +6932,185 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("get_database_engine_info", ex);
+        }
+    }
+
+    // ===== Priority 22: Control Methods + AccessObject Metadata =====
+
+    static object HandleControlSetFocus(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var fnError))
+                return fnError;
+            if (!TryGetRequiredString(arguments, "control_name", out var controlName, out var cnError))
+                return cnError;
+            accessService.ControlSetFocus(formName, controlName);
+            return new { success = true, message = $"Focus set to '{controlName}' on form '{formName}'" };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("control_set_focus", ex);
+        }
+    }
+
+    static object HandleControlRequery(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var fnError))
+                return fnError;
+            if (!TryGetRequiredString(arguments, "control_name", out var controlName, out var cnError))
+                return cnError;
+            accessService.ControlRequery(formName, controlName);
+            return new { success = true, message = $"Requeried '{controlName}' on form '{formName}'" };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("control_requery", ex);
+        }
+    }
+
+    static object HandleControlUndo(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var fnError))
+                return fnError;
+            if (!TryGetRequiredString(arguments, "control_name", out var controlName, out var cnError))
+                return cnError;
+            accessService.ControlUndo(formName, controlName);
+            return new { success = true, message = $"Undid changes to '{controlName}' on form '{formName}'" };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("control_undo", ex);
+        }
+    }
+
+    static object HandleComboboxDropdown(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var fnError))
+                return fnError;
+            if (!TryGetRequiredString(arguments, "control_name", out var controlName, out var cnError))
+                return cnError;
+            accessService.ComboboxDropdown(formName, controlName);
+            return new { success = true, message = $"Dropdown opened for '{controlName}' on form '{formName}'" };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("combobox_dropdown", ex);
+        }
+    }
+
+    static object HandleListboxAddItem(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var fnError))
+                return fnError;
+            if (!TryGetRequiredString(arguments, "control_name", out var controlName, out var cnError))
+                return cnError;
+            if (!TryGetRequiredString(arguments, "item", out var item, out var itemError))
+                return itemError;
+            var index = GetOptionalIntFromAliases(arguments, new[] { "index" }, -1);
+
+            accessService.ListboxAddItem(formName, controlName, item, index >= 0 ? index : (int?)null);
+            return new { success = true, message = $"Item added to '{controlName}'" };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("listbox_add_item", ex);
+        }
+    }
+
+    static object HandleListboxRemoveItem(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var fnError))
+                return fnError;
+            if (!TryGetRequiredString(arguments, "control_name", out var controlName, out var cnError))
+                return cnError;
+            var index = GetOptionalIntFromAliases(arguments, new[] { "index" }, -1);
+            if (index < 0)
+                return new { success = false, error = "index is required and must be non-negative" };
+
+            accessService.ListboxRemoveItem(formName, controlName, index);
+            return new { success = true, message = $"Item at index {index} removed from '{controlName}'" };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("listbox_remove_item", ex);
+        }
+    }
+
+    static object HandleListboxGetItems(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var fnError))
+                return fnError;
+            if (!TryGetRequiredString(arguments, "control_name", out var controlName, out var cnError))
+                return cnError;
+            var maxItems = GetOptionalIntFromAliases(arguments, new[] { "max_items" }, 100);
+            if (maxItems > 500) maxItems = 500;
+
+            var result = accessService.ListboxGetItems(formName, controlName, maxItems);
+            return new { success = true, result };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("listbox_get_items", ex);
+        }
+    }
+
+    static object HandleGetObjectDates(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "object_type", out var objectType, out var otError))
+                return otError;
+            if (!TryGetRequiredString(arguments, "object_name", out var objectName, out var onError))
+                return onError;
+            var dates = accessService.GetObjectDates(objectType, objectName);
+            return new { success = true, object_type = objectType, object_name = objectName, date_created = dates.DateCreated, date_modified = dates.DateModified };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_object_dates", ex);
+        }
+    }
+
+    static object HandleIsObjectLoaded(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "object_type", out var objectType, out var otError))
+                return otError;
+            if (!TryGetRequiredString(arguments, "object_name", out var objectName, out var onError))
+                return onError;
+            var loaded = accessService.IsObjectLoaded(objectType, objectName);
+            return new { success = true, object_type = objectType, object_name = objectName, is_loaded = loaded };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("is_object_loaded", ex);
+        }
+    }
+
+    static object HandleIsVbaCompiled(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var result = accessService.IsVbaCompiled();
+            return new { success = true, result };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("is_vba_compiled", ex);
         }
     }
 
