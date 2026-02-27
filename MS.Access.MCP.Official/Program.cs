@@ -145,6 +145,19 @@ class Program
                 new { name = "transfer_spreadsheet", description = "Import, export, or link spreadsheet data using Access DoCmd.TransferSpreadsheet.", inputSchema = new { type = "object", properties = new { transfer_type = new { type = "string", description = "import, export, link, or Access enum integer value as string" }, spreadsheet_type = new { type = "string", description = "Optional spreadsheet type name or Access enum integer value as string" }, table_name = new { type = "string" }, file_name = new { type = "string" }, has_field_names = new { type = "boolean" }, range = new { type = "string" }, use_oa = new { type = "boolean" } }, required = new string[] { "transfer_type", "table_name", "file_name" } } },
                 new { name = "transfer_text", description = "Import, export, or link text/CSV data using Access DoCmd.TransferText.", inputSchema = new { type = "object", properties = new { transfer_type = new { type = "string", description = "import, export, link, or Access enum integer value as string" }, specification_name = new { type = "string" }, table_name = new { type = "string" }, file_name = new { type = "string" }, has_field_names = new { type = "boolean" }, html_table_name = new { type = "string" }, code_page = new { type = "integer" } }, required = new string[] { "transfer_type", "table_name", "file_name" } } },
                 new { name = "output_to", description = "Export Access objects using DoCmd.OutputTo.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string", description = "table, query, form, report, module, etc. or Access enum integer value as string" }, object_name = new { type = "string" }, output_format = new { type = "string", description = "pdf/xlsx/etc. or Access format value" }, output_file = new { type = "string" }, auto_start = new { type = "boolean" }, template_file = new { type = "string" }, encoding = new { type = "string" }, output_quality = new { type = "string", description = "print, screen, or Access enum integer value as string" } }, required = new string[] { "object_type", "output_format" } } },
+                new { name = "set_warnings", description = "Enable or disable Access action query warning dialogs (DoCmd.SetWarnings).", inputSchema = new { type = "object", properties = new { warnings_on = new { type = "boolean" } } } },
+                new { name = "echo", description = "Enable or disable Access screen repainting (DoCmd.Echo).", inputSchema = new { type = "object", properties = new { echo_on = new { type = "boolean" }, status_bar_text = new { type = "string" } } } },
+                new { name = "hourglass", description = "Turn the Access hourglass cursor on or off (DoCmd.Hourglass).", inputSchema = new { type = "object", properties = new { hourglass_on = new { type = "boolean" } } } },
+                new { name = "goto_record", description = "Navigate to a record using DoCmd.GoToRecord.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string" }, object_name = new { type = "string" }, record = new { type = "string" }, offset = new { type = "string" } } } },
+                new { name = "find_record", description = "Find a record using DoCmd.FindRecord.", inputSchema = new { type = "object", properties = new { find_what = new { type = "string" }, match = new { type = "string" }, match_case = new { type = "string" }, search = new { type = "string" }, search_as_formatted = new { type = "string" }, only_current_field = new { type = "string" }, find_first = new { type = "string" } }, required = new string[] { "find_what" } } },
+                new { name = "apply_filter", description = "Apply a filter using DoCmd.ApplyFilter.", inputSchema = new { type = "object", properties = new { filter_name = new { type = "string" }, where_condition = new { type = "string" }, control_name = new { type = "string" } } } },
+                new { name = "show_all_records", description = "Clear active filters and show all records (DoCmd.ShowAllRecords).", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "maximize_window", description = "Maximize the active Access window (DoCmd.Maximize).", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "minimize_window", description = "Minimize the active Access window (DoCmd.Minimize).", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "restore_window", description = "Restore the active Access window (DoCmd.Restore).", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "print_out", description = "Print the active object using DoCmd.PrintOut.", inputSchema = new { type = "object", properties = new { print_range = new { type = "string" }, page_from = new { type = "integer" }, page_to = new { type = "integer" }, print_quality = new { type = "string" }, copies = new { type = "integer" }, collate_copies = new { type = "boolean" } } } },
+                new { name = "open_query", description = "Open a saved query in Access using DoCmd.OpenQuery.", inputSchema = new { type = "object", properties = new { query_name = new { type = "string" }, view = new { type = "string" }, data_mode = new { type = "string" } }, required = new string[] { "query_name" } } },
+                new { name = "run_sql", description = "Execute SQL with Access DoCmd.RunSQL.", inputSchema = new { type = "object", properties = new { sql = new { type = "string" }, use_transaction = new { type = "boolean" } }, required = new string[] { "sql" } } },
                 new { name = "disconnect_access", description = "Disconnect from the current Access database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "is_connected", description = "Check if connected to an Access database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_tables", description = "Get list of all tables in the database", inputSchema = new { type = "object", properties = new { } } },
@@ -250,6 +263,19 @@ class Program
             "transfer_spreadsheet" => HandleTransferSpreadsheet(accessService, toolArguments),
             "transfer_text" => HandleTransferText(accessService, toolArguments),
             "output_to" => HandleOutputTo(accessService, toolArguments),
+            "set_warnings" => HandleSetWarnings(accessService, toolArguments),
+            "echo" => HandleEcho(accessService, toolArguments),
+            "hourglass" => HandleHourglass(accessService, toolArguments),
+            "goto_record" => HandleGoToRecord(accessService, toolArguments),
+            "find_record" => HandleFindRecord(accessService, toolArguments),
+            "apply_filter" => HandleApplyFilter(accessService, toolArguments),
+            "show_all_records" => HandleShowAllRecords(accessService, toolArguments),
+            "maximize_window" => HandleMaximizeWindow(accessService, toolArguments),
+            "minimize_window" => HandleMinimizeWindow(accessService, toolArguments),
+            "restore_window" => HandleRestoreWindow(accessService, toolArguments),
+            "print_out" => HandlePrintOut(accessService, toolArguments),
+            "open_query" => HandleOpenQuery(accessService, toolArguments),
+            "run_sql" => HandleRunSqlDocmd(accessService, toolArguments),
             "disconnect_access" => HandleDisconnectAccess(accessService, toolArguments),
             "is_connected" => HandleIsConnected(accessService, toolArguments),
             "get_tables" => HandleGetTables(accessService, toolArguments),
@@ -644,6 +670,279 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("output_to", ex);
+        }
+    }
+
+    static object HandleSetWarnings(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var warningsOn = GetOptionalBool(arguments, "warnings_on", true);
+            accessService.SetWarnings(warningsOn);
+            return new { success = true, warnings_on = warningsOn };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_warnings", ex);
+        }
+    }
+
+    static object HandleEcho(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var echoOn = GetOptionalBool(arguments, "echo_on", true);
+            _ = TryGetOptionalString(arguments, "status_bar_text", out var statusBarText);
+            accessService.Echo(echoOn, string.IsNullOrWhiteSpace(statusBarText) ? null : statusBarText);
+            return new { success = true, echo_on = echoOn, status_bar_text = string.IsNullOrWhiteSpace(statusBarText) ? null : statusBarText };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("echo", ex);
+        }
+    }
+
+    static object HandleHourglass(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var hourglassOn = GetOptionalBool(arguments, "hourglass_on", true);
+            accessService.Hourglass(hourglassOn);
+            return new { success = true, hourglass_on = hourglassOn };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("hourglass", ex);
+        }
+    }
+
+    static object HandleGoToRecord(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            _ = TryGetOptionalString(arguments, "object_type", out var objectType);
+            _ = TryGetOptionalString(arguments, "object_name", out var objectName);
+            _ = TryGetOptionalString(arguments, "record", out var record);
+            _ = TryGetOptionalString(arguments, "offset", out var offset);
+
+            accessService.GoToRecord(
+                string.IsNullOrWhiteSpace(objectType) ? null : objectType,
+                string.IsNullOrWhiteSpace(objectName) ? null : objectName,
+                string.IsNullOrWhiteSpace(record) ? null : record,
+                string.IsNullOrWhiteSpace(offset) ? null : offset);
+
+            return new
+            {
+                success = true,
+                object_type = string.IsNullOrWhiteSpace(objectType) ? null : objectType,
+                object_name = string.IsNullOrWhiteSpace(objectName) ? null : objectName,
+                record = string.IsNullOrWhiteSpace(record) ? null : record,
+                offset = string.IsNullOrWhiteSpace(offset) ? null : offset
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("goto_record", ex);
+        }
+    }
+
+    static object HandleFindRecord(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "find_what", out var findWhat, out var findWhatError))
+                return findWhatError;
+
+            _ = TryGetOptionalString(arguments, "match", out var match);
+            _ = TryGetOptionalString(arguments, "match_case", out var matchCase);
+            _ = TryGetOptionalString(arguments, "search", out var search);
+            _ = TryGetOptionalString(arguments, "search_as_formatted", out var searchAsFormatted);
+            _ = TryGetOptionalString(arguments, "only_current_field", out var onlyCurrentField);
+            _ = TryGetOptionalString(arguments, "find_first", out var findFirst);
+
+            accessService.FindRecord(
+                findWhat,
+                string.IsNullOrWhiteSpace(match) ? null : match,
+                string.IsNullOrWhiteSpace(matchCase) ? null : matchCase,
+                string.IsNullOrWhiteSpace(search) ? null : search,
+                string.IsNullOrWhiteSpace(searchAsFormatted) ? null : searchAsFormatted,
+                string.IsNullOrWhiteSpace(onlyCurrentField) ? null : onlyCurrentField,
+                string.IsNullOrWhiteSpace(findFirst) ? null : findFirst);
+
+            return new
+            {
+                success = true,
+                find_what = findWhat
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("find_record", ex);
+        }
+    }
+
+    static object HandleApplyFilter(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            _ = TryGetOptionalString(arguments, "filter_name", out var filterName);
+            _ = TryGetOptionalString(arguments, "where_condition", out var whereCondition);
+            _ = TryGetOptionalString(arguments, "control_name", out var controlName);
+
+            accessService.ApplyFilter(
+                string.IsNullOrWhiteSpace(filterName) ? null : filterName,
+                string.IsNullOrWhiteSpace(whereCondition) ? null : whereCondition,
+                string.IsNullOrWhiteSpace(controlName) ? null : controlName);
+
+            return new
+            {
+                success = true,
+                filter_name = string.IsNullOrWhiteSpace(filterName) ? null : filterName,
+                where_condition = string.IsNullOrWhiteSpace(whereCondition) ? null : whereCondition,
+                control_name = string.IsNullOrWhiteSpace(controlName) ? null : controlName
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("apply_filter", ex);
+        }
+    }
+
+    static object HandleShowAllRecords(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            accessService.ShowAllRecords();
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("show_all_records", ex);
+        }
+    }
+
+    static object HandleMaximizeWindow(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            accessService.MaximizeWindow();
+            return new { success = true, state = "maximized" };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("maximize_window", ex);
+        }
+    }
+
+    static object HandleMinimizeWindow(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            accessService.MinimizeWindow();
+            return new { success = true, state = "minimized" };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("minimize_window", ex);
+        }
+    }
+
+    static object HandleRestoreWindow(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            accessService.RestoreWindow();
+            return new { success = true, state = "restored" };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("restore_window", ex);
+        }
+    }
+
+    static object HandlePrintOut(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            _ = TryGetOptionalString(arguments, "print_range", out var printRange);
+            _ = TryGetOptionalString(arguments, "print_quality", out var printQuality);
+            var collateCopies = GetOptionalBool(arguments, "collate_copies", false);
+
+            if (!TryGetOptionalInt(arguments, "page_from", out var pageFrom, out var pageFromError))
+                return pageFromError;
+            if (!TryGetOptionalInt(arguments, "page_to", out var pageTo, out var pageToError))
+                return pageToError;
+            if (!TryGetOptionalInt(arguments, "copies", out var copies, out var copiesError))
+                return copiesError;
+
+            accessService.PrintOut(
+                string.IsNullOrWhiteSpace(printRange) ? null : printRange,
+                pageFrom,
+                pageTo,
+                string.IsNullOrWhiteSpace(printQuality) ? null : printQuality,
+                copies,
+                collateCopies);
+
+            return new
+            {
+                success = true,
+                print_range = string.IsNullOrWhiteSpace(printRange) ? null : printRange,
+                page_from = pageFrom,
+                page_to = pageTo,
+                print_quality = string.IsNullOrWhiteSpace(printQuality) ? null : printQuality,
+                copies,
+                collate_copies = collateCopies
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("print_out", ex);
+        }
+    }
+
+    static object HandleOpenQuery(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "query_name", out var queryName, out var queryNameError))
+                return queryNameError;
+
+            _ = TryGetOptionalString(arguments, "view", out var view);
+            _ = TryGetOptionalString(arguments, "data_mode", out var dataMode);
+
+            accessService.OpenQuery(
+                queryName,
+                string.IsNullOrWhiteSpace(view) ? null : view,
+                string.IsNullOrWhiteSpace(dataMode) ? null : dataMode);
+
+            return new
+            {
+                success = true,
+                query_name = queryName,
+                view = string.IsNullOrWhiteSpace(view) ? null : view,
+                data_mode = string.IsNullOrWhiteSpace(dataMode) ? null : dataMode
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("open_query", ex);
+        }
+    }
+
+    static object HandleRunSqlDocmd(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "sql", out var sql, out var sqlError))
+                return sqlError;
+
+            var useTransaction = GetOptionalBool(arguments, "use_transaction", true);
+            accessService.RunSqlDoCmd(sql, useTransaction);
+            return new { success = true, sql, use_transaction = useTransaction };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("run_sql", ex);
         }
     }
 
@@ -2508,6 +2807,40 @@ class Program
 
         error = new { success = true };
         return true;
+    }
+
+    static bool TryGetOptionalInt(JsonElement arguments, string propertyName, out int? value, out object error)
+    {
+        value = null;
+
+        if (!arguments.TryGetProperty(propertyName, out var element))
+        {
+            error = new { success = true };
+            return true;
+        }
+
+        if (element.ValueKind == JsonValueKind.Null || element.ValueKind == JsonValueKind.Undefined)
+        {
+            error = new { success = true };
+            return true;
+        }
+
+        if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out var numericValue))
+        {
+            value = numericValue;
+            error = new { success = true };
+            return true;
+        }
+
+        if (element.ValueKind == JsonValueKind.String && int.TryParse(element.GetString(), out var parsedValue))
+        {
+            value = parsedValue;
+            error = new { success = true };
+            return true;
+        }
+
+        error = new { success = false, error = $"{propertyName} must be an integer when provided" };
+        return false;
     }
 
     static bool GetOptionalBool(JsonElement arguments, string propertyName, bool defaultValue)
