@@ -182,6 +182,22 @@ class Program
                 new { name = "set_ribbon_xml", description = "Create or replace ribbon XML in USysRibbons and optionally set as default.", inputSchema = new { type = "object", properties = new { ribbon_name = new { type = "string" }, ribbon_xml = new { type = "string" }, apply_as_default = new { type = "boolean" } }, required = new string[] { "ribbon_name", "ribbon_xml" } } },
                 new { name = "get_application_info", description = "Get Access application metadata and current project/data info.", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_current_project_data", description = "Get CurrentProject and CurrentData properties.", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "export_data_macro_axl", description = "Export table data macro definition as AXL.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
+                new { name = "import_data_macro_axl", description = "Import table data macro definition from AXL.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, axl_xml = new { type = "string" } }, required = new string[] { "table_name", "axl_xml" } } },
+                new { name = "get_database_security", description = "Get current database security state (password/encryption indicators).", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "set_database_password", description = "Set or replace the database password (compact/repair based).", inputSchema = new { type = "object", properties = new { new_password = new { type = "string" } }, required = new string[] { "new_password" } } },
+                new { name = "remove_database_password", description = "Remove the current database password (compact/repair based).", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "encrypt_database", description = "Compact/encrypt the current database with a password.", inputSchema = new { type = "object", properties = new { password = new { type = "string" } } } },
+                new { name = "get_navigation_groups", description = "List Access navigation pane groups.", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "create_navigation_group", description = "Create a navigation pane group.", inputSchema = new { type = "object", properties = new { group_name = new { type = "string" } }, required = new string[] { "group_name" } } },
+                new { name = "add_navigation_group_object", description = "Add an object to a navigation pane group.", inputSchema = new { type = "object", properties = new { group_name = new { type = "string" }, object_name = new { type = "string" }, object_type = new { type = "string" } }, required = new string[] { "group_name", "object_name" } } },
+                new { name = "get_conditional_formatting", description = "Get conditional formatting rules for a form/report control.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string" }, object_name = new { type = "string" }, control_name = new { type = "string" } }, required = new string[] { "object_type", "object_name", "control_name" } } },
+                new { name = "add_conditional_formatting", description = "Add a conditional formatting rule to a form/report control.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string" }, object_name = new { type = "string" }, control_name = new { type = "string" }, expression = new { type = "string" }, fore_color = new { type = "integer" }, back_color = new { type = "integer" } }, required = new string[] { "object_type", "object_name", "control_name", "expression" } } },
+                new { name = "get_attachment_files", description = "List files from an attachment field.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, where_condition = new { type = "string" } }, required = new string[] { "table_name", "field_name" } } },
+                new { name = "add_attachment_file", description = "Add a file into an attachment field.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, file_path = new { type = "string" }, where_condition = new { type = "string" } }, required = new string[] { "table_name", "field_name", "file_path" } } },
+                new { name = "remove_attachment_file", description = "Remove a file from an attachment field.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, file_name = new { type = "string" }, where_condition = new { type = "string" } }, required = new string[] { "table_name", "field_name", "file_name" } } },
+                new { name = "get_object_events", description = "Get object event bindings from Access form/report objects.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string" }, object_name = new { type = "string" } }, required = new string[] { "object_type", "object_name" } } },
+                new { name = "set_object_event", description = "Set object event binding on Access form/report objects.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string" }, object_name = new { type = "string" }, event_name = new { type = "string" }, event_value = new { type = "string" } }, required = new string[] { "object_type", "object_name", "event_name", "event_value" } } },
                 new { name = "disconnect_access", description = "Disconnect from the current Access database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "is_connected", description = "Check if connected to an Access database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_tables", description = "Get list of all tables in the database", inputSchema = new { type = "object", properties = new { } } },
@@ -324,6 +340,22 @@ class Program
             "set_ribbon_xml" => HandleSetRibbonXml(accessService, toolArguments),
             "get_application_info" => HandleGetApplicationInfo(accessService, toolArguments),
             "get_current_project_data" => HandleGetCurrentProjectData(accessService, toolArguments),
+            "export_data_macro_axl" => HandleExportDataMacroAxl(accessService, toolArguments),
+            "import_data_macro_axl" => HandleImportDataMacroAxl(accessService, toolArguments),
+            "get_database_security" => HandleGetDatabaseSecurity(accessService, toolArguments),
+            "set_database_password" => HandleSetDatabasePassword(accessService, toolArguments),
+            "remove_database_password" => HandleRemoveDatabasePassword(accessService, toolArguments),
+            "encrypt_database" => HandleEncryptDatabase(accessService, toolArguments),
+            "get_navigation_groups" => HandleGetNavigationGroups(accessService, toolArguments),
+            "create_navigation_group" => HandleCreateNavigationGroup(accessService, toolArguments),
+            "add_navigation_group_object" => HandleAddNavigationGroupObject(accessService, toolArguments),
+            "get_conditional_formatting" => HandleGetConditionalFormatting(accessService, toolArguments),
+            "add_conditional_formatting" => HandleAddConditionalFormatting(accessService, toolArguments),
+            "get_attachment_files" => HandleGetAttachmentFiles(accessService, toolArguments),
+            "add_attachment_file" => HandleAddAttachmentFile(accessService, toolArguments),
+            "remove_attachment_file" => HandleRemoveAttachmentFile(accessService, toolArguments),
+            "get_object_events" => HandleGetObjectEvents(accessService, toolArguments),
+            "set_object_event" => HandleSetObjectEvent(accessService, toolArguments),
             "disconnect_access" => HandleDisconnectAccess(accessService, toolArguments),
             "is_connected" => HandleIsConnected(accessService, toolArguments),
             "get_tables" => HandleGetTables(accessService, toolArguments),
@@ -1514,6 +1546,292 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("get_current_project_data", ex);
+        }
+    }
+
+    static object HandleExportDataMacroAxl(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+
+            var axlXml = accessService.ExportDataMacroAxl(tableName);
+            return new { success = true, table_name = tableName, axl_xml = axlXml };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("export_data_macro_axl", ex);
+        }
+    }
+
+    static object HandleImportDataMacroAxl(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "axl_xml", out var axlXml, out var axlXmlError))
+                return axlXmlError;
+
+            accessService.ImportDataMacroAxl(tableName, axlXml);
+            return new { success = true, table_name = tableName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("import_data_macro_axl", ex);
+        }
+    }
+
+    static object HandleGetDatabaseSecurity(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var security = accessService.GetDatabaseSecurityInfo();
+            return new { success = true, security };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_database_security", ex);
+        }
+    }
+
+    static object HandleSetDatabasePassword(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "new_password", out var newPassword, out var newPasswordError))
+                return newPasswordError;
+
+            accessService.SetDatabasePassword(newPassword);
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_database_password", ex);
+        }
+    }
+
+    static object HandleRemoveDatabasePassword(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            accessService.RemoveDatabasePassword();
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("remove_database_password", ex);
+        }
+    }
+
+    static object HandleEncryptDatabase(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            _ = TryGetOptionalString(arguments, "password", out var password);
+            accessService.EncryptDatabase(string.IsNullOrWhiteSpace(password) ? null : password);
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("encrypt_database", ex);
+        }
+    }
+
+    static object HandleGetNavigationGroups(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var groups = accessService.GetNavigationGroups();
+            return new { success = true, groups = groups.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_navigation_groups", ex);
+        }
+    }
+
+    static object HandleCreateNavigationGroup(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "group_name", out var groupName, out var groupNameError))
+                return groupNameError;
+
+            accessService.CreateNavigationGroup(groupName);
+            return new { success = true, group_name = groupName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("create_navigation_group", ex);
+        }
+    }
+
+    static object HandleAddNavigationGroupObject(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "group_name", out var groupName, out var groupNameError))
+                return groupNameError;
+            if (!TryGetRequiredString(arguments, "object_name", out var objectName, out var objectNameError))
+                return objectNameError;
+
+            _ = TryGetOptionalString(arguments, "object_type", out var objectType);
+            accessService.AddNavigationGroupObject(groupName, objectName, string.IsNullOrWhiteSpace(objectType) ? null : objectType);
+            return new { success = true, group_name = groupName, object_name = objectName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("add_navigation_group_object", ex);
+        }
+    }
+
+    static object HandleGetConditionalFormatting(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "object_type", out var objectType, out var objectTypeError))
+                return objectTypeError;
+            if (!TryGetRequiredString(arguments, "object_name", out var objectName, out var objectNameError))
+                return objectNameError;
+            if (!TryGetRequiredString(arguments, "control_name", out var controlName, out var controlNameError))
+                return controlNameError;
+
+            var rules = accessService.GetConditionalFormatting(objectType, objectName, controlName);
+            return new { success = true, rules = rules.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_conditional_formatting", ex);
+        }
+    }
+
+    static object HandleAddConditionalFormatting(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "object_type", out var objectType, out var objectTypeError))
+                return objectTypeError;
+            if (!TryGetRequiredString(arguments, "object_name", out var objectName, out var objectNameError))
+                return objectNameError;
+            if (!TryGetRequiredString(arguments, "control_name", out var controlName, out var controlNameError))
+                return controlNameError;
+            if (!TryGetRequiredString(arguments, "expression", out var expression, out var expressionError))
+                return expressionError;
+
+            if (!TryGetOptionalInt(arguments, "fore_color", out var foreColor, out var foreColorError))
+                return foreColorError;
+            if (!TryGetOptionalInt(arguments, "back_color", out var backColor, out var backColorError))
+                return backColorError;
+
+            accessService.AddConditionalFormatting(objectType, objectName, controlName, expression, foreColor, backColor);
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("add_conditional_formatting", ex);
+        }
+    }
+
+    static object HandleGetAttachmentFiles(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "field_name", out var fieldName, out var fieldNameError))
+                return fieldNameError;
+
+            _ = TryGetOptionalString(arguments, "where_condition", out var whereCondition);
+            var files = accessService.GetAttachmentFieldFiles(tableName, fieldName, string.IsNullOrWhiteSpace(whereCondition) ? null : whereCondition);
+            return new { success = true, files = files.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_attachment_files", ex);
+        }
+    }
+
+    static object HandleAddAttachmentFile(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "field_name", out var fieldName, out var fieldNameError))
+                return fieldNameError;
+            if (!TryGetRequiredString(arguments, "file_path", out var filePath, out var filePathError))
+                return filePathError;
+
+            _ = TryGetOptionalString(arguments, "where_condition", out var whereCondition);
+            accessService.AddAttachmentFile(tableName, fieldName, filePath, string.IsNullOrWhiteSpace(whereCondition) ? null : whereCondition);
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("add_attachment_file", ex);
+        }
+    }
+
+    static object HandleRemoveAttachmentFile(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "field_name", out var fieldName, out var fieldNameError))
+                return fieldNameError;
+            if (!TryGetRequiredString(arguments, "file_name", out var fileName, out var fileNameError))
+                return fileNameError;
+
+            _ = TryGetOptionalString(arguments, "where_condition", out var whereCondition);
+            accessService.RemoveAttachmentFile(tableName, fieldName, fileName, string.IsNullOrWhiteSpace(whereCondition) ? null : whereCondition);
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("remove_attachment_file", ex);
+        }
+    }
+
+    static object HandleGetObjectEvents(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "object_type", out var objectType, out var objectTypeError))
+                return objectTypeError;
+            if (!TryGetRequiredString(arguments, "object_name", out var objectName, out var objectNameError))
+                return objectNameError;
+
+            var events = accessService.GetObjectEvents(objectType, objectName);
+            return new { success = true, events = events.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_object_events", ex);
+        }
+    }
+
+    static object HandleSetObjectEvent(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "object_type", out var objectType, out var objectTypeError))
+                return objectTypeError;
+            if (!TryGetRequiredString(arguments, "object_name", out var objectName, out var objectNameError))
+                return objectNameError;
+            if (!TryGetRequiredString(arguments, "event_name", out var eventName, out var eventNameError))
+                return eventNameError;
+            if (!TryGetRequiredString(arguments, "event_value", out var eventValue, out var eventValueError))
+                return eventValueError;
+
+            accessService.SetObjectEvent(objectType, objectName, eventName, eventValue);
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_object_event", ex);
         }
     }
 
