@@ -29,74 +29,33 @@ This is a .NET 8 (x64-only, Windows) MCP server using custom JSON-RPC over stdio
 - Do NOT change the JsonRpcResponse/JsonRpcRequest/JsonRpcErrorResponse classes
 - Keep the same coding style — no extra usings, no external packages, no async interop
 
-## Current Coverage (85 tools, ~35-40% of Access surface)
+## Current Coverage (310 tools, 100% of practical Access COM/DAO surface)
 
-Covered: connection, table CRUD, indexes, queries, SQL exec, relationships, linked tables,
-transactions, forms, reports, macros, VBA, metadata, resources, prompts, completion, logging.
+All COM-accessible, non-deprecated features that a developer working with Access through
+an MCP server would reasonably use. Excluded: deprecated replication, user-level security
+(.mdw), SharePoint sync, DoCmd.Quit (kills COM server), Data Access Pages (removed in 2013),
+ADP projects, report drawing (Circle/Line/PSet), FileDialog, CommandBars, COMAddIns, AutoCorrect.
 
-## What To Implement (Priority Order)
-
-### Priority 1: Import/Export (DoCmd transfers)
-- TransferSpreadsheet (Excel import/export)
-- TransferText (CSV/delimited import/export)
-- OutputTo (export to PDF, XLS, RTF, TXT, HTML)
-- These use Access COM: accessApp.DoCmd.TransferSpreadsheet(...) etc.
-
-### Priority 2: Remaining DoCmd Operations
-- SetWarnings, Echo, Hourglass (session control)
-- GoToRecord, FindRecord (navigation)
-- ApplyFilter, ShowAllRecords (filtering)
-- Maximize, Minimize, Restore (window control)
-- PrintOut (printing)
-- OpenQuery (open query in datasheet)
-- RunSQL (direct SQL execution via DoCmd)
-
-### Priority 3: Database & Object Properties
-- Database summary properties (Title, Author, Subject, Keywords, Comments)
-- Custom database properties (read/write via DAO Properties collection)
-- Table description, validation rules, validation text
-- Field validation rules, input masks, default values
-- Query description, parameters
-
-### Priority 4: Field Property Enhancements
-- Set field ValidationRule, ValidationText
-- Set field DefaultValue
-- Set field InputMask
-- Set field Caption
-- Lookup field properties (RowSource, BoundColumn, ColumnCount, etc.)
-
-### Priority 5: VBA & Application Enhancements
-- Enumerate/manage VBA project references
-- Application startup properties (StartupForm, AppTitle, AppIcon)
-- Ribbon XML read/write
-- CurrentProject/CurrentData properties
-
-### Priority 6: Advanced Features
-- Data macros (table-level triggers via SaveAsAXL/LoadFromAXL)
-- Attachment field read/write
-- Navigation pane groups
-- Conditional formatting rules
-- Database encryption/password management
-
-## Research Phase
-
-Before implementing, search GitHub for these repos and examine their implementations:
-- github.com/brickly26/MS-Access-mcp
-- github.com/sub-arjun/OMNI-MS-Access-MCP
-- github.com/ayamnash/MCP_server_ms_access_control
-- github.com/scanzy/mcp-server-access-mdb
-
-Extract any useful patterns for DoCmd, import/export, properties, or features we lack.
-These are Python/Node servers — adapt the logic to our C# COM interop pattern.
-
-## Workflow
-
-1. Research: fetch competitor repos, identify useful implementations
-2. Plan: list the exact methods and tools to add for each priority batch
-3. Implement interop methods in AccessInteropService.cs
-4. Implement tool definitions + handlers in Program.cs
-5. Build & fix any compilation errors
-6. Run smoke test to verify nothing broke
-7. Git commit with message: "feat: Priority N — [description of what was added]"
-8. Move to next priority batch
-9. Repeat until all 6 priorities are done
+Covered areas: connection, table CRUD, indexes, queries, SQL exec, relationships, linked tables,
+transactions, forms, reports, macros, VBA, metadata, resources, prompts, completion, logging,
+import/export (TransferSpreadsheet, TransferText, OutputTo), comprehensive DoCmd operations,
+database/object/field properties, VBA references, startup properties, ribbon XML, data macros,
+attachments, navigation groups, conditional formatting, database encryption/password,
+form/report design-time APIs (sections, controls, properties, tab order, page setup),
+module analysis (info, procedures, declarations, insert/delete/replace lines, find),
+import/export specs, app options, DAO containers/documents, AutoExec, query parameters,
+report grouping/sorting, page setup, printer info, DAO document properties, table validation,
+field attributes, multi-value fields, table/field descriptions, advanced VBA execution
+(Eval, Run, module CRUD, compilation errors, project properties), TempVars, open objects,
+form runtime (record count, current record, filter), RefreshDatabaseWindow, SysCmd,
+DoCmd remaining (FindNext, SearchForRecord, SetFilter, SetOrderBy, SetParameter, SetProperty,
+RefreshRecord, CloseDatabase), domain aggregates (DLookup/DCount/DSum/DAvg/DMin/DMax/DFirst/DLast),
+AccessError, BuildCriteria, Screen object (ActiveForm/ActiveReport/ActiveControl/ActiveDatasheet),
+object visibility (SetHiddenAttribute/GetHiddenAttribute), CurrentObjectName/Type, CurrentUser,
+Application.Visible, hWndAccessApp, form runtime methods (Recalc/Refresh/Requery/Undo/SetFocus,
+Dirty/NewRecord/Bookmark/CurrentView/OpenArgs/Painting), DAO Recordset operations (open/close,
+move/find, get record/rows, add/edit/delete, count/bookmark/filter+sort with handle tracking),
+XML exchange (ExportXML/ImportXML/TransformXML, NavigationPane XML), printer management
+(set default/form/report printer, list printers), database engine info, control methods
+(SetFocus/Requery/Undo, ComboBox.Dropdown, ListBox AddItem/RemoveItem/GetItems),
+AccessObject metadata (DateCreated/DateModified, IsLoaded), IsCompiled + broken references.
