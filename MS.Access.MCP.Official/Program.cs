@@ -284,6 +284,19 @@ class Program
                 new { name = "set_vba_code", description = "Set VBA code in a module", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" }, code = new { type = "string" } }, required = new string[] { "project_name", "module_name", "code" } } },
                 new { name = "add_vba_procedure", description = "Add a VBA procedure to a module", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" }, procedure_name = new { type = "string" }, code = new { type = "string" } }, required = new string[] { "project_name", "module_name", "procedure_name", "code" } } },
                 new { name = "compile_vba", description = "Compile VBA code", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "get_module_info", description = "Get metadata for a VBA module.", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" } }, required = new string[] { "module_name" } } },
+                new { name = "list_procedures", description = "List procedures in a VBA module.", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" } }, required = new string[] { "module_name" } } },
+                new { name = "get_procedure_code", description = "Get code for a single procedure in a VBA module.", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" }, procedure_name = new { type = "string" } }, required = new string[] { "module_name", "procedure_name" } } },
+                new { name = "get_module_declarations", description = "Get module-level declarations from a VBA module.", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" } }, required = new string[] { "module_name" } } },
+                new { name = "insert_lines", description = "Insert lines into a VBA module at a specific line number.", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" }, line_number = new { type = "integer" }, code = new { type = "string" } }, required = new string[] { "module_name", "line_number", "code" } } },
+                new { name = "delete_lines", description = "Delete one or more lines from a VBA module.", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" }, start_line = new { type = "integer" }, line_count = new { type = "integer" } }, required = new string[] { "module_name", "start_line" } } },
+                new { name = "replace_line", description = "Replace a line in a VBA module.", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" }, line_number = new { type = "integer" }, code = new { type = "string" } }, required = new string[] { "module_name", "line_number", "code" } } },
+                new { name = "find_text_in_module", description = "Find text in a VBA module using CodeModule.Find.", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" }, find_text = new { type = "string" }, start_line = new { type = "integer" }, start_column = new { type = "integer" }, end_line = new { type = "integer" }, end_column = new { type = "integer" }, whole_word = new { type = "boolean" }, match_case = new { type = "boolean" }, pattern_search = new { type = "boolean" } }, required = new string[] { "module_name", "find_text" } } },
+                new { name = "list_import_export_specs", description = "List saved import/export specifications.", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "get_import_export_spec", description = "Get details for a saved import/export specification.", inputSchema = new { type = "object", properties = new { specification_name = new { type = "string" } }, required = new string[] { "specification_name" } } },
+                new { name = "create_import_export_spec", description = "Create an import/export specification from XML.", inputSchema = new { type = "object", properties = new { specification_name = new { type = "string" }, specification_xml = new { type = "string" } }, required = new string[] { "specification_name", "specification_xml" } } },
+                new { name = "delete_import_export_spec", description = "Delete a saved import/export specification.", inputSchema = new { type = "object", properties = new { specification_name = new { type = "string" } }, required = new string[] { "specification_name" } } },
+                new { name = "run_import_export_spec", description = "Run a saved import/export specification.", inputSchema = new { type = "object", properties = new { specification_name = new { type = "string" } }, required = new string[] { "specification_name" } } },
                 new { name = "get_system_tables", description = "Get list of system tables", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_object_metadata", description = "Get metadata for database objects", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "form_exists", description = "Check if a form exists", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
@@ -476,6 +489,19 @@ class Program
             "set_vba_code" => HandleSetVBACode(accessService, toolArguments),
             "add_vba_procedure" => HandleAddVBAProcedure(accessService, toolArguments),
             "compile_vba" => HandleCompileVBA(accessService, toolArguments),
+            "get_module_info" => HandleGetModuleInfo(accessService, toolArguments),
+            "list_procedures" => HandleListProcedures(accessService, toolArguments),
+            "get_procedure_code" => HandleGetProcedureCode(accessService, toolArguments),
+            "get_module_declarations" => HandleGetModuleDeclarations(accessService, toolArguments),
+            "insert_lines" => HandleInsertLines(accessService, toolArguments),
+            "delete_lines" => HandleDeleteLines(accessService, toolArguments),
+            "replace_line" => HandleReplaceLine(accessService, toolArguments),
+            "find_text_in_module" => HandleFindTextInModule(accessService, toolArguments),
+            "list_import_export_specs" => HandleListImportExportSpecs(accessService, toolArguments),
+            "get_import_export_spec" => HandleGetImportExportSpec(accessService, toolArguments),
+            "create_import_export_spec" => HandleCreateImportExportSpec(accessService, toolArguments),
+            "delete_import_export_spec" => HandleDeleteImportExportSpec(accessService, toolArguments),
+            "run_import_export_spec" => HandleRunImportExportSpec(accessService, toolArguments),
             "get_system_tables" => HandleGetSystemTables(accessService, toolArguments),
             "get_object_metadata" => HandleGetObjectMetadata(accessService, toolArguments),
             "form_exists" => HandleFormExists(accessService, toolArguments),
@@ -3612,6 +3638,271 @@ class Program
         catch (Exception ex)
         {
             return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleGetModuleInfo(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "module_name", out var moduleName, out var moduleNameError))
+                return moduleNameError;
+
+            _ = TryGetOptionalString(arguments, "project_name", out var projectName);
+            var moduleInfo = accessService.GetModuleInfo(string.IsNullOrWhiteSpace(projectName) ? null : projectName, moduleName);
+            return new { success = true, module_info = moduleInfo };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_module_info", ex);
+        }
+    }
+
+    static object HandleListProcedures(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "module_name", out var moduleName, out var moduleNameError))
+                return moduleNameError;
+
+            _ = TryGetOptionalString(arguments, "project_name", out var projectName);
+            var procedures = accessService.ListProcedures(string.IsNullOrWhiteSpace(projectName) ? null : projectName, moduleName);
+            return new { success = true, procedures = procedures.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("list_procedures", ex);
+        }
+    }
+
+    static object HandleGetProcedureCode(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "module_name", out var moduleName, out var moduleNameError))
+                return moduleNameError;
+            if (!TryGetRequiredString(arguments, "procedure_name", out var procedureName, out var procedureNameError))
+                return procedureNameError;
+
+            _ = TryGetOptionalString(arguments, "project_name", out var projectName);
+            var code = accessService.GetProcedureCode(string.IsNullOrWhiteSpace(projectName) ? null : projectName, moduleName, procedureName);
+            return new { success = true, procedure_code = code };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_procedure_code", ex);
+        }
+    }
+
+    static object HandleGetModuleDeclarations(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "module_name", out var moduleName, out var moduleNameError))
+                return moduleNameError;
+
+            _ = TryGetOptionalString(arguments, "project_name", out var projectName);
+            var declarations = accessService.GetModuleDeclarations(string.IsNullOrWhiteSpace(projectName) ? null : projectName, moduleName);
+            return new { success = true, declarations };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_module_declarations", ex);
+        }
+    }
+
+    static object HandleInsertLines(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "module_name", out var moduleName, out var moduleNameError))
+                return moduleNameError;
+            if (!TryGetRequiredString(arguments, "code", out var code, out var codeError))
+                return codeError;
+            if (!TryGetOptionalInt(arguments, "line_number", out var lineNumber, out var lineNumberError))
+                return lineNumberError;
+
+            if (!lineNumber.HasValue)
+                return new { success = false, error = "line_number is required" };
+
+            _ = TryGetOptionalString(arguments, "project_name", out var projectName);
+            accessService.InsertLines(string.IsNullOrWhiteSpace(projectName) ? null : projectName, moduleName, lineNumber.Value, code);
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("insert_lines", ex);
+        }
+    }
+
+    static object HandleDeleteLines(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "module_name", out var moduleName, out var moduleNameError))
+                return moduleNameError;
+            if (!TryGetOptionalInt(arguments, "start_line", out var startLine, out var startLineError))
+                return startLineError;
+            if (!TryGetOptionalInt(arguments, "line_count", out var lineCount, out var lineCountError))
+                return lineCountError;
+
+            if (!startLine.HasValue)
+                return new { success = false, error = "start_line is required" };
+
+            _ = TryGetOptionalString(arguments, "project_name", out var projectName);
+            accessService.DeleteLines(string.IsNullOrWhiteSpace(projectName) ? null : projectName, moduleName, startLine.Value, lineCount ?? 1);
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("delete_lines", ex);
+        }
+    }
+
+    static object HandleReplaceLine(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "module_name", out var moduleName, out var moduleNameError))
+                return moduleNameError;
+            if (!TryGetRequiredString(arguments, "code", out var code, out var codeError))
+                return codeError;
+            if (!TryGetOptionalInt(arguments, "line_number", out var lineNumber, out var lineNumberError))
+                return lineNumberError;
+
+            if (!lineNumber.HasValue)
+                return new { success = false, error = "line_number is required" };
+
+            _ = TryGetOptionalString(arguments, "project_name", out var projectName);
+            accessService.ReplaceLine(string.IsNullOrWhiteSpace(projectName) ? null : projectName, moduleName, lineNumber.Value, code);
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("replace_line", ex);
+        }
+    }
+
+    static object HandleFindTextInModule(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "module_name", out var moduleName, out var moduleNameError))
+                return moduleNameError;
+            if (!TryGetRequiredString(arguments, "find_text", out var findText, out var findTextError))
+                return findTextError;
+
+            _ = TryGetOptionalString(arguments, "project_name", out var projectName);
+
+            if (!TryGetOptionalInt(arguments, "start_line", out var startLine, out var startLineError))
+                return startLineError;
+            if (!TryGetOptionalInt(arguments, "start_column", out var startColumn, out var startColumnError))
+                return startColumnError;
+            if (!TryGetOptionalInt(arguments, "end_line", out var endLine, out var endLineError))
+                return endLineError;
+            if (!TryGetOptionalInt(arguments, "end_column", out var endColumn, out var endColumnError))
+                return endColumnError;
+
+            var wholeWord = GetOptionalBool(arguments, "whole_word", false);
+            var matchCase = GetOptionalBool(arguments, "match_case", false);
+            var patternSearch = GetOptionalBool(arguments, "pattern_search", false);
+
+            var result = accessService.FindTextInModule(
+                string.IsNullOrWhiteSpace(projectName) ? null : projectName,
+                moduleName,
+                findText,
+                startLine ?? 1,
+                startColumn ?? 1,
+                endLine,
+                endColumn,
+                wholeWord,
+                matchCase,
+                patternSearch);
+
+            return new { success = true, result };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("find_text_in_module", ex);
+        }
+    }
+
+    static object HandleListImportExportSpecs(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var specs = accessService.ListImportExportSpecs();
+            return new { success = true, specifications = specs.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("list_import_export_specs", ex);
+        }
+    }
+
+    static object HandleGetImportExportSpec(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "specification_name", out var specificationName, out var specificationNameError))
+                return specificationNameError;
+
+            var specification = accessService.GetImportExportSpec(specificationName);
+            return new { success = true, specification };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_import_export_spec", ex);
+        }
+    }
+
+    static object HandleCreateImportExportSpec(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "specification_name", out var specificationName, out var specificationNameError))
+                return specificationNameError;
+            if (!TryGetRequiredString(arguments, "specification_xml", out var specificationXml, out var specificationXmlError))
+                return specificationXmlError;
+
+            accessService.CreateImportExportSpec(specificationName, specificationXml);
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("create_import_export_spec", ex);
+        }
+    }
+
+    static object HandleDeleteImportExportSpec(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "specification_name", out var specificationName, out var specificationNameError))
+                return specificationNameError;
+
+            accessService.DeleteImportExportSpec(specificationName);
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("delete_import_export_spec", ex);
+        }
+    }
+
+    static object HandleRunImportExportSpec(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "specification_name", out var specificationName, out var specificationNameError))
+                return specificationNameError;
+
+            accessService.RunImportExportSpec(specificationName);
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("run_import_export_spec", ex);
         }
     }
 

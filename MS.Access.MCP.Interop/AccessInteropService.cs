@@ -3715,6 +3715,363 @@ namespace MS.Access.MCP.Interop
             releaseOleDb: true);
         }
 
+        public ModuleAnalysisInfo GetModuleInfo(string? projectName, string moduleName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(moduleName)) throw new ArgumentException("Module name is required.", nameof(moduleName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var component = FindOrCreateVbComponent(accessApp, projectName ?? "CurrentProject", moduleName, false)
+                    ?? throw new InvalidOperationException($"VBA module '{moduleName}' was not found.");
+                var codeModule = TryGetDynamicProperty(component, "CodeModule")
+                    ?? throw new InvalidOperationException($"Code module for '{moduleName}' is not accessible.");
+
+                var lineCount = ToInt32(TryGetDynamicProperty(codeModule, "CountOfLines"));
+                var declarationLineCount = ToInt32(TryGetDynamicProperty(codeModule, "CountOfDeclarationLines"));
+                var code = lineCount > 0
+                    ? SafeToString(TryGetDynamicProperty(codeModule, "Lines", 1, lineCount)) ?? string.Empty
+                    : string.Empty;
+                var procedures = ParseModuleProcedures(code);
+
+                return new ModuleAnalysisInfo
+                {
+                    ProjectName = SafeToString(TryGetDynamicProperty(TryGetDynamicProperty(component, "Collection"), "Parent")) ?? (projectName ?? "CurrentProject"),
+                    ModuleName = moduleName,
+                    ModuleType = MapVbComponentType(ToInt32(TryGetDynamicProperty(component, "Type"))),
+                    LineCount = lineCount,
+                    DeclarationLineCount = declarationLineCount,
+                    ProcedureCount = procedures.Count
+                };
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public List<ModuleProcedureInfo> ListProcedures(string? projectName, string moduleName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(moduleName)) throw new ArgumentException("Module name is required.", nameof(moduleName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var component = FindOrCreateVbComponent(accessApp, projectName ?? "CurrentProject", moduleName, false)
+                    ?? throw new InvalidOperationException($"VBA module '{moduleName}' was not found.");
+                var codeModule = TryGetDynamicProperty(component, "CodeModule")
+                    ?? throw new InvalidOperationException($"Code module for '{moduleName}' is not accessible.");
+
+                var lineCount = ToInt32(TryGetDynamicProperty(codeModule, "CountOfLines"));
+                if (lineCount <= 0)
+                    return new List<ModuleProcedureInfo>();
+
+                var code = SafeToString(TryGetDynamicProperty(codeModule, "Lines", 1, lineCount)) ?? string.Empty;
+                return ParseModuleProcedures(code);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public string GetProcedureCode(string? projectName, string moduleName, string procedureName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(moduleName)) throw new ArgumentException("Module name is required.", nameof(moduleName));
+            if (string.IsNullOrWhiteSpace(procedureName)) throw new ArgumentException("Procedure name is required.", nameof(procedureName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var component = FindOrCreateVbComponent(accessApp, projectName ?? "CurrentProject", moduleName, false)
+                    ?? throw new InvalidOperationException($"VBA module '{moduleName}' was not found.");
+                var codeModule = TryGetDynamicProperty(component, "CodeModule")
+                    ?? throw new InvalidOperationException($"Code module for '{moduleName}' is not accessible.");
+
+                var lineCount = ToInt32(TryGetDynamicProperty(codeModule, "CountOfLines"));
+                if (lineCount <= 0)
+                    return string.Empty;
+
+                var code = SafeToString(TryGetDynamicProperty(codeModule, "Lines", 1, lineCount)) ?? string.Empty;
+                var procedures = ParseModuleProcedures(code);
+                ModuleProcedureInfo? procedure = null;
+                foreach (var candidate in procedures)
+                {
+                    if (string.Equals(candidate.Name, procedureName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        procedure = candidate;
+                        break;
+                    }
+                }
+
+                if (procedure == null)
+                    throw new InvalidOperationException($"Procedure '{procedureName}' was not found in module '{moduleName}'.");
+
+                return SafeToString(TryGetDynamicProperty(codeModule, "Lines", procedure.StartLine, procedure.LineCount)) ?? string.Empty;
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public string GetModuleDeclarations(string? projectName, string moduleName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(moduleName)) throw new ArgumentException("Module name is required.", nameof(moduleName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var component = FindOrCreateVbComponent(accessApp, projectName ?? "CurrentProject", moduleName, false)
+                    ?? throw new InvalidOperationException($"VBA module '{moduleName}' was not found.");
+                var codeModule = TryGetDynamicProperty(component, "CodeModule")
+                    ?? throw new InvalidOperationException($"Code module for '{moduleName}' is not accessible.");
+
+                var declarationLineCount = ToInt32(TryGetDynamicProperty(codeModule, "CountOfDeclarationLines"));
+                if (declarationLineCount <= 0)
+                    return string.Empty;
+
+                return SafeToString(TryGetDynamicProperty(codeModule, "Lines", 1, declarationLineCount)) ?? string.Empty;
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void InsertLines(string? projectName, string moduleName, int lineNumber, string code)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(moduleName)) throw new ArgumentException("Module name is required.", nameof(moduleName));
+            if (lineNumber <= 0) throw new ArgumentException("lineNumber must be greater than zero.", nameof(lineNumber));
+            if (string.IsNullOrWhiteSpace(code)) throw new ArgumentException("Code is required.", nameof(code));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var component = FindOrCreateVbComponent(accessApp, projectName ?? "CurrentProject", moduleName, false)
+                    ?? throw new InvalidOperationException($"VBA module '{moduleName}' was not found.");
+                var codeModule = TryGetDynamicProperty(component, "CodeModule")
+                    ?? throw new InvalidOperationException($"Code module for '{moduleName}' is not accessible.");
+
+                _ = InvokeDynamicMethod(codeModule, "InsertLines", lineNumber, NormalizeLineEndings(code));
+                TrySaveModule(accessApp, moduleName);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void DeleteLines(string? projectName, string moduleName, int startLine, int lineCount = 1)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(moduleName)) throw new ArgumentException("Module name is required.", nameof(moduleName));
+            if (startLine <= 0) throw new ArgumentException("startLine must be greater than zero.", nameof(startLine));
+            if (lineCount <= 0) throw new ArgumentException("lineCount must be greater than zero.", nameof(lineCount));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var component = FindOrCreateVbComponent(accessApp, projectName ?? "CurrentProject", moduleName, false)
+                    ?? throw new InvalidOperationException($"VBA module '{moduleName}' was not found.");
+                var codeModule = TryGetDynamicProperty(component, "CodeModule")
+                    ?? throw new InvalidOperationException($"Code module for '{moduleName}' is not accessible.");
+
+                _ = InvokeDynamicMethod(codeModule, "DeleteLines", startLine, lineCount);
+                TrySaveModule(accessApp, moduleName);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void ReplaceLine(string? projectName, string moduleName, int lineNumber, string code)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(moduleName)) throw new ArgumentException("Module name is required.", nameof(moduleName));
+            if (lineNumber <= 0) throw new ArgumentException("lineNumber must be greater than zero.", nameof(lineNumber));
+            if (code == null) throw new ArgumentNullException(nameof(code));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var component = FindOrCreateVbComponent(accessApp, projectName ?? "CurrentProject", moduleName, false)
+                    ?? throw new InvalidOperationException($"VBA module '{moduleName}' was not found.");
+                var codeModule = TryGetDynamicProperty(component, "CodeModule")
+                    ?? throw new InvalidOperationException($"Code module for '{moduleName}' is not accessible.");
+
+                _ = InvokeDynamicMethod(codeModule, "ReplaceLine", lineNumber, NormalizeLineEndings(code));
+                TrySaveModule(accessApp, moduleName);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public ModuleFindResult FindTextInModule(
+            string? projectName,
+            string moduleName,
+            string findText,
+            int startLine = 1,
+            int startColumn = 1,
+            int? endLine = null,
+            int? endColumn = null,
+            bool wholeWord = false,
+            bool matchCase = false,
+            bool patternSearch = false)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(moduleName)) throw new ArgumentException("Module name is required.", nameof(moduleName));
+            if (string.IsNullOrWhiteSpace(findText)) throw new ArgumentException("Find text is required.", nameof(findText));
+            if (startLine <= 0) throw new ArgumentException("startLine must be greater than zero.", nameof(startLine));
+            if (startColumn <= 0) throw new ArgumentException("startColumn must be greater than zero.", nameof(startColumn));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var component = FindOrCreateVbComponent(accessApp, projectName ?? "CurrentProject", moduleName, false)
+                    ?? throw new InvalidOperationException($"VBA module '{moduleName}' was not found.");
+                var codeModule = TryGetDynamicProperty(component, "CodeModule")
+                    ?? throw new InvalidOperationException($"Code module for '{moduleName}' is not accessible.");
+
+                var totalLineCount = ToInt32(TryGetDynamicProperty(codeModule, "CountOfLines"));
+                var effectiveEndLine = endLine ?? Math.Max(totalLineCount, startLine);
+                var effectiveEndColumn = endColumn ?? 255;
+
+                var target = (object)codeModule;
+                var methodArgs = new object?[]
+                {
+                    findText,
+                    startLine,
+                    startColumn,
+                    effectiveEndLine,
+                    effectiveEndColumn,
+                    wholeWord,
+                    matchCase,
+                    patternSearch
+                };
+
+                var parameterModifier = new System.Reflection.ParameterModifier(methodArgs.Length);
+                parameterModifier[1] = true;
+                parameterModifier[2] = true;
+                parameterModifier[3] = true;
+                parameterModifier[4] = true;
+
+                var foundObject = target.GetType().InvokeMember(
+                    "Find",
+                    System.Reflection.BindingFlags.InvokeMethod,
+                    binder: null,
+                    target: target,
+                    args: methodArgs,
+                    modifiers: new[] { parameterModifier },
+                    culture: null,
+                    namedParameters: null);
+
+                var found = foundObject is bool boolResult && boolResult;
+                return new ModuleFindResult
+                {
+                    Found = found,
+                    StartLine = found ? ToInt32(methodArgs[1]) : null,
+                    StartColumn = found ? ToInt32(methodArgs[2]) : null,
+                    EndLine = found ? ToInt32(methodArgs[3]) : null,
+                    EndColumn = found ? ToInt32(methodArgs[4]) : null
+                };
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public List<ImportExportSpecificationInfo> ListImportExportSpecs()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var specs = GetImportExportSpecificationsCollection(accessApp)
+                    ?? throw new InvalidOperationException("ImportExportSpecifications collection is unavailable.");
+
+                var results = new List<ImportExportSpecificationInfo>();
+                foreach (var spec in specs)
+                {
+                    results.Add(new ImportExportSpecificationInfo
+                    {
+                        Name = SafeToString(TryGetDynamicProperty(spec, "Name")) ?? string.Empty,
+                        Description = SafeToString(TryGetDynamicProperty(spec, "Description")),
+                        Xml = SafeToString(TryGetDynamicProperty(spec, "XML"))
+                    });
+                }
+
+                return results
+                    .Where(spec => !string.IsNullOrWhiteSpace(spec.Name))
+                    .OrderBy(spec => spec.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public ImportExportSpecificationInfo GetImportExportSpec(string specificationName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(specificationName)) throw new ArgumentException("Specification name is required.", nameof(specificationName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var specs = GetImportExportSpecificationsCollection(accessApp)
+                    ?? throw new InvalidOperationException("ImportExportSpecifications collection is unavailable.");
+                var spec = FindImportExportSpecification(specs, specificationName)
+                    ?? throw new InvalidOperationException($"Import/export specification not found: {specificationName}");
+
+                return new ImportExportSpecificationInfo
+                {
+                    Name = SafeToString(TryGetDynamicProperty(spec, "Name")) ?? specificationName,
+                    Description = SafeToString(TryGetDynamicProperty(spec, "Description")),
+                    Xml = SafeToString(TryGetDynamicProperty(spec, "XML"))
+                };
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void CreateImportExportSpec(string specificationName, string specificationXml)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(specificationName)) throw new ArgumentException("Specification name is required.", nameof(specificationName));
+            if (string.IsNullOrWhiteSpace(specificationXml)) throw new ArgumentException("Specification XML is required.", nameof(specificationXml));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var specs = GetImportExportSpecificationsCollection(accessApp)
+                    ?? throw new InvalidOperationException("ImportExportSpecifications collection is unavailable.");
+
+                var existing = FindImportExportSpecification(specs, specificationName);
+                if (existing != null)
+                    _ = InvokeDynamicMethod(existing, "Delete");
+
+                _ = InvokeDynamicMethod(specs, "Add", specificationName.Trim(), specificationXml);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void DeleteImportExportSpec(string specificationName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(specificationName)) throw new ArgumentException("Specification name is required.", nameof(specificationName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var specs = GetImportExportSpecificationsCollection(accessApp)
+                    ?? throw new InvalidOperationException("ImportExportSpecifications collection is unavailable.");
+                var spec = FindImportExportSpecification(specs, specificationName)
+                    ?? throw new InvalidOperationException($"Import/export specification not found: {specificationName}");
+
+                _ = InvokeDynamicMethod(spec, "Delete");
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void RunImportExportSpec(string specificationName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(specificationName)) throw new ArgumentException("Specification name is required.", nameof(specificationName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+                _ = InvokeDynamicMethod(doCmd, "RunSavedImportExport", specificationName.Trim());
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
         #endregion
 
         #region 5. System Table Metadata Access
@@ -7261,6 +7618,85 @@ namespace MS.Access.MCP.Interop
             return null;
         }
 
+        private static List<ModuleProcedureInfo> ParseModuleProcedures(string code)
+        {
+            if (string.IsNullOrWhiteSpace(code))
+                return new List<ModuleProcedureInfo>();
+
+            var normalized = NormalizeLineEndings(code).Replace("\r\n", "\n", StringComparison.Ordinal);
+            var lines = normalized.Split('\n');
+            var procedureStartRegex = new Regex(
+                "^\\s*(?:Public|Private|Friend|Static)?\\s*(Sub|Function|Property\\s+Get|Property\\s+Let|Property\\s+Set)\\s+([A-Za-z_][A-Za-z0-9_]*)\\b",
+                RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+            var procedures = new List<ModuleProcedureInfo>();
+            var index = 0;
+            while (index < lines.Length)
+            {
+                var line = lines[index];
+                var match = procedureStartRegex.Match(line);
+                if (!match.Success)
+                {
+                    index++;
+                    continue;
+                }
+
+                var declarationType = match.Groups[1].Value.Trim();
+                var procedureName = match.Groups[2].Value.Trim();
+                var startLine = index + 1;
+                var endPattern = declarationType.StartsWith("Property", StringComparison.OrdinalIgnoreCase)
+                    ? new Regex("^\\s*End\\s+Property\\b", RegexOptions.IgnoreCase | RegexOptions.Compiled)
+                    : declarationType.Equals("Sub", StringComparison.OrdinalIgnoreCase)
+                        ? new Regex("^\\s*End\\s+Sub\\b", RegexOptions.IgnoreCase | RegexOptions.Compiled)
+                        : new Regex("^\\s*End\\s+Function\\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+                var endLine = startLine;
+                for (var scan = index + 1; scan < lines.Length; scan++)
+                {
+                    if (endPattern.IsMatch(lines[scan]))
+                    {
+                        endLine = scan + 1;
+                        break;
+                    }
+                }
+
+                var lineCount = Math.Max(1, endLine - startLine + 1);
+                procedures.Add(new ModuleProcedureInfo
+                {
+                    Name = procedureName,
+                    ProcedureType = declarationType,
+                    StartLine = startLine,
+                    LineCount = lineCount
+                });
+
+                index = Math.Max(index + 1, endLine);
+            }
+
+            return procedures;
+        }
+
+        private static dynamic? GetImportExportSpecificationsCollection(dynamic accessApp)
+        {
+            var currentProject = TryGetDynamicProperty(accessApp, "CurrentProject");
+            var collection = TryGetDynamicProperty(currentProject, "ImportExportSpecifications");
+            if (collection != null)
+                return collection;
+
+            return TryGetDynamicProperty(accessApp, "ImportExportSpecifications");
+        }
+
+        private static dynamic? FindImportExportSpecification(dynamic specifications, string specificationName)
+        {
+            foreach (var specification in specifications)
+            {
+                var name = SafeToString(TryGetDynamicProperty(specification, "Name"));
+                if (string.Equals(name, specificationName, StringComparison.OrdinalIgnoreCase))
+                    return specification;
+            }
+
+            return null;
+        }
+
         private static string MapVbComponentType(int componentType)
         {
             return componentType switch
@@ -8717,6 +9153,40 @@ namespace MS.Access.MCP.Interop
         public string Name { get; set; } = "";
         public string FullName { get; set; } = "";
         public string Type { get; set; } = "";
+    }
+
+    public class ModuleAnalysisInfo
+    {
+        public string ProjectName { get; set; } = "";
+        public string ModuleName { get; set; } = "";
+        public string ModuleType { get; set; } = "";
+        public int LineCount { get; set; }
+        public int DeclarationLineCount { get; set; }
+        public int ProcedureCount { get; set; }
+    }
+
+    public class ModuleProcedureInfo
+    {
+        public string Name { get; set; } = "";
+        public string ProcedureType { get; set; } = "";
+        public int StartLine { get; set; }
+        public int LineCount { get; set; }
+    }
+
+    public class ModuleFindResult
+    {
+        public bool Found { get; set; }
+        public int? StartLine { get; set; }
+        public int? StartColumn { get; set; }
+        public int? EndLine { get; set; }
+        public int? EndColumn { get; set; }
+    }
+
+    public class ImportExportSpecificationInfo
+    {
+        public string Name { get; set; } = "";
+        public string? Description { get; set; }
+        public string? Xml { get; set; }
     }
 
     public class VBAProjectInfo
