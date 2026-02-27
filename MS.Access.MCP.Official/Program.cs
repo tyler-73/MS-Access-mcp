@@ -383,7 +383,30 @@ class Program
                 new { name = "delete_form", description = "Delete a form from the database", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
                 new { name = "export_report_to_text", description = "Export a report to text format", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" }, mode = new { type = "string", @enum = new[] { "json", "access_text" }, description = "Optional mode. Defaults to json." } }, required = new string[] { "report_name" } } },
                 new { name = "import_report_from_text", description = "Import a report from text format", inputSchema = new { type = "object", properties = new { report_data = new { type = "string" }, report_name = new { type = "string", description = "Optional report name override. Required for some access_text payloads." }, mode = new { type = "string", @enum = new[] { "json", "access_text" }, description = "Optional mode. Defaults to json." } }, required = new string[] { "report_data" } } },
-                new { name = "delete_report", description = "Delete a report from the database", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" } }, required = new string[] { "report_name" } } }
+                new { name = "delete_report", description = "Delete a report from the database", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" } }, required = new string[] { "report_name" } } },
+                // Priority 17: DoCmd Remaining + Domain Aggregates
+                new { name = "find_next", description = "Continue search after FindRecord (DoCmd.FindNext). Must be preceded by a FindRecord call.", inputSchema = new { type = "object", properties = new { }, required = new string[] { } } },
+                new { name = "search_for_record", description = "Search for a record matching criteria in the active or specified object (DoCmd.SearchForRecord).", inputSchema = new { type = "object", properties = new { object_type = new { type = "integer", description = "Optional AcDataObjectType enum: -1=ActiveDataObject (default), 0=Table, 1=Query, 2=Form, 3=ServerView, 4=StoredProcedure" }, object_name = new { type = "string", description = "Optional name of the table, query, or form to search" }, record = new { type = "string", @enum = new[] { "", "First", "Last", "Next", "Previous" }, description = "Optional search direction. Default is empty (searches all)." }, where_condition = new { type = "string", description = "WHERE clause criteria string (without the WHERE keyword), e.g. \"[ID] = 5\"" } }, required = new string[] { "where_condition" } } },
+                new { name = "set_filter_docmd", description = "Apply a filter to the active datasheet, form, report, or table via DoCmd.SetFilter.", inputSchema = new { type = "object", properties = new { filter_name = new { type = "string", description = "Optional name of a saved filter (query) to apply" }, where_condition = new { type = "string", description = "Optional WHERE clause (without WHERE keyword) to filter records" } }, required = new string[] { } } },
+                new { name = "set_order_by", description = "Set the sort order for the active form, report, datasheet, or server view (DoCmd.SetOrderBy).", inputSchema = new { type = "object", properties = new { order_by = new { type = "string", description = "ORDER BY clause (without ORDER BY keyword), e.g. \"[LastName] ASC, [FirstName] DESC\"" } }, required = new string[] { "order_by" } } },
+                new { name = "set_parameter", description = "Set a parameter value before opening a parameterized query, form, or report (DoCmd.SetParameter). Must be called before the OpenQuery/OpenForm/OpenReport call.", inputSchema = new { type = "object", properties = new { name = new { type = "string", description = "Parameter name as defined in the query/form/report" }, expression = new { type = "string", description = "Expression or value for the parameter" } }, required = new string[] { "name", "expression" } } },
+                new { name = "set_runtime_property", description = "Set a control property at runtime by name (DoCmd.SetProperty). Works on the active form/report.", inputSchema = new { type = "object", properties = new { control_name = new { type = "string", description = "Name of the control whose property to set" }, property_id = new { type = "integer", description = "AcProperty enum value: 0=Value, 1=Enabled, 2=Visible, 3=Locked, 4=Left, 5=Top, 6=Width, 7=Height, 8=ForeColor, 9=BackColor, 10=Caption" }, value = new { type = "string", description = "New value for the property" } }, required = new string[] { "control_name", "property_id", "value" } } },
+                new { name = "refresh_record", description = "Refresh the data in the active form by requerying the underlying record source (DoCmd.RefreshRecord).", inputSchema = new { type = "object", properties = new { }, required = new string[] { } } },
+                new { name = "close_database", description = "Close the current database without quitting the Access application (DoCmd.CloseDatabase). Resets the connection state.", inputSchema = new { type = "object", properties = new { }, required = new string[] { } } },
+                new { name = "domain_aggregate", description = "Execute a domain aggregate function (DLookup, DCount, DSum, DAvg, DMin, DMax, DFirst, DLast) against a table or query domain.", inputSchema = new { type = "object", properties = new { function = new { type = "string", @enum = new[] { "DLookup", "DCount", "DSum", "DAvg", "DMin", "DMax", "DFirst", "DLast" }, description = "Domain aggregate function to call" }, expression = new { type = "string", description = "Expression to evaluate, e.g. \"[Price]\" or \"Count(*)\"" }, domain = new { type = "string", description = "Table or query name to use as the domain" }, criteria = new { type = "string", description = "Optional WHERE clause criteria (without WHERE keyword), e.g. \"[Category] = 'Books'\"" } }, required = new string[] { "function", "expression", "domain" } } },
+                new { name = "access_error", description = "Get the error description string for a given Access/VBA error number (Application.AccessError).", inputSchema = new { type = "object", properties = new { error_number = new { type = "integer", description = "The Access or VBA error number to look up" } }, required = new string[] { "error_number" } } },
+                new { name = "build_criteria", description = "Build a properly formatted criteria string for use in domain aggregates, filters, or queries (Application.BuildCriteria).", inputSchema = new { type = "object", properties = new { field = new { type = "string", description = "Field name, e.g. \"[LastName]\"" }, field_type = new { type = "integer", description = "DAO DataTypeEnum value: 1=dbBoolean, 2=dbByte, 3=dbInteger, 4=dbLong, 5=dbCurrency, 6=dbSingle, 7=dbDouble, 8=dbDate, 10=dbText, 12=dbMemo" }, expression = new { type = "string", description = "Value or expression to match, e.g. \"Smith\"" } }, required = new string[] { "field", "field_type", "expression" } } },
+                // Priority 18: Screen Object + Visibility + App Info
+                new { name = "get_active_form", description = "Get info about the form that currently has focus (Screen.ActiveForm). Returns form name, record source, caption, current record, and dirty state.", inputSchema = new { type = "object", properties = new { }, required = new string[] { } } },
+                new { name = "get_active_report", description = "Get info about the active report (Screen.ActiveReport). Returns report name, record source, and caption.", inputSchema = new { type = "object", properties = new { }, required = new string[] { } } },
+                new { name = "get_active_control", description = "Get info about the control that currently has focus (Screen.ActiveControl). Returns control name, type, and value.", inputSchema = new { type = "object", properties = new { }, required = new string[] { } } },
+                new { name = "get_active_datasheet", description = "Get info about the active datasheet (Screen.ActiveDatasheet). Returns datasheet name and record source.", inputSchema = new { type = "object", properties = new { }, required = new string[] { } } },
+                new { name = "set_hidden_attribute", description = "Hide or unhide a database object in the Navigation Pane (Application.SetHiddenAttribute). object_type: 0=Table, 1=Query, 2=Form, 3=Report, 4=Macro, 5=Module.", inputSchema = new { type = "object", properties = new { object_type = new { type = "integer", description = "AcObjectType enum value: 0=Table, 1=Query, 2=Form, 3=Report, 4=Macro, 5=Module" }, object_name = new { type = "string", description = "Name of the database object" }, hidden = new { type = "boolean", description = "True to hide, false to unhide" } }, required = new string[] { "object_type", "object_name", "hidden" } } },
+                new { name = "get_hidden_attribute", description = "Check if a database object is hidden in the Navigation Pane (Application.GetHiddenAttribute). object_type: 0=Table, 1=Query, 2=Form, 3=Report, 4=Macro, 5=Module.", inputSchema = new { type = "object", properties = new { object_type = new { type = "integer", description = "AcObjectType enum value: 0=Table, 1=Query, 2=Form, 3=Report, 4=Macro, 5=Module" }, object_name = new { type = "string", description = "Name of the database object" } }, required = new string[] { "object_type", "object_name" } } },
+                new { name = "get_current_object", description = "Get the name and type of the currently selected/active database object (Application.CurrentObjectName and CurrentObjectType).", inputSchema = new { type = "object", properties = new { }, required = new string[] { } } },
+                new { name = "get_current_user", description = "Get the current user name (Application.CurrentUser).", inputSchema = new { type = "object", properties = new { }, required = new string[] { } } },
+                new { name = "set_access_visible", description = "Show or hide the Access application window (Application.Visible).", inputSchema = new { type = "object", properties = new { visible = new { type = "boolean", description = "True to show, false to hide the Access window" } }, required = new string[] { "visible" } } },
+                new { name = "get_access_hwnd", description = "Get the window handle (hWnd) of the Access application window (Application.hWndAccessApp).", inputSchema = new { type = "object", properties = new { }, required = new string[] { } } }
             }
         };
     }
@@ -647,6 +670,29 @@ class Program
             "export_report_to_text" => HandleExportReportToText(accessService, toolArguments),
             "import_report_from_text" => HandleImportReportFromText(accessService, toolArguments),
             "delete_report" => HandleDeleteReport(accessService, toolArguments),
+            // Priority 17: DoCmd Remaining + Domain Aggregates
+            "find_next" => HandleFindNext(accessService, toolArguments),
+            "search_for_record" => HandleSearchForRecord(accessService, toolArguments),
+            "set_filter_docmd" => HandleSetFilterDoCmd(accessService, toolArguments),
+            "set_order_by" => HandleSetOrderBy(accessService, toolArguments),
+            "set_parameter" => HandleSetParameter(accessService, toolArguments),
+            "set_runtime_property" => HandleSetRuntimeProperty(accessService, toolArguments),
+            "refresh_record" => HandleRefreshRecord(accessService, toolArguments),
+            "close_database" => HandleCloseDatabase(accessService, toolArguments),
+            "domain_aggregate" => HandleDomainAggregate(accessService, toolArguments),
+            "access_error" => HandleAccessError(accessService, toolArguments),
+            "build_criteria" => HandleBuildCriteria(accessService, toolArguments),
+            // Priority 18: Screen Object + Visibility + App Info
+            "get_active_form" => HandleGetActiveForm(accessService, toolArguments),
+            "get_active_report" => HandleGetActiveReport(accessService, toolArguments),
+            "get_active_control" => HandleGetActiveControl(accessService, toolArguments),
+            "get_active_datasheet" => HandleGetActiveDatasheet(accessService, toolArguments),
+            "set_hidden_attribute" => HandleSetHiddenAttribute(accessService, toolArguments),
+            "get_hidden_attribute" => HandleGetHiddenAttribute(accessService, toolArguments),
+            "get_current_object" => HandleGetCurrentObject(accessService, toolArguments),
+            "get_current_user" => HandleGetCurrentUser(accessService, toolArguments),
+            "set_access_visible" => HandleSetAccessVisible(accessService, toolArguments),
+            "get_access_hwnd" => HandleGetAccessHwnd(accessService, toolArguments),
             _ => new { success = false, error = $"Unknown tool: {toolName}" }
         };
     }
@@ -5840,6 +5886,364 @@ class Program
         catch (Exception ex)
         {
             return new { success = false, error = ex.Message };
+        }
+    }
+
+    // ===== Priority 17: DoCmd Remaining + Domain Aggregates =====
+
+    static object HandleFindNext(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            accessService.FindNext();
+            return new { success = true, message = "FindNext executed" };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("find_next", ex);
+        }
+    }
+
+    static object HandleSearchForRecord(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "where_condition", out var whereCondition, out var whereError))
+                return whereError;
+
+            var objectType = GetOptionalIntFromAliases(arguments, new[] { "object_type" }, -1);
+            _ = TryGetOptionalString(arguments, "object_name", out var objectName);
+            _ = TryGetOptionalString(arguments, "record", out var record);
+
+            accessService.SearchForRecord(objectType, objectName, record, whereCondition);
+            return new { success = true, message = "SearchForRecord executed", where_condition = whereCondition };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("search_for_record", ex);
+        }
+    }
+
+    static object HandleSetFilterDoCmd(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            _ = TryGetOptionalString(arguments, "filter_name", out var filterName);
+            _ = TryGetOptionalString(arguments, "where_condition", out var whereCondition);
+
+            accessService.SetFilterDoCmd(
+                string.IsNullOrWhiteSpace(filterName) ? null : filterName,
+                string.IsNullOrWhiteSpace(whereCondition) ? null : whereCondition);
+            return new { success = true, message = "SetFilter applied" };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_filter_docmd", ex);
+        }
+    }
+
+    static object HandleSetOrderBy(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "order_by", out var orderBy, out var orderByError))
+                return orderByError;
+
+            accessService.SetOrderBy(orderBy);
+            return new { success = true, message = "SetOrderBy applied", order_by = orderBy };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_order_by", ex);
+        }
+    }
+
+    static object HandleSetParameter(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "name", out var name, out var nameError))
+                return nameError;
+            if (!TryGetRequiredString(arguments, "expression", out var expression, out var exprError))
+                return exprError;
+
+            accessService.SetParameter(name, expression);
+            return new { success = true, message = $"Parameter '{name}' set", name, expression };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_parameter", ex);
+        }
+    }
+
+    static object HandleSetRuntimeProperty(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "control_name", out var controlName, out var controlError))
+                return controlError;
+            if (!TryGetRequiredString(arguments, "value", out var value, out var valueError))
+                return valueError;
+
+            var propertyId = GetOptionalIntFromAliases(arguments, new[] { "property_id" }, -1);
+            if (propertyId < 0)
+                return new { success = false, error = "property_id is required and must be a non-negative integer" };
+
+            accessService.SetRuntimeProperty(controlName, propertyId, value);
+            return new { success = true, message = $"Property {propertyId} set on '{controlName}'", control_name = controlName, property_id = propertyId };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_runtime_property", ex);
+        }
+    }
+
+    static object HandleRefreshRecord(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            accessService.RefreshRecord();
+            return new { success = true, message = "RefreshRecord executed" };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("refresh_record", ex);
+        }
+    }
+
+    static object HandleCloseDatabase(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            accessService.CloseDatabase();
+            return new { success = true, message = "Database closed" };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("close_database", ex);
+        }
+    }
+
+    static object HandleDomainAggregate(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "function", out var function, out var funcError))
+                return funcError;
+            if (!TryGetRequiredString(arguments, "expression", out var expression, out var exprError))
+                return exprError;
+            if (!TryGetRequiredString(arguments, "domain", out var domain, out var domainError))
+                return domainError;
+            _ = TryGetOptionalString(arguments, "criteria", out var criteria);
+
+            var allowedFunctions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                { "DLookup", "DCount", "DSum", "DAvg", "DMin", "DMax", "DFirst", "DLast" };
+            if (!allowedFunctions.Contains(function))
+                return new { success = false, error = $"Invalid function '{function}'. Allowed: DLookup, DCount, DSum, DAvg, DMin, DMax, DFirst, DLast" };
+
+            var normalizedFunction = allowedFunctions.First(f => string.Equals(f, function, StringComparison.OrdinalIgnoreCase));
+
+            var result = accessService.DomainAggregate(
+                normalizedFunction,
+                expression,
+                domain,
+                string.IsNullOrWhiteSpace(criteria) ? null : criteria);
+
+            return new { success = true, message = $"{normalizedFunction} executed", value = result, function = normalizedFunction, expression, domain };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("domain_aggregate", ex);
+        }
+    }
+
+    static object HandleAccessError(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var errorNumber = GetOptionalIntFromAliases(arguments, new[] { "error_number" }, int.MinValue);
+            if (errorNumber == int.MinValue)
+                return new { success = false, error = "error_number is required" };
+
+            var description = accessService.AccessError(errorNumber);
+            return new { success = true, error_number = errorNumber, description };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("access_error", ex);
+        }
+    }
+
+    static object HandleBuildCriteria(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "field", out var field, out var fieldError))
+                return fieldError;
+            if (!TryGetRequiredString(arguments, "expression", out var expression, out var exprError))
+                return exprError;
+
+            var fieldType = GetOptionalIntFromAliases(arguments, new[] { "field_type" }, int.MinValue);
+            if (fieldType == int.MinValue)
+                return new { success = false, error = "field_type is required" };
+
+            var result = accessService.BuildCriteria(field, fieldType, expression);
+            return new { success = true, criteria = result, field, field_type = fieldType, expression };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("build_criteria", ex);
+        }
+    }
+
+    // ===== Priority 18: Screen Object + Visibility + App Info =====
+
+    static object HandleGetActiveForm(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var result = accessService.GetActiveForm();
+            return new { success = true, result };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_active_form", ex);
+        }
+    }
+
+    static object HandleGetActiveReport(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var result = accessService.GetActiveReport();
+            return new { success = true, result };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_active_report", ex);
+        }
+    }
+
+    static object HandleGetActiveControl(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var result = accessService.GetActiveControl();
+            return new { success = true, result };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_active_control", ex);
+        }
+    }
+
+    static object HandleGetActiveDatasheet(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var result = accessService.GetActiveDatasheet();
+            return new { success = true, result };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_active_datasheet", ex);
+        }
+    }
+
+    static object HandleSetHiddenAttribute(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!arguments.TryGetProperty("object_type", out var objectTypeElement) ||
+                objectTypeElement.ValueKind != JsonValueKind.Number ||
+                !objectTypeElement.TryGetInt32(out var objectType))
+                return new { success = false, error = "object_type is required (integer: 0=Table, 1=Query, 2=Form, 3=Report, 4=Macro, 5=Module)" };
+
+            if (!TryGetRequiredString(arguments, "object_name", out var objectName, out var objectNameError))
+                return objectNameError;
+
+            var hidden = GetOptionalBool(arguments, "hidden", true);
+
+            accessService.SetHiddenAttribute(objectType, objectName, hidden);
+            return new { success = true, message = $"Set hidden attribute for {objectName} to {hidden}", object_type = objectType, object_name = objectName, hidden };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_hidden_attribute", ex);
+        }
+    }
+
+    static object HandleGetHiddenAttribute(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!arguments.TryGetProperty("object_type", out var objectTypeElement) ||
+                objectTypeElement.ValueKind != JsonValueKind.Number ||
+                !objectTypeElement.TryGetInt32(out var objectType))
+                return new { success = false, error = "object_type is required (integer: 0=Table, 1=Query, 2=Form, 3=Report, 4=Macro, 5=Module)" };
+
+            if (!TryGetRequiredString(arguments, "object_name", out var objectName, out var objectNameError))
+                return objectNameError;
+
+            var hidden = accessService.GetHiddenAttribute(objectType, objectName);
+            return new { success = true, object_type = objectType, object_name = objectName, hidden };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_hidden_attribute", ex);
+        }
+    }
+
+    static object HandleGetCurrentObject(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var result = accessService.GetCurrentObject();
+            return new { success = true, result };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_current_object", ex);
+        }
+    }
+
+    static object HandleGetCurrentUser(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var result = accessService.GetCurrentUser();
+            return new { success = true, user = result };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_current_user", ex);
+        }
+    }
+
+    static object HandleSetAccessVisible(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var visible = GetOptionalBool(arguments, "visible", true);
+            accessService.SetAccessVisible(visible);
+            return new { success = true, message = $"Access application visibility set to {visible}", visible };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_access_visible", ex);
+        }
+    }
+
+    static object HandleGetAccessHwnd(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var hwnd = accessService.GetAccessHwnd();
+            return new { success = true, hwnd };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_access_hwnd", ex);
         }
     }
 

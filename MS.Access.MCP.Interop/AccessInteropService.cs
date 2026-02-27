@@ -7100,6 +7100,320 @@ namespace MS.Access.MCP.Interop
 
         #endregion
 
+        #region 8. DoCmd Remaining & Domain Aggregates
+
+        public void FindNext()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(
+                accessApp => accessApp.DoCmd.FindNext(),
+                requireExclusive: false,
+                releaseOleDb: false);
+        }
+
+        public void SearchForRecord(int objectType, string? objectName, string? record, string whereCondition)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(whereCondition)) throw new ArgumentException("Where condition is required", nameof(whereCondition));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var acRecord = ResolveAcRecord(record);
+
+                if (!string.IsNullOrWhiteSpace(objectName))
+                    accessApp.DoCmd.SearchForRecord(objectType, objectName, acRecord, whereCondition);
+                else
+                    accessApp.DoCmd.SearchForRecord(objectType, System.Reflection.Missing.Value, acRecord, whereCondition);
+            }, requireExclusive: false, releaseOleDb: false);
+        }
+
+        private static int ResolveAcRecord(string? record)
+        {
+            if (string.IsNullOrWhiteSpace(record)) return 0; // acFirst
+            return record.Trim().ToLowerInvariant() switch
+            {
+                "first" => 0,    // acFirst
+                "last" => 5,     // acLast
+                "next" => 2,     // acNext
+                "previous" => 1, // acPrevious
+                _ => 0           // default to acFirst
+            };
+        }
+
+        public void SetFilterDoCmd(string? filterName, string? whereCondition)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(accessApp =>
+            {
+                var filter = string.IsNullOrWhiteSpace(filterName)
+                    ? System.Reflection.Missing.Value
+                    : (object)filterName;
+                var where = string.IsNullOrWhiteSpace(whereCondition)
+                    ? System.Reflection.Missing.Value
+                    : (object)whereCondition;
+
+                accessApp.DoCmd.SetFilter(filter, where);
+            }, requireExclusive: false, releaseOleDb: false);
+        }
+
+        public void SetOrderBy(string orderBy)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(orderBy)) throw new ArgumentException("Order by expression is required", nameof(orderBy));
+
+            ExecuteComOperation(
+                accessApp => accessApp.DoCmd.SetOrderBy(orderBy),
+                requireExclusive: false,
+                releaseOleDb: false);
+        }
+
+        public void SetParameter(string name, string expression)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Parameter name is required", nameof(name));
+            if (string.IsNullOrWhiteSpace(expression)) throw new ArgumentException("Expression is required", nameof(expression));
+
+            ExecuteComOperation(
+                accessApp => accessApp.DoCmd.SetParameter(name, expression),
+                requireExclusive: false,
+                releaseOleDb: false);
+        }
+
+        public void SetRuntimeProperty(string controlName, int property, string value)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(controlName)) throw new ArgumentException("Control name is required", nameof(controlName));
+
+            ExecuteComOperation(
+                accessApp => accessApp.DoCmd.SetProperty(controlName, property, value),
+                requireExclusive: false,
+                releaseOleDb: false);
+        }
+
+        public void RefreshRecord()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(
+                accessApp => accessApp.DoCmd.RefreshRecord(),
+                requireExclusive: false,
+                releaseOleDb: false);
+        }
+
+        public void CloseDatabase()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(
+                accessApp => accessApp.DoCmd.CloseDatabase(),
+                requireExclusive: false,
+                releaseOleDb: false);
+
+            // Reset internal state since the database is now closed
+            _currentDatabasePath = null;
+            _databasePassword = null;
+            _accessDatabasePath = null;
+            _accessDatabaseOpenedExclusive = false;
+        }
+
+        public object? DomainAggregate(string function, string expression, string domain, string? criteria)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(function)) throw new ArgumentException("Function is required", nameof(function));
+            if (string.IsNullOrWhiteSpace(expression)) throw new ArgumentException("Expression is required", nameof(expression));
+            if (string.IsNullOrWhiteSpace(domain)) throw new ArgumentException("Domain is required", nameof(domain));
+
+            object? result = null;
+            ExecuteComOperation(accessApp =>
+            {
+                dynamic app = accessApp;
+                result = function switch
+                {
+                    "DLookup" => criteria != null ? app.DLookup(expression, domain, criteria) : app.DLookup(expression, domain),
+                    "DCount" => criteria != null ? app.DCount(expression, domain, criteria) : app.DCount(expression, domain),
+                    "DSum" => criteria != null ? app.DSum(expression, domain, criteria) : app.DSum(expression, domain),
+                    "DAvg" => criteria != null ? app.DAvg(expression, domain, criteria) : app.DAvg(expression, domain),
+                    "DMin" => criteria != null ? app.DMin(expression, domain, criteria) : app.DMin(expression, domain),
+                    "DMax" => criteria != null ? app.DMax(expression, domain, criteria) : app.DMax(expression, domain),
+                    "DFirst" => criteria != null ? app.DFirst(expression, domain, criteria) : app.DFirst(expression, domain),
+                    "DLast" => criteria != null ? app.DLast(expression, domain, criteria) : app.DLast(expression, domain),
+                    _ => throw new ArgumentException($"Unsupported domain function: {function}")
+                };
+
+                if (result is DBNull) result = null;
+            }, requireExclusive: false, releaseOleDb: false);
+
+            return result;
+        }
+
+        public string AccessError(int errorNumber)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            string result = "";
+            ExecuteComOperation(accessApp =>
+            {
+                result = (string)(accessApp.AccessError(errorNumber) ?? "");
+            }, requireExclusive: false, releaseOleDb: false);
+
+            return result;
+        }
+
+        public string BuildCriteria(string field, int fieldType, string expression)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(field)) throw new ArgumentException("Field is required", nameof(field));
+            if (string.IsNullOrWhiteSpace(expression)) throw new ArgumentException("Expression is required", nameof(expression));
+
+            string result = "";
+            ExecuteComOperation(accessApp =>
+            {
+                result = (string)(accessApp.BuildCriteria(field, fieldType, expression) ?? "");
+            }, requireExclusive: false, releaseOleDb: false);
+
+            return result;
+        }
+
+        #endregion
+
+        #region 9. Screen Object, Visibility & App Info
+
+        public object GetActiveForm()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            object? result = null;
+            ExecuteComOperation(app =>
+            {
+                var screen = TryGetDynamicProperty(app, "Screen");
+                var form = TryGetDynamicProperty(screen, "ActiveForm");
+                var name = TryGetDynamicProperty(form, "Name")?.ToString() ?? "";
+                var recordSource = TryGetDynamicProperty(form, "RecordSource")?.ToString() ?? "";
+                var caption = TryGetDynamicProperty(form, "Caption")?.ToString() ?? "";
+                var currentRecord = TryGetDynamicProperty(form, "CurrentRecord");
+                var dirty = TryGetDynamicProperty(form, "Dirty");
+                result = new { name, recordSource, caption, currentRecord, dirty };
+            }, requireExclusive: false, releaseOleDb: false);
+            return result!;
+        }
+
+        public object GetActiveReport()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            object? result = null;
+            ExecuteComOperation(app =>
+            {
+                var screen = TryGetDynamicProperty(app, "Screen");
+                var report = TryGetDynamicProperty(screen, "ActiveReport");
+                var name = TryGetDynamicProperty(report, "Name")?.ToString() ?? "";
+                var recordSource = TryGetDynamicProperty(report, "RecordSource")?.ToString() ?? "";
+                var caption = TryGetDynamicProperty(report, "Caption")?.ToString() ?? "";
+                result = new { name, recordSource, caption };
+            }, requireExclusive: false, releaseOleDb: false);
+            return result!;
+        }
+
+        public object GetActiveControl()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            object? result = null;
+            ExecuteComOperation(app =>
+            {
+                var screen = TryGetDynamicProperty(app, "Screen");
+                var control = TryGetDynamicProperty(screen, "ActiveControl");
+                var name = TryGetDynamicProperty(control, "Name")?.ToString() ?? "";
+                var controlType = TryGetDynamicProperty(control, "ControlType");
+                object? value = null;
+                try { value = TryGetDynamicProperty(control, "Value"); } catch { }
+                result = new { name, controlType, value = value?.ToString() };
+            }, requireExclusive: false, releaseOleDb: false);
+            return result!;
+        }
+
+        public object GetActiveDatasheet()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            object? result = null;
+            ExecuteComOperation(app =>
+            {
+                var screen = TryGetDynamicProperty(app, "Screen");
+                var ds = TryGetDynamicProperty(screen, "ActiveDatasheet");
+                var name = TryGetDynamicProperty(ds, "Name")?.ToString() ?? "";
+                var recordSource = TryGetDynamicProperty(ds, "RecordSource")?.ToString() ?? "";
+                result = new { name, recordSource };
+            }, requireExclusive: false, releaseOleDb: false);
+            return result!;
+        }
+
+        public void SetHiddenAttribute(int objectType, string objectName, bool hidden)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            ExecuteComOperation(app =>
+            {
+                InvokeDynamicMethod(app, "SetHiddenAttribute", objectType, objectName, hidden);
+            }, requireExclusive: false, releaseOleDb: false);
+        }
+
+        public bool GetHiddenAttribute(int objectType, string objectName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            bool result = false;
+            ExecuteComOperation(app =>
+            {
+                var val = InvokeDynamicMethod(app, "GetHiddenAttribute", objectType, objectName);
+                result = Convert.ToBoolean(val);
+            }, requireExclusive: false, releaseOleDb: false);
+            return result;
+        }
+
+        public object GetCurrentObject()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            object? result = null;
+            ExecuteComOperation(app =>
+            {
+                var name = TryGetDynamicProperty(app, "CurrentObjectName")?.ToString() ?? "";
+                var type = TryGetDynamicProperty(app, "CurrentObjectType");
+                result = new { name, objectType = type };
+            }, requireExclusive: false, releaseOleDb: false);
+            return result!;
+        }
+
+        public string GetCurrentUser()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            string result = "";
+            ExecuteComOperation(app =>
+            {
+                result = InvokeDynamicMethod(app, "CurrentUser")?.ToString() ?? "";
+            }, requireExclusive: false, releaseOleDb: false);
+            return result;
+        }
+
+        public void SetAccessVisible(bool visible)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            ExecuteComOperation(app =>
+            {
+                SetDynamicProperty(app, "Visible", visible);
+            }, requireExclusive: false, releaseOleDb: false);
+        }
+
+        public long GetAccessHwnd()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            long result = 0;
+            ExecuteComOperation(app =>
+            {
+                var hwnd = TryGetDynamicProperty(app, "hWndAccessApp");
+                result = Convert.ToInt64(hwnd);
+            }, requireExclusive: false, releaseOleDb: false);
+            return result;
+        }
+
+        #endregion
+
         #region Helper Methods
 
         private List<FieldInfo> GetTableFields(string tableName)
