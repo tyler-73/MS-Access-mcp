@@ -7809,6 +7809,174 @@ namespace MS.Access.MCP.Interop
 
         #endregion
 
+        #region 12. XML/Data Exchange & Printer Management
+
+        public void ExportXml(int objectType, string dataSource, string dataTarget, string? schemaTarget, string? presentationTarget)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(app =>
+            {
+                if (schemaTarget != null && presentationTarget != null)
+                    InvokeDynamicMethod(app, "ExportXML", objectType, dataSource, dataTarget, schemaTarget, presentationTarget);
+                else if (schemaTarget != null)
+                    InvokeDynamicMethod(app, "ExportXML", objectType, dataSource, dataTarget, schemaTarget);
+                else
+                    InvokeDynamicMethod(app, "ExportXML", objectType, dataSource, dataTarget);
+            }, requireExclusive: false, releaseOleDb: false);
+        }
+
+        public void ImportXml(string dataSource, int importOptions = 0)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(app =>
+            {
+                InvokeDynamicMethod(app, "ImportXML", dataSource, importOptions);
+            }, requireExclusive: true, releaseOleDb: true);
+        }
+
+        public void TransformXml(string dataSource, string transformSource, string outputTarget)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(app =>
+            {
+                InvokeDynamicMethod(app, "TransformXML", dataSource, transformSource, outputTarget);
+            }, requireExclusive: false, releaseOleDb: false);
+        }
+
+        public void ExportNavigationPaneXml(string outputPath)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(app =>
+            {
+                InvokeDynamicMethod(app, "ExportNavigationPane", outputPath);
+            }, requireExclusive: false, releaseOleDb: false);
+        }
+
+        public void ImportNavigationPaneXml(string inputPath)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(app =>
+            {
+                InvokeDynamicMethod(app, "ImportNavigationPane", inputPath);
+            }, requireExclusive: true, releaseOleDb: true);
+        }
+
+        public void SetDefaultPrinter(string printerName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(app =>
+            {
+                var printers = TryGetDynamicProperty(app, "Printers");
+                dynamic? targetPrinter = null;
+                foreach (var p in printers)
+                {
+                    if (string.Equals(TryGetDynamicProperty(p, "DeviceName")?.ToString(), printerName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        targetPrinter = p;
+                        break;
+                    }
+                }
+                if (targetPrinter == null)
+                    throw new ArgumentException($"Printer '{printerName}' not found");
+                SetDynamicProperty(app, "Printer", targetPrinter);
+            }, requireExclusive: false, releaseOleDb: false);
+        }
+
+        public void SetFormPrinter(string formName, string printerName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(app =>
+            {
+                var forms = TryGetDynamicProperty(app, "Forms");
+                var form = TryGetDynamicProperty(forms, "Item", formName);
+                var printers = TryGetDynamicProperty(app, "Printers");
+                dynamic? targetPrinter = null;
+                foreach (var p in printers)
+                {
+                    if (string.Equals(TryGetDynamicProperty(p, "DeviceName")?.ToString(), printerName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        targetPrinter = p;
+                        break;
+                    }
+                }
+                if (targetPrinter == null)
+                    throw new ArgumentException($"Printer '{printerName}' not found");
+                SetDynamicProperty(form, "Printer", targetPrinter);
+            }, requireExclusive: false, releaseOleDb: false);
+        }
+
+        public void SetReportPrinter(string reportName, string printerName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(app =>
+            {
+                var reports = TryGetDynamicProperty(app, "Reports");
+                var report = TryGetDynamicProperty(reports, "Item", reportName);
+                var printers = TryGetDynamicProperty(app, "Printers");
+                dynamic? targetPrinter = null;
+                foreach (var p in printers)
+                {
+                    if (string.Equals(TryGetDynamicProperty(p, "DeviceName")?.ToString(), printerName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        targetPrinter = p;
+                        break;
+                    }
+                }
+                if (targetPrinter == null)
+                    throw new ArgumentException($"Printer '{printerName}' not found");
+                SetDynamicProperty(report, "Printer", targetPrinter);
+            }, requireExclusive: false, releaseOleDb: false);
+        }
+
+        public List<Dictionary<string, object?>> ListPrinters()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            var result = new List<Dictionary<string, object?>>();
+            ExecuteComOperation(app =>
+            {
+                var printers = TryGetDynamicProperty(app, "Printers");
+                foreach (var p in printers)
+                {
+                    var info = new Dictionary<string, object?>
+                    {
+                        ["DeviceName"] = TryGetDynamicProperty(p, "DeviceName")?.ToString(),
+                        ["DriverName"] = TryGetDynamicProperty(p, "DriverName")?.ToString(),
+                        ["Port"] = TryGetDynamicProperty(p, "Port")?.ToString()
+                    };
+                    result.Add(info);
+                }
+            }, requireExclusive: false, releaseOleDb: false);
+            return result;
+        }
+
+        public object GetDatabaseEngineInfo()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            object? result = null;
+            ExecuteComOperation(app =>
+            {
+                var db = InvokeDynamicMethod(app, "CurrentDb");
+                var version = TryGetDynamicProperty(db, "Version")?.ToString() ?? "";
+                var updatable = Convert.ToBoolean(TryGetDynamicProperty(db, "Updatable"));
+                var recordsAffected = Convert.ToInt32(TryGetDynamicProperty(db, "RecordsAffected"));
+                var collatingOrder = TryGetDynamicProperty(db, "CollatingOrder");
+                result = new { version, updatable, recordsAffected, collatingOrder };
+            }, requireExclusive: false, releaseOleDb: false);
+            return result!;
+        }
+
+        #endregion
+
         #region Helper Methods
 
         private List<FieldInfo> GetTableFields(string tableName)

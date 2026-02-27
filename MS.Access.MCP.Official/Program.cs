@@ -431,7 +431,18 @@ class Program
                 new { name = "recordset_delete_record", description = "Delete the current record from an open recordset.", inputSchema = new { type = "object", properties = new { recordset_id = new { type = "string", description = "The recordset handle ID" } }, required = new string[] { "recordset_id" } } },
                 new { name = "recordset_count", description = "Get the record count, BOF, EOF, and position status of an open recordset.", inputSchema = new { type = "object", properties = new { recordset_id = new { type = "string", description = "The recordset handle ID" } }, required = new string[] { "recordset_id" } } },
                 new { name = "recordset_bookmark", description = "Get or set the bookmark position of an open recordset.", inputSchema = new { type = "object", properties = new { recordset_id = new { type = "string", description = "The recordset handle ID" }, bookmark = new { type = "string", description = "Optional Base64-encoded bookmark to set. If omitted, returns current bookmark." } }, required = new string[] { "recordset_id" } } },
-                new { name = "recordset_filter_sort", description = "Set Filter and/or Sort properties on a recordset, then clone it with the new settings applied.", inputSchema = new { type = "object", properties = new { recordset_id = new { type = "string", description = "The recordset handle ID" }, filter = new { type = "string", description = "Optional filter criteria, e.g. \"[Age] > 25\"" }, sort = new { type = "string", description = "Optional sort expression, e.g. \"[Name] ASC\"" } }, required = new string[] { "recordset_id" } } }
+                new { name = "recordset_filter_sort", description = "Set Filter and/or Sort properties on a recordset, then clone it with the new settings applied.", inputSchema = new { type = "object", properties = new { recordset_id = new { type = "string", description = "The recordset handle ID" }, filter = new { type = "string", description = "Optional filter criteria, e.g. \"[Age] > 25\"" }, sort = new { type = "string", description = "Optional sort expression, e.g. \"[Name] ASC\"" } }, required = new string[] { "recordset_id" } } },
+                // Priority 21: XML/Data Exchange + Printer Management
+                new { name = "export_xml", description = "Export data, schema, and/or presentation to XML files (Application.ExportXML).", inputSchema = new { type = "object", properties = new { object_type = new { type = "integer", description = "AcExportXMLObjectType: 0=Table, 1=Query, 2=Form, 3=Report, 4=ServerView, 5=StoredProcedure, 6=Function" }, data_source = new { type = "string", description = "Name of the object to export" }, data_target = new { type = "string", description = "File path for the data XML file" }, schema_target = new { type = "string", description = "Optional file path for the schema XSD file" }, presentation_target = new { type = "string", description = "Optional file path for the presentation XSL file" } }, required = new string[] { "object_type", "data_source", "data_target" } } },
+                new { name = "import_xml", description = "Import XML data into Access tables (Application.ImportXML).", inputSchema = new { type = "object", properties = new { data_source = new { type = "string", description = "File path to the XML file to import" }, import_options = new { type = "integer", description = "Optional AcImportXMLOption: 0=AppendData (default), 1=StructureAndData, 2=StructureOnly" } }, required = new string[] { "data_source" } } },
+                new { name = "transform_xml", description = "Apply an XSLT transformation to an XML file (Application.TransformXML).", inputSchema = new { type = "object", properties = new { data_source = new { type = "string", description = "Source XML file path" }, transform_source = new { type = "string", description = "XSLT stylesheet file path" }, output_target = new { type = "string", description = "Output file path for the transformed XML" } }, required = new string[] { "data_source", "transform_source", "output_target" } } },
+                new { name = "export_navigation_pane_xml", description = "Export the Navigation Pane configuration to an XML file.", inputSchema = new { type = "object", properties = new { output_path = new { type = "string", description = "File path for the Navigation Pane XML export" } }, required = new string[] { "output_path" } } },
+                new { name = "import_navigation_pane_xml", description = "Import Navigation Pane configuration from an XML file.", inputSchema = new { type = "object", properties = new { input_path = new { type = "string", description = "File path of the Navigation Pane XML to import" } }, required = new string[] { "input_path" } } },
+                new { name = "set_default_printer", description = "Set the default printer for the Access application (Application.Printer).", inputSchema = new { type = "object", properties = new { printer_name = new { type = "string", description = "Name of the printer to set as default" } }, required = new string[] { "printer_name" } } },
+                new { name = "set_form_printer", description = "Assign a specific printer to a form (Form.Printer).", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the form" }, printer_name = new { type = "string", description = "Name of the printer to assign" } }, required = new string[] { "form_name", "printer_name" } } },
+                new { name = "set_report_printer", description = "Assign a specific printer to a report (Report.Printer).", inputSchema = new { type = "object", properties = new { report_name = new { type = "string", description = "Name of the report" }, printer_name = new { type = "string", description = "Name of the printer to assign" } }, required = new string[] { "report_name", "printer_name" } } },
+                new { name = "list_printers", description = "Enumerate all installed printers with their properties (Application.Printers).", inputSchema = new { type = "object", properties = new { }, required = new string[] { } } },
+                new { name = "get_database_engine_info", description = "Get DAO database engine info: version, updatable flag, records affected, collating order.", inputSchema = new { type = "object", properties = new { }, required = new string[] { } } }
             }
         };
     }
@@ -743,6 +754,17 @@ class Program
             "recordset_count" => HandleRecordsetCount(accessService, toolArguments),
             "recordset_bookmark" => HandleRecordsetBookmark(accessService, toolArguments),
             "recordset_filter_sort" => HandleRecordsetFilterSort(accessService, toolArguments),
+            // Priority 21: XML/Data Exchange + Printer Management
+            "export_xml" => HandleExportXml(accessService, toolArguments),
+            "import_xml" => HandleImportXml(accessService, toolArguments),
+            "transform_xml" => HandleTransformXml(accessService, toolArguments),
+            "export_navigation_pane_xml" => HandleExportNavigationPaneXml(accessService, toolArguments),
+            "import_navigation_pane_xml" => HandleImportNavigationPaneXml(accessService, toolArguments),
+            "set_default_printer" => HandleSetDefaultPrinter(accessService, toolArguments),
+            "set_form_printer" => HandleSetFormPrinter(accessService, toolArguments),
+            "set_report_printer" => HandleSetReportPrinter(accessService, toolArguments),
+            "list_printers" => HandleListPrinters(accessService, toolArguments),
+            "get_database_engine_info" => HandleGetDatabaseEngineInfo(accessService, toolArguments),
             _ => new { success = false, error = $"Unknown tool: {toolName}" }
         };
     }
@@ -6720,6 +6742,174 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("recordset_filter_sort", ex);
+        }
+    }
+
+    // ===== Priority 21: XML/Data Exchange + Printer Management =====
+
+    static object HandleExportXml(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var objectType = GetOptionalIntFromAliases(arguments, new[] { "object_type" }, -1);
+            if (objectType < 0) return new { success = false, error = "object_type is required" };
+            if (!TryGetRequiredString(arguments, "data_source", out var dataSource, out var dsError))
+                return dsError;
+            if (!TryGetRequiredString(arguments, "data_target", out var dataTarget, out var dtError))
+                return dtError;
+            _ = TryGetOptionalString(arguments, "schema_target", out var schemaTarget);
+            _ = TryGetOptionalString(arguments, "presentation_target", out var presentationTarget);
+
+            accessService.ExportXml(objectType, dataSource, dataTarget,
+                string.IsNullOrWhiteSpace(schemaTarget) ? null : schemaTarget,
+                string.IsNullOrWhiteSpace(presentationTarget) ? null : presentationTarget);
+            return new { success = true, message = "XML exported", data_source = dataSource, data_target = dataTarget };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("export_xml", ex);
+        }
+    }
+
+    static object HandleImportXml(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "data_source", out var dataSource, out var dsError))
+                return dsError;
+            var importOptions = GetOptionalIntFromAliases(arguments, new[] { "import_options" }, 0);
+
+            accessService.ImportXml(dataSource, importOptions);
+            return new { success = true, message = "XML imported", data_source = dataSource };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("import_xml", ex);
+        }
+    }
+
+    static object HandleTransformXml(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "data_source", out var dataSource, out var dsError))
+                return dsError;
+            if (!TryGetRequiredString(arguments, "transform_source", out var transformSource, out var tsError))
+                return tsError;
+            if (!TryGetRequiredString(arguments, "output_target", out var outputTarget, out var otError))
+                return otError;
+
+            accessService.TransformXml(dataSource, transformSource, outputTarget);
+            return new { success = true, message = "XML transformed", output_target = outputTarget };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("transform_xml", ex);
+        }
+    }
+
+    static object HandleExportNavigationPaneXml(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "output_path", out var outputPath, out var opError))
+                return opError;
+            accessService.ExportNavigationPaneXml(outputPath);
+            return new { success = true, message = "Navigation Pane XML exported", output_path = outputPath };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("export_navigation_pane_xml", ex);
+        }
+    }
+
+    static object HandleImportNavigationPaneXml(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "input_path", out var inputPath, out var ipError))
+                return ipError;
+            accessService.ImportNavigationPaneXml(inputPath);
+            return new { success = true, message = "Navigation Pane XML imported", input_path = inputPath };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("import_navigation_pane_xml", ex);
+        }
+    }
+
+    static object HandleSetDefaultPrinter(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "printer_name", out var printerName, out var pnError))
+                return pnError;
+            accessService.SetDefaultPrinter(printerName);
+            return new { success = true, message = $"Default printer set to '{printerName}'", printer_name = printerName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_default_printer", ex);
+        }
+    }
+
+    static object HandleSetFormPrinter(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var fnError))
+                return fnError;
+            if (!TryGetRequiredString(arguments, "printer_name", out var printerName, out var pnError))
+                return pnError;
+            accessService.SetFormPrinter(formName, printerName);
+            return new { success = true, message = $"Printer for form '{formName}' set to '{printerName}'" };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_form_printer", ex);
+        }
+    }
+
+    static object HandleSetReportPrinter(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "report_name", out var reportName, out var rnError))
+                return rnError;
+            if (!TryGetRequiredString(arguments, "printer_name", out var printerName, out var pnError))
+                return pnError;
+            accessService.SetReportPrinter(reportName, printerName);
+            return new { success = true, message = $"Printer for report '{reportName}' set to '{printerName}'" };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_report_printer", ex);
+        }
+    }
+
+    static object HandleListPrinters(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var printers = accessService.ListPrinters();
+            return new { success = true, printers, count = printers.Count };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("list_printers", ex);
+        }
+    }
+
+    static object HandleGetDatabaseEngineInfo(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var info = accessService.GetDatabaseEngineInfo();
+            return new { success = true, info };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_database_engine_info", ex);
         }
     }
 
