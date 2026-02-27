@@ -220,11 +220,21 @@ class Program
                 new { name = "set_display_categories", description = "Show or hide navigation pane display categories.", inputSchema = new { type = "object", properties = new { show_categories = new { type = "boolean" } } } },
                 new { name = "create_navigation_group", description = "Create a navigation pane group.", inputSchema = new { type = "object", properties = new { group_name = new { type = "string" } }, required = new string[] { "group_name" } } },
                 new { name = "add_navigation_group_object", description = "Add an object to a navigation pane group.", inputSchema = new { type = "object", properties = new { group_name = new { type = "string" }, object_name = new { type = "string" }, object_type = new { type = "string" } }, required = new string[] { "group_name", "object_name" } } },
+                new { name = "delete_navigation_group", description = "Delete a navigation pane group.", inputSchema = new { type = "object", properties = new { group_name = new { type = "string" } }, required = new string[] { "group_name" } } },
+                new { name = "remove_navigation_group_object", description = "Remove an object from a navigation pane group.", inputSchema = new { type = "object", properties = new { group_name = new { type = "string" }, object_name = new { type = "string" } }, required = new string[] { "group_name", "object_name" } } },
+                new { name = "set_navigation_pane_visibility", description = "Show or hide the Access navigation pane.", inputSchema = new { type = "object", properties = new { visible = new { type = "boolean" } } } },
+                new { name = "get_navigation_group_objects", description = "List objects in a navigation pane group.", inputSchema = new { type = "object", properties = new { group_name = new { type = "string" } }, required = new string[] { "group_name" } } },
                 new { name = "get_conditional_formatting", description = "Get conditional formatting rules for a form/report control.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string" }, object_name = new { type = "string" }, control_name = new { type = "string" } }, required = new string[] { "object_type", "object_name", "control_name" } } },
                 new { name = "add_conditional_formatting", description = "Add a conditional formatting rule to a form/report control.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string" }, object_name = new { type = "string" }, control_name = new { type = "string" }, expression = new { type = "string" }, fore_color = new { type = "integer" }, back_color = new { type = "integer" } }, required = new string[] { "object_type", "object_name", "control_name", "expression" } } },
+                new { name = "delete_conditional_formatting", description = "Delete a conditional formatting rule by index.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string" }, object_name = new { type = "string" }, control_name = new { type = "string" }, rule_index = new { type = "integer" } }, required = new string[] { "object_type", "object_name", "control_name", "rule_index" } } },
+                new { name = "update_conditional_formatting", description = "Update properties of a conditional formatting rule.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string" }, object_name = new { type = "string" }, control_name = new { type = "string" }, rule_index = new { type = "integer" }, expression = new { type = "string" }, fore_color = new { type = "integer" }, back_color = new { type = "integer" }, enabled = new { type = "boolean" } }, required = new string[] { "object_type", "object_name", "control_name", "rule_index" } } },
+                new { name = "clear_conditional_formatting", description = "Clear all conditional formatting rules from a control.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string" }, object_name = new { type = "string" }, control_name = new { type = "string" } }, required = new string[] { "object_type", "object_name", "control_name" } } },
+                new { name = "list_all_conditional_formats", description = "List all controls with conditional formatting on a form/report.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string" }, object_name = new { type = "string" } }, required = new string[] { "object_type", "object_name" } } },
                 new { name = "get_attachment_files", description = "List files from an attachment field.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, where_condition = new { type = "string" } }, required = new string[] { "table_name", "field_name" } } },
                 new { name = "add_attachment_file", description = "Add a file into an attachment field.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, file_path = new { type = "string" }, where_condition = new { type = "string" } }, required = new string[] { "table_name", "field_name", "file_path" } } },
                 new { name = "remove_attachment_file", description = "Remove a file from an attachment field.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, file_name = new { type = "string" }, where_condition = new { type = "string" } }, required = new string[] { "table_name", "field_name", "file_name" } } },
+                new { name = "save_attachment_to_disk", description = "Save an attachment file to a destination path.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, file_path = new { type = "string" }, file_name = new { type = "string" }, where_condition = new { type = "string" } }, required = new string[] { "table_name", "field_name", "file_path" } } },
+                new { name = "get_attachment_metadata", description = "Get detailed metadata for attachment field files.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, where_condition = new { type = "string" } }, required = new string[] { "table_name", "field_name" } } },
                 new { name = "get_object_events", description = "Get object event bindings from Access form/report objects.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string" }, object_name = new { type = "string" } }, required = new string[] { "object_type", "object_name" } } },
                 new { name = "set_object_event", description = "Set object event binding on Access form/report objects.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string" }, object_name = new { type = "string" }, event_name = new { type = "string" }, event_value = new { type = "string" } }, required = new string[] { "object_type", "object_name", "event_name", "event_value" } } },
                 new { name = "disconnect_access", description = "Disconnect from the current Access database", inputSchema = new { type = "object", properties = new { } } },
@@ -436,11 +446,21 @@ class Program
             "set_display_categories" => HandleSetDisplayCategories(accessService, toolArguments),
             "create_navigation_group" => HandleCreateNavigationGroup(accessService, toolArguments),
             "add_navigation_group_object" => HandleAddNavigationGroupObject(accessService, toolArguments),
+            "delete_navigation_group" => HandleDeleteNavigationGroup(accessService, toolArguments),
+            "remove_navigation_group_object" => HandleRemoveNavigationGroupObject(accessService, toolArguments),
+            "set_navigation_pane_visibility" => HandleSetNavigationPaneVisibility(accessService, toolArguments),
+            "get_navigation_group_objects" => HandleGetNavigationGroupObjects(accessService, toolArguments),
             "get_conditional_formatting" => HandleGetConditionalFormatting(accessService, toolArguments),
             "add_conditional_formatting" => HandleAddConditionalFormatting(accessService, toolArguments),
+            "delete_conditional_formatting" => HandleDeleteConditionalFormatting(accessService, toolArguments),
+            "update_conditional_formatting" => HandleUpdateConditionalFormatting(accessService, toolArguments),
+            "clear_conditional_formatting" => HandleClearConditionalFormatting(accessService, toolArguments),
+            "list_all_conditional_formats" => HandleListAllConditionalFormats(accessService, toolArguments),
             "get_attachment_files" => HandleGetAttachmentFiles(accessService, toolArguments),
             "add_attachment_file" => HandleAddAttachmentFile(accessService, toolArguments),
             "remove_attachment_file" => HandleRemoveAttachmentFile(accessService, toolArguments),
+            "save_attachment_to_disk" => HandleSaveAttachmentToDisk(accessService, toolArguments),
+            "get_attachment_metadata" => HandleGetAttachmentMetadata(accessService, toolArguments),
             "get_object_events" => HandleGetObjectEvents(accessService, toolArguments),
             "set_object_event" => HandleSetObjectEvent(accessService, toolArguments),
             "disconnect_access" => HandleDisconnectAccess(accessService, toolArguments),
@@ -2453,6 +2473,70 @@ class Program
         }
     }
 
+    static object HandleDeleteNavigationGroup(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "group_name", out var groupName, out var groupNameError))
+                return groupNameError;
+
+            accessService.DeleteNavigationGroup(groupName);
+            return new { success = true, group_name = groupName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("delete_navigation_group", ex);
+        }
+    }
+
+    static object HandleRemoveNavigationGroupObject(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "group_name", out var groupName, out var groupNameError))
+                return groupNameError;
+            if (!TryGetRequiredString(arguments, "object_name", out var objectName, out var objectNameError))
+                return objectNameError;
+
+            accessService.RemoveNavigationGroupObject(groupName, objectName);
+            return new { success = true, group_name = groupName, object_name = objectName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("remove_navigation_group_object", ex);
+        }
+    }
+
+    static object HandleSetNavigationPaneVisibility(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var visible = GetOptionalBool(arguments, "visible", true);
+            accessService.SetNavigationPaneVisibility(visible);
+            return new { success = true, visible = visible };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_navigation_pane_visibility", ex);
+        }
+    }
+
+    static object HandleGetNavigationGroupObjects(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "group_name", out var groupName, out var groupNameError))
+                return groupNameError;
+
+            var objects = accessService.GetNavigationGroupObjects(groupName);
+            return new { success = true, objects = objects.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_navigation_group_objects", ex);
+        }
+    }
+
     static object HandleGetConditionalFormatting(AccessInteropService accessService, JsonElement arguments)
     {
         try
@@ -2497,6 +2581,109 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("add_conditional_formatting", ex);
+        }
+    }
+
+    static object HandleDeleteConditionalFormatting(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "object_type", out var objectType, out var objectTypeError))
+                return objectTypeError;
+            if (!TryGetRequiredString(arguments, "object_name", out var objectName, out var objectNameError))
+                return objectNameError;
+            if (!TryGetRequiredString(arguments, "control_name", out var controlName, out var controlNameError))
+                return controlNameError;
+            if (!TryGetOptionalInt(arguments, "rule_index", out var ruleIndex, out var ruleIndexError))
+                return ruleIndexError;
+            if (!ruleIndex.HasValue || ruleIndex.Value <= 0)
+                return new { success = false, error = "rule_index must be an integer greater than 0" };
+
+            accessService.DeleteConditionalFormatting(objectType, objectName, controlName, ruleIndex.Value);
+            return new { success = true, rule_index = ruleIndex.Value };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("delete_conditional_formatting", ex);
+        }
+    }
+
+    static object HandleUpdateConditionalFormatting(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "object_type", out var objectType, out var objectTypeError))
+                return objectTypeError;
+            if (!TryGetRequiredString(arguments, "object_name", out var objectName, out var objectNameError))
+                return objectNameError;
+            if (!TryGetRequiredString(arguments, "control_name", out var controlName, out var controlNameError))
+                return controlNameError;
+            if (!TryGetOptionalInt(arguments, "rule_index", out var ruleIndex, out var ruleIndexError))
+                return ruleIndexError;
+            if (!ruleIndex.HasValue || ruleIndex.Value <= 0)
+                return new { success = false, error = "rule_index must be an integer greater than 0" };
+
+            _ = TryGetOptionalString(arguments, "expression", out var expression);
+            if (!TryGetOptionalInt(arguments, "fore_color", out var foreColor, out var foreColorError))
+                return foreColorError;
+            if (!TryGetOptionalInt(arguments, "back_color", out var backColor, out var backColorError))
+                return backColorError;
+            if (!TryGetOptionalBoolNullable(arguments, "enabled", out var enabled, out var enabledError))
+                return enabledError;
+
+            var updatedRule = accessService.UpdateConditionalFormatting(
+                objectType,
+                objectName,
+                controlName,
+                ruleIndex.Value,
+                expression: string.IsNullOrWhiteSpace(expression) ? null : expression,
+                foreColor: foreColor,
+                backColor: backColor,
+                enabled: enabled);
+
+            return new { success = true, rule = updatedRule };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("update_conditional_formatting", ex);
+        }
+    }
+
+    static object HandleClearConditionalFormatting(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "object_type", out var objectType, out var objectTypeError))
+                return objectTypeError;
+            if (!TryGetRequiredString(arguments, "object_name", out var objectName, out var objectNameError))
+                return objectNameError;
+            if (!TryGetRequiredString(arguments, "control_name", out var controlName, out var controlNameError))
+                return controlNameError;
+
+            accessService.ClearConditionalFormatting(objectType, objectName, controlName);
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("clear_conditional_formatting", ex);
+        }
+    }
+
+    static object HandleListAllConditionalFormats(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "object_type", out var objectType, out var objectTypeError))
+                return objectTypeError;
+            if (!TryGetRequiredString(arguments, "object_name", out var objectName, out var objectNameError))
+                return objectNameError;
+
+            var controls = accessService.ListAllConditionalFormats(objectType, objectName);
+            return new { success = true, controls = controls.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("list_all_conditional_formats", ex);
         }
     }
 
@@ -2558,6 +2745,57 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("remove_attachment_file", ex);
+        }
+    }
+
+    static object HandleSaveAttachmentToDisk(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "field_name", out var fieldName, out var fieldNameError))
+                return fieldNameError;
+            if (!TryGetRequiredString(arguments, "file_path", out var filePath, out var filePathError))
+                return filePathError;
+
+            _ = TryGetOptionalString(arguments, "file_name", out var fileName);
+            _ = TryGetOptionalString(arguments, "where_condition", out var whereCondition);
+            var saveResult = accessService.SaveAttachmentToDisk(
+                tableName,
+                fieldName,
+                filePath,
+                string.IsNullOrWhiteSpace(fileName) ? null : fileName,
+                string.IsNullOrWhiteSpace(whereCondition) ? null : whereCondition);
+
+            return new { success = true, result = saveResult };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("save_attachment_to_disk", ex);
+        }
+    }
+
+    static object HandleGetAttachmentMetadata(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "field_name", out var fieldName, out var fieldNameError))
+                return fieldNameError;
+
+            _ = TryGetOptionalString(arguments, "where_condition", out var whereCondition);
+            var files = accessService.GetAttachmentMetadata(
+                tableName,
+                fieldName,
+                string.IsNullOrWhiteSpace(whereCondition) ? null : whereCondition);
+
+            return new { success = true, files = files.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_attachment_metadata", ex);
         }
     }
 

@@ -3161,6 +3161,193 @@ namespace MS.Access.MCP.Interop
             releaseOleDb: false);
         }
 
+        public void DeleteNavigationGroup(string groupName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(groupName)) throw new ArgumentException("groupName is required.", nameof(groupName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var groups = GetNavigationGroupsCollection(accessApp)
+                    ?? throw new InvalidOperationException("NavigationGroups collection is unavailable.");
+                var targetGroup = FindNavigationGroup(groups, groupName)
+                    ?? throw new InvalidOperationException($"Navigation group not found: {groupName}");
+
+                var actualName = SafeToString(TryGetDynamicProperty(targetGroup, "Name")) ?? groupName;
+                var removed = false;
+                try
+                {
+                    _ = InvokeDynamicMethod(groups, "Delete", actualName);
+                    removed = true;
+                }
+                catch
+                {
+                    // Fall back to deleting from the group object directly.
+                }
+
+                if (!removed)
+                {
+                    try
+                    {
+                        _ = InvokeDynamicMethod(targetGroup, "Delete");
+                        removed = true;
+                    }
+                    catch
+                    {
+                        // Fall through to final error below.
+                    }
+                }
+
+                if (!removed)
+                    throw new InvalidOperationException($"Failed to delete navigation group: {groupName}");
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void RemoveNavigationGroupObject(string groupName, string objectName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(groupName)) throw new ArgumentException("groupName is required.", nameof(groupName));
+            if (string.IsNullOrWhiteSpace(objectName)) throw new ArgumentException("objectName is required.", nameof(objectName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var groups = GetNavigationGroupsCollection(accessApp)
+                    ?? throw new InvalidOperationException("NavigationGroups collection is unavailable.");
+                var targetGroup = FindNavigationGroup(groups, groupName)
+                    ?? throw new InvalidOperationException($"Navigation group not found: {groupName}");
+
+                var buttons = TryGetDynamicProperty(targetGroup, "NavigationButtons")
+                    ?? throw new InvalidOperationException("NavigationButtons collection is unavailable.");
+                var targetButton = FindNavigationGroupObject(buttons, objectName)
+                    ?? throw new InvalidOperationException($"Navigation object not found in group '{groupName}': {objectName}");
+
+                var removed = false;
+                var buttonName = SafeToString(TryGetDynamicProperty(targetButton, "Name")) ?? objectName;
+                if (!string.IsNullOrWhiteSpace(buttonName))
+                {
+                    try
+                    {
+                        _ = InvokeDynamicMethod(buttons, "Delete", buttonName);
+                        removed = true;
+                    }
+                    catch
+                    {
+                        // Fall through to additional deletion attempts.
+                    }
+                }
+
+                if (!removed)
+                {
+                    var index = ToNullableInt(TryGetDynamicProperty(targetButton, "Index"));
+                    if (index.HasValue)
+                    {
+                        try
+                        {
+                            _ = InvokeDynamicMethod(buttons, "Delete", index.Value);
+                            removed = true;
+                        }
+                        catch
+                        {
+                            // Fall through to final attempt.
+                        }
+                    }
+                }
+
+                if (!removed)
+                {
+                    try
+                    {
+                        _ = InvokeDynamicMethod(targetButton, "Delete");
+                        removed = true;
+                    }
+                    catch
+                    {
+                        // Fall through to final error below.
+                    }
+                }
+
+                if (!removed)
+                    throw new InvalidOperationException($"Failed to remove navigation object '{objectName}' from group '{groupName}'.");
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void SetNavigationPaneVisibility(bool visible)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(accessApp =>
+            {
+                var updated = false;
+                try
+                {
+                    _ = InvokeDynamicMethod(accessApp, "SetOption", "Show Navigation Pane", visible);
+                    updated = true;
+                }
+                catch
+                {
+                    // Fall through to alternate strategy.
+                }
+
+                if (!updated)
+                {
+                    var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                        ?? throw new InvalidOperationException("DoCmd object is unavailable.");
+                    _ = InvokeDynamicMethod(doCmd, "SelectObject", Type.Missing, Type.Missing, visible);
+                }
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public List<NavigationGroupObjectInfo> GetNavigationGroupObjects(string groupName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(groupName)) throw new ArgumentException("groupName is required.", nameof(groupName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var groups = GetNavigationGroupsCollection(accessApp)
+                    ?? throw new InvalidOperationException("NavigationGroups collection is unavailable.");
+                var targetGroup = FindNavigationGroup(groups, groupName)
+                    ?? throw new InvalidOperationException($"Navigation group not found: {groupName}");
+                var buttons = TryGetDynamicProperty(targetGroup, "NavigationButtons")
+                    ?? throw new InvalidOperationException("NavigationButtons collection is unavailable.");
+
+                var results = new List<NavigationGroupObjectInfo>();
+                var fallbackIndex = 0;
+                foreach (var button in buttons)
+                {
+                    fallbackIndex++;
+                    var name = SafeToString(TryGetDynamicProperty(button, "Name"));
+                    var objectName = SafeToString(TryGetDynamicProperty(button, "ObjectName"))
+                        ?? SafeToString(TryGetDynamicProperty(button, "Object"));
+                    var objectType = SafeToString(TryGetDynamicProperty(button, "ObjectType"))
+                        ?? SafeToString(TryGetDynamicProperty(button, "Type"));
+                    var index = ToNullableInt(TryGetDynamicProperty(button, "Index")) ?? fallbackIndex;
+
+                    results.Add(new NavigationGroupObjectInfo
+                    {
+                        GroupName = groupName,
+                        Name = name ?? objectName ?? "",
+                        ObjectName = objectName ?? name ?? "",
+                        ObjectType = objectType,
+                        Index = index
+                    });
+                }
+
+                return results
+                    .OrderBy(item => item.Index)
+                    .ThenBy(item => item.ObjectName, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
         public List<ConditionalFormattingRuleInfo> GetConditionalFormatting(string objectType, string objectName, string controlName)
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
@@ -3277,6 +3464,235 @@ namespace MS.Access.MCP.Interop
             releaseOleDb: true);
         }
 
+        public void DeleteConditionalFormatting(string objectType, string objectName, string controlName, int ruleIndex)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(objectType)) throw new ArgumentException("objectType is required.", nameof(objectType));
+            if (string.IsNullOrWhiteSpace(objectName)) throw new ArgumentException("objectName is required.", nameof(objectName));
+            if (string.IsNullOrWhiteSpace(controlName)) throw new ArgumentException("controlName is required.", nameof(controlName));
+            if (ruleIndex <= 0) throw new ArgumentOutOfRangeException(nameof(ruleIndex), "ruleIndex must be 1 or greater.");
+
+            ExecuteComOperation(accessApp =>
+            {
+                var isReport = string.Equals(objectType, "report", StringComparison.OrdinalIgnoreCase);
+                bool openedHere;
+                object targetObject;
+                if (isReport)
+                {
+                    targetObject = EnsureReportOpen(accessApp, objectName, true, out openedHere);
+                }
+                else
+                {
+                    targetObject = EnsureFormOpen(accessApp, objectName, true, out openedHere);
+                }
+
+                try
+                {
+                    var control = GetControlByName(targetObject, controlName)
+                        ?? throw new InvalidOperationException($"Control not found: {controlName}");
+                    var formatConditions = TryGetDynamicProperty(control, "FormatConditions")
+                        ?? throw new InvalidOperationException("FormatConditions collection is unavailable.");
+
+                    if (!TryDeleteFormatConditionByIndex(formatConditions, ruleIndex))
+                        throw new InvalidOperationException($"Conditional formatting rule index {ruleIndex} was not found.");
+                }
+                finally
+                {
+                    if (openedHere)
+                    {
+                        if (isReport)
+                            CloseReportInternal(accessApp, objectName, saveChanges: true);
+                        else
+                            CloseFormInternal(accessApp, objectName, saveChanges: true);
+                    }
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public ConditionalFormattingRuleInfo UpdateConditionalFormatting(string objectType, string objectName, string controlName, int ruleIndex, string? expression = null, int? foreColor = null, int? backColor = null, bool? enabled = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(objectType)) throw new ArgumentException("objectType is required.", nameof(objectType));
+            if (string.IsNullOrWhiteSpace(objectName)) throw new ArgumentException("objectName is required.", nameof(objectName));
+            if (string.IsNullOrWhiteSpace(controlName)) throw new ArgumentException("controlName is required.", nameof(controlName));
+            if (ruleIndex <= 0) throw new ArgumentOutOfRangeException(nameof(ruleIndex), "ruleIndex must be 1 or greater.");
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var isReport = string.Equals(objectType, "report", StringComparison.OrdinalIgnoreCase);
+                bool openedHere;
+                object targetObject;
+                if (isReport)
+                {
+                    targetObject = EnsureReportOpen(accessApp, objectName, true, out openedHere);
+                }
+                else
+                {
+                    targetObject = EnsureFormOpen(accessApp, objectName, true, out openedHere);
+                }
+
+                try
+                {
+                    var control = GetControlByName(targetObject, controlName)
+                        ?? throw new InvalidOperationException($"Control not found: {controlName}");
+                    var formatConditions = TryGetDynamicProperty(control, "FormatConditions")
+                        ?? throw new InvalidOperationException("FormatConditions collection is unavailable.");
+                    var condition = GetFormatConditionByIndex(formatConditions, ruleIndex)
+                        ?? throw new InvalidOperationException($"Conditional formatting rule index {ruleIndex} was not found.");
+
+                    if (expression != null)
+                        SetDynamicProperty(condition, "Expression1", expression);
+                    if (foreColor.HasValue)
+                        SetDynamicProperty(condition, "ForeColor", foreColor.Value);
+                    if (backColor.HasValue)
+                        SetDynamicProperty(condition, "BackColor", backColor.Value);
+                    if (enabled.HasValue)
+                        SetDynamicProperty(condition, "Enabled", enabled.Value);
+
+                    return BuildConditionalFormattingRuleInfo(condition, ruleIndex);
+                }
+                finally
+                {
+                    if (openedHere)
+                    {
+                        if (isReport)
+                            CloseReportInternal(accessApp, objectName, saveChanges: true);
+                        else
+                            CloseFormInternal(accessApp, objectName, saveChanges: true);
+                    }
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void ClearConditionalFormatting(string objectType, string objectName, string controlName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(objectType)) throw new ArgumentException("objectType is required.", nameof(objectType));
+            if (string.IsNullOrWhiteSpace(objectName)) throw new ArgumentException("objectName is required.", nameof(objectName));
+            if (string.IsNullOrWhiteSpace(controlName)) throw new ArgumentException("controlName is required.", nameof(controlName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var isReport = string.Equals(objectType, "report", StringComparison.OrdinalIgnoreCase);
+                bool openedHere;
+                object targetObject;
+                if (isReport)
+                {
+                    targetObject = EnsureReportOpen(accessApp, objectName, true, out openedHere);
+                }
+                else
+                {
+                    targetObject = EnsureFormOpen(accessApp, objectName, true, out openedHere);
+                }
+
+                try
+                {
+                    var control = GetControlByName(targetObject, controlName)
+                        ?? throw new InvalidOperationException($"Control not found: {controlName}");
+                    var formatConditions = TryGetDynamicProperty(control, "FormatConditions")
+                        ?? throw new InvalidOperationException("FormatConditions collection is unavailable.");
+
+                    while (ToInt32(TryGetDynamicProperty(formatConditions, "Count")) > 0)
+                    {
+                        if (!TryDeleteFormatConditionByIndex(formatConditions, 1))
+                        {
+                            _ = InvokeDynamicMethod(formatConditions, "Delete");
+                            break;
+                        }
+                    }
+                }
+                finally
+                {
+                    if (openedHere)
+                    {
+                        if (isReport)
+                            CloseReportInternal(accessApp, objectName, saveChanges: true);
+                        else
+                            CloseFormInternal(accessApp, objectName, saveChanges: true);
+                    }
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public List<ConditionalFormattingControlInfo> ListAllConditionalFormats(string objectType, string objectName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(objectType)) throw new ArgumentException("objectType is required.", nameof(objectType));
+            if (string.IsNullOrWhiteSpace(objectName)) throw new ArgumentException("objectName is required.", nameof(objectName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var isReport = string.Equals(objectType, "report", StringComparison.OrdinalIgnoreCase);
+                bool openedHere;
+                object targetObject;
+                if (isReport)
+                {
+                    targetObject = EnsureReportOpen(accessApp, objectName, true, out openedHere);
+                }
+                else
+                {
+                    targetObject = EnsureFormOpen(accessApp, objectName, true, out openedHere);
+                }
+
+                try
+                {
+                    var results = new List<ConditionalFormattingControlInfo>();
+                    foreach (var control in GetControlObjects(targetObject))
+                    {
+                        var controlName = SafeToString(TryGetDynamicProperty(control, "Name"));
+                        if (string.IsNullOrWhiteSpace(controlName))
+                            continue;
+
+                        var formatConditions = TryGetDynamicProperty(control, "FormatConditions");
+                        if (formatConditions == null || ToInt32(TryGetDynamicProperty(formatConditions, "Count")) <= 0)
+                            continue;
+
+                        var rules = new List<ConditionalFormattingRuleInfo>();
+                        var index = 0;
+                        foreach (var condition in (dynamic)formatConditions)
+                        {
+                            index++;
+                            rules.Add(BuildConditionalFormattingRuleInfo(condition, index));
+                        }
+
+                        if (rules.Count == 0)
+                            continue;
+
+                        results.Add(new ConditionalFormattingControlInfo
+                        {
+                            ObjectType = isReport ? "report" : "form",
+                            ObjectName = objectName,
+                            ControlName = controlName,
+                            RuleCount = rules.Count,
+                            Rules = rules
+                        });
+                    }
+
+                    return results
+                        .OrderBy(result => result.ControlName, StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                }
+                finally
+                {
+                    if (openedHere)
+                    {
+                        if (isReport)
+                            CloseReportInternal(accessApp, objectName, saveChanges: false);
+                        else
+                            CloseFormInternal(accessApp, objectName, saveChanges: false);
+                    }
+                }
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
         public List<AttachmentFileInfo> GetAttachmentFieldFiles(string tableName, string fieldName, string? whereCondition = null)
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
@@ -3391,6 +3807,134 @@ namespace MS.Access.MCP.Interop
             },
             requireExclusive: true,
             releaseOleDb: true);
+        }
+
+        public AttachmentSaveResult SaveAttachmentToDisk(string tableName, string fieldName, string filePath, string? fileName = null, string? whereCondition = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("tableName is required.", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(fieldName)) throw new ArgumentException("fieldName is required.", nameof(fieldName));
+            if (string.IsNullOrWhiteSpace(filePath)) throw new ArgumentException("filePath is required.", nameof(filePath));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+                var sql = BuildAttachmentQuery(tableName, whereCondition);
+                var recordset = InvokeDynamicMethod(currentDb, "OpenRecordset", sql)
+                    ?? throw new InvalidOperationException("Failed to open attachment source recordset.");
+
+                while (!ToBool(TryGetDynamicProperty(recordset, "EOF"), true))
+                {
+                    var attachmentRecordset = TryGetAttachmentRecordset(recordset, fieldName);
+                    if (attachmentRecordset != null)
+                    {
+                        while (!ToBool(TryGetDynamicProperty(attachmentRecordset, "EOF"), true))
+                        {
+                            var currentFileName = SafeToString(GetRecordsetFieldValue(attachmentRecordset, "FileName")) ?? string.Empty;
+                            if (string.IsNullOrWhiteSpace(fileName) || string.Equals(currentFileName, fileName, StringComparison.OrdinalIgnoreCase))
+                            {
+                                var fileData = GetRecordsetFieldValue(attachmentRecordset, "FileData");
+                                var bytes = ConvertAttachmentFieldToBytes(fileData);
+                                if (bytes == null || bytes.Length == 0)
+                                    throw new InvalidOperationException($"Attachment '{currentFileName}' has no file data.");
+
+                                var fullPath = Path.GetFullPath(filePath);
+                                var directory = Path.GetDirectoryName(fullPath);
+                                if (!string.IsNullOrWhiteSpace(directory))
+                                    Directory.CreateDirectory(directory);
+
+                                File.WriteAllBytes(fullPath, bytes);
+
+                                return new AttachmentSaveResult
+                                {
+                                    TableName = tableName,
+                                    FieldName = fieldName,
+                                    FileName = string.IsNullOrWhiteSpace(currentFileName) ? Path.GetFileName(fullPath) : currentFileName,
+                                    FilePath = fullPath,
+                                    FileSize = bytes.Length
+                                };
+                            }
+
+                            _ = InvokeDynamicMethod(attachmentRecordset, "MoveNext");
+                        }
+                    }
+
+                    _ = InvokeDynamicMethod(recordset, "MoveNext");
+                }
+
+                if (!string.IsNullOrWhiteSpace(fileName))
+                    throw new InvalidOperationException($"Attachment file not found: {fileName}");
+
+                throw new InvalidOperationException("No attachment file was available to save.");
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public List<AttachmentMetadataInfo> GetAttachmentMetadata(string tableName, string fieldName, string? whereCondition = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("tableName is required.", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(fieldName)) throw new ArgumentException("fieldName is required.", nameof(fieldName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+                var sql = BuildAttachmentQuery(tableName, whereCondition);
+                var recordset = InvokeDynamicMethod(currentDb, "OpenRecordset", sql)
+                    ?? throw new InvalidOperationException("Failed to open attachment source recordset.");
+
+                var results = new List<AttachmentMetadataInfo>();
+                while (!ToBool(TryGetDynamicProperty(recordset, "EOF"), true))
+                {
+                    var attachmentRecordset = TryGetAttachmentRecordset(recordset, fieldName);
+                    if (attachmentRecordset != null)
+                    {
+                        while (!ToBool(TryGetDynamicProperty(attachmentRecordset, "EOF"), true))
+                        {
+                            var item = new AttachmentMetadataInfo
+                            {
+                                FileName = SafeToString(GetRecordsetFieldValue(attachmentRecordset, "FileName")) ?? "",
+                                FileType = SafeToString(GetRecordsetFieldValue(attachmentRecordset, "FileType")),
+                                FileUrl = SafeToString(GetRecordsetFieldValue(attachmentRecordset, "FileURL")),
+                                FileSize = ToNullableInt(GetRecordsetFieldValue(attachmentRecordset, "FileSize")),
+                                Fields = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+                            };
+
+                            var fields = TryGetDynamicProperty(attachmentRecordset, "Fields");
+                            if (fields != null)
+                            {
+                                foreach (var field in fields)
+                                {
+                                    var currentName = SafeToString(TryGetDynamicProperty(field, "Name"));
+                                    if (string.IsNullOrWhiteSpace(currentName))
+                                        continue;
+
+                                    item.Fields[currentName] = NormalizeValue(TryGetDynamicProperty(field, "Value"));
+                                }
+                            }
+
+                            if (!item.FileSize.HasValue && item.Fields.TryGetValue("FileData", out var dataValue))
+                            {
+                                var bytes = ConvertAttachmentFieldToBytes(dataValue);
+                                if (bytes != null)
+                                    item.FileSize = bytes.Length;
+                            }
+
+                            results.Add(item);
+                            _ = InvokeDynamicMethod(attachmentRecordset, "MoveNext");
+                        }
+                    }
+
+                    _ = InvokeDynamicMethod(recordset, "MoveNext");
+                }
+
+                return results;
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
         }
 
         public List<ObjectEventInfo> GetObjectEvents(string objectType, string objectName)
@@ -5725,6 +6269,101 @@ namespace MS.Access.MCP.Interop
             return null;
         }
 
+        private static dynamic? FindNavigationGroupObject(dynamic navigationButtonsCollection, string objectName)
+        {
+            foreach (var button in navigationButtonsCollection)
+            {
+                var currentName = SafeToString(TryGetDynamicProperty(button, "Name"));
+                var currentObjectName = SafeToString(TryGetDynamicProperty(button, "ObjectName"))
+                    ?? SafeToString(TryGetDynamicProperty(button, "Object"));
+                if (string.Equals(currentName, objectName, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(currentObjectName, objectName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return button;
+                }
+            }
+
+            return null;
+        }
+
+        private static bool TryDeleteFormatConditionByIndex(dynamic formatConditions, int ruleIndex)
+        {
+            if (ruleIndex <= 0)
+                return false;
+
+            try
+            {
+                _ = InvokeDynamicMethod(formatConditions, "Delete", ruleIndex);
+                return true;
+            }
+            catch
+            {
+                // Try zero-based index fallback.
+            }
+
+            try
+            {
+                _ = InvokeDynamicMethod(formatConditions, "Delete", ruleIndex - 1);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static dynamic? GetFormatConditionByIndex(dynamic formatConditions, int ruleIndex)
+        {
+            if (ruleIndex <= 0)
+                return null;
+
+            try
+            {
+                var item = InvokeDynamicMethod(formatConditions, "Item", ruleIndex);
+                if (item != null)
+                    return item;
+            }
+            catch
+            {
+                // Try zero-based index fallback.
+            }
+
+            try
+            {
+                var item = InvokeDynamicMethod(formatConditions, "Item", ruleIndex - 1);
+                if (item != null)
+                    return item;
+            }
+            catch
+            {
+                // Fall back to enumeration.
+            }
+
+            var index = 0;
+            foreach (var condition in formatConditions)
+            {
+                index++;
+                if (index == ruleIndex)
+                    return condition;
+            }
+
+            return null;
+        }
+
+        private static ConditionalFormattingRuleInfo BuildConditionalFormattingRuleInfo(dynamic condition, int index)
+        {
+            return new ConditionalFormattingRuleInfo
+            {
+                Index = index,
+                TypeCode = ToInt32(TryGetDynamicProperty(condition, "Type")),
+                Expression1 = SafeToString(TryGetDynamicProperty(condition, "Expression1")),
+                Expression2 = SafeToString(TryGetDynamicProperty(condition, "Expression2")),
+                ForeColor = ToNullableInt(TryGetDynamicProperty(condition, "ForeColor")),
+                BackColor = ToNullableInt(TryGetDynamicProperty(condition, "BackColor")),
+                Enabled = ToBool(TryGetDynamicProperty(condition, "Enabled"), true)
+            };
+        }
+
         private static string BuildAttachmentQuery(string tableName, string? whereCondition)
         {
             var escapedTable = EscapeSqlIdentifier(tableName);
@@ -5774,6 +6413,48 @@ namespace MS.Access.MCP.Interop
         {
             var field = GetRecordsetField(recordset, fieldName);
             return field == null ? null : TryGetDynamicProperty(field, "Value");
+        }
+
+        private static byte[]? ConvertAttachmentFieldToBytes(object? value)
+        {
+            if (value == null || value == DBNull.Value)
+                return null;
+
+            if (value is byte[] bytes)
+                return bytes;
+
+            if (value is Array array)
+            {
+                try
+                {
+                    var result = new byte[array.Length];
+                    for (var i = 0; i < array.Length; i++)
+                    {
+                        var element = array.GetValue(i);
+                        result[i] = Convert.ToByte(element ?? 0);
+                    }
+
+                    return result;
+                }
+                catch
+                {
+                    return null;
+                }
+            }
+
+            if (value is string text && !string.IsNullOrWhiteSpace(text))
+            {
+                try
+                {
+                    return Convert.FromBase64String(text);
+                }
+                catch
+                {
+                    return null;
+                }
+            }
+
+            return null;
         }
 
         private static void SetRecordsetFieldValue(dynamic recordset, string fieldName, object? value)
@@ -9388,6 +10069,15 @@ namespace MS.Access.MCP.Interop
         public int ItemCount { get; set; }
     }
 
+    public class NavigationGroupObjectInfo
+    {
+        public string GroupName { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string ObjectName { get; set; } = "";
+        public string? ObjectType { get; set; }
+        public int Index { get; set; }
+    }
+
     public class ConditionalFormattingRuleInfo
     {
         public int Index { get; set; }
@@ -9399,11 +10089,38 @@ namespace MS.Access.MCP.Interop
         public bool Enabled { get; set; }
     }
 
+    public class ConditionalFormattingControlInfo
+    {
+        public string ObjectType { get; set; } = "";
+        public string ObjectName { get; set; } = "";
+        public string ControlName { get; set; } = "";
+        public int RuleCount { get; set; }
+        public List<ConditionalFormattingRuleInfo> Rules { get; set; } = new();
+    }
+
     public class AttachmentFileInfo
     {
         public string FileName { get; set; } = "";
         public string? FileType { get; set; }
         public int? FileSize { get; set; }
+    }
+
+    public class AttachmentSaveResult
+    {
+        public string TableName { get; set; } = "";
+        public string FieldName { get; set; } = "";
+        public string FileName { get; set; } = "";
+        public string FilePath { get; set; } = "";
+        public int FileSize { get; set; }
+    }
+
+    public class AttachmentMetadataInfo
+    {
+        public string FileName { get; set; } = "";
+        public string? FileType { get; set; }
+        public string? FileUrl { get; set; }
+        public int? FileSize { get; set; }
+        public Dictionary<string, object?> Fields { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
     public class ObjectEventInfo
