@@ -232,6 +232,62 @@ function Invoke-McpBatch {
     return $responses
 }
 
+function Invoke-McpRawBatch {
+    param(
+        [string]$ExePath,
+        [System.Collections.Generic.List[hashtable]]$Requests,
+        [string]$ClientName = "full-regression-raw",
+        [string]$ClientVersion = "1.0"
+    )
+
+    $jsonLines = New-Object 'System.Collections.Generic.List[string]'
+    $jsonLines.Add((@{
+        jsonrpc = "2.0"
+        id = 1
+        method = "initialize"
+        params = @{
+            protocolVersion = "2024-11-05"
+            capabilities = @{}
+            clientInfo = @{
+                name = $ClientName
+                version = $ClientVersion
+            }
+        }
+    } | ConvertTo-Json -Depth 40 -Compress))
+
+    foreach ($req in $Requests) {
+        $jsonLines.Add(($req | ConvertTo-Json -Depth 50 -Compress))
+    }
+
+    $msAccessSnapshotBefore = Get-MsAccessProcessSnapshot
+    $rawLines = @()
+    try {
+        $rawLines = @((($jsonLines -join "`n") | & $ExePath))
+    }
+    finally {
+        Register-NewMsAccessPids -BeforeSnapshot $msAccessSnapshotBefore
+    }
+
+    $responses = @{}
+    foreach ($line in $rawLines) {
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            continue
+        }
+
+        try {
+            $parsed = $line | ConvertFrom-Json
+            if ($null -ne $parsed.id) {
+                $responses[[int]$parsed.id] = $parsed
+            }
+        }
+        catch {
+            Write-Host "WARN: Could not parse response line: $line"
+        }
+    }
+
+    return $responses
+}
+
 function Get-McpToolsList {
     param(
         [string]$ExePath,
@@ -2007,6 +2063,184 @@ else {
         Write-Host ("database_file_tools_coverage: FAIL required database file lifecycle tools not exposed by this server build. missing={0}" -f ($missingDatabaseLifecycleTools -join ", "))
     }
 }
+
+# ── MCP Feature Tests (Resources, Prompts, Completion, Logging) ──
+
+Write-Host ""
+Write-Host "=== MCP Feature Tests (resources, prompts, completion, logging) ==="
+
+$mcpFeatureRequests = New-Object 'System.Collections.Generic.List[hashtable]'
+
+# resources/list (id=10)
+$mcpFeatureRequests.Add(@{ jsonrpc = "2.0"; id = 10; method = "resources/list"; params = @{} })
+
+# resources/templates/list (id=11)
+$mcpFeatureRequests.Add(@{ jsonrpc = "2.0"; id = 11; method = "resources/templates/list"; params = @{} })
+
+# resources/read access://connection (id=12 — always available, no database needed)
+$mcpFeatureRequests.Add(@{ jsonrpc = "2.0"; id = 12; method = "resources/read"; params = @{ uri = "access://connection" } })
+
+# prompts/list (id=13)
+$mcpFeatureRequests.Add(@{ jsonrpc = "2.0"; id = 13; method = "prompts/list"; params = @{} })
+
+# prompts/get for debug_query with sql argument (id=14)
+$mcpFeatureRequests.Add(@{ jsonrpc = "2.0"; id = 14; method = "prompts/get"; params = @{ name = "debug_query"; arguments = @{ sql = "SELECT * FROM Test" } } })
+
+# logging/setLevel (id=15)
+$mcpFeatureRequests.Add(@{ jsonrpc = "2.0"; id = 15; method = "logging/setLevel"; params = @{ level = "warning" } })
+
+# completion/complete for table names (id=16 — returns empty when not connected, but should not error)
+$mcpFeatureRequests.Add(@{ jsonrpc = "2.0"; id = 16; method = "completion/complete"; params = @{ ref = @{ type = "ref/prompt"; name = "source_table" }; argument = @{ name = "source_table"; value = "" } } })
+
+# Unknown method should return JSON-RPC error (id=17)
+$mcpFeatureRequests.Add(@{ jsonrpc = "2.0"; id = 17; method = "bogus/method"; params = @{} })
+
+$mcpFeatureResponses = Invoke-McpRawBatch -ExePath $ServerExe -Requests $mcpFeatureRequests -ClientName "mcp-feature-regression"
+
+# resources/list — expect 10 resources
+$resListResp = $mcpFeatureResponses[10]
+if ($null -eq $resListResp -or $null -eq $resListResp.result) {
+    $failed++
+    Write-Host "resources_list: FAIL missing response"
+}
+else {
+    $resList = @($resListResp.result.resources)
+    if ($resList.Count -eq 10) {
+        Write-Host ("resources_list: OK count={0}" -f $resList.Count)
+    }
+    else {
+        $failed++
+        Write-Host ("resources_list: FAIL expected 10, got {0}" -f $resList.Count)
+    }
+}
+
+# resources/templates/list — expect 6 templates
+$resTemplatesResp = $mcpFeatureResponses[11]
+if ($null -eq $resTemplatesResp -or $null -eq $resTemplatesResp.result) {
+    $failed++
+    Write-Host "resources_templates_list: FAIL missing response"
+}
+else {
+    $resTemplates = @($resTemplatesResp.result.resourceTemplates)
+    if ($resTemplates.Count -eq 6) {
+        Write-Host ("resources_templates_list: OK count={0}" -f $resTemplates.Count)
+    }
+    else {
+        $failed++
+        Write-Host ("resources_templates_list: FAIL expected 6, got {0}" -f $resTemplates.Count)
+    }
+}
+
+# resources/read access://connection — expect contents array with connection status
+$resReadResp = $mcpFeatureResponses[12]
+if ($null -eq $resReadResp -or $null -eq $resReadResp.result) {
+    $failed++
+    Write-Host "resources_read_connection: FAIL missing response"
+}
+elseif ($resReadResp.error) {
+    $failed++
+    Write-Host ("resources_read_connection: FAIL error: {0}" -f $resReadResp.error.message)
+}
+else {
+    $contents = @($resReadResp.result.contents)
+    if ($contents.Count -ge 1 -and $contents[0].uri -eq "access://connection") {
+        Write-Host "resources_read_connection: OK"
+    }
+    else {
+        $failed++
+        Write-Host "resources_read_connection: FAIL unexpected contents structure"
+    }
+}
+
+# prompts/list — expect 6 prompts
+$promptsListResp = $mcpFeatureResponses[13]
+if ($null -eq $promptsListResp -or $null -eq $promptsListResp.result) {
+    $failed++
+    Write-Host "prompts_list: FAIL missing response"
+}
+else {
+    $promptsList = @($promptsListResp.result.prompts)
+    if ($promptsList.Count -eq 6) {
+        Write-Host ("prompts_list: OK count={0}" -f $promptsList.Count)
+    }
+    else {
+        $failed++
+        Write-Host ("prompts_list: FAIL expected 6, got {0}" -f $promptsList.Count)
+    }
+}
+
+# prompts/get debug_query — expect messages array
+$promptGetResp = $mcpFeatureResponses[14]
+if ($null -eq $promptGetResp -or $null -eq $promptGetResp.result) {
+    $failed++
+    Write-Host "prompts_get_debug_query: FAIL missing response"
+}
+elseif ($promptGetResp.error) {
+    $failed++
+    Write-Host ("prompts_get_debug_query: FAIL error: {0}" -f $promptGetResp.error.message)
+}
+else {
+    $messages = @($promptGetResp.result.messages)
+    if ($messages.Count -ge 1) {
+        Write-Host ("prompts_get_debug_query: OK messages={0}" -f $messages.Count)
+    }
+    else {
+        $failed++
+        Write-Host "prompts_get_debug_query: FAIL no messages returned"
+    }
+}
+
+# logging/setLevel — expect empty result (no error)
+$logSetResp = $mcpFeatureResponses[15]
+if ($null -eq $logSetResp) {
+    $failed++
+    Write-Host "logging_setLevel: FAIL missing response"
+}
+elseif ($logSetResp.error) {
+    $failed++
+    Write-Host ("logging_setLevel: FAIL error: {0}" -f $logSetResp.error.message)
+}
+else {
+    Write-Host "logging_setLevel: OK"
+}
+
+# completion/complete — expect completion object (even if empty values when not connected)
+$completionResp = $mcpFeatureResponses[16]
+if ($null -eq $completionResp -or $null -eq $completionResp.result) {
+    $failed++
+    Write-Host "completion_complete: FAIL missing response"
+}
+elseif ($completionResp.error) {
+    $failed++
+    Write-Host ("completion_complete: FAIL error: {0}" -f $completionResp.error.message)
+}
+else {
+    $completion = $completionResp.result.completion
+    if ($null -ne $completion -and $null -ne $completion.values) {
+        Write-Host ("completion_complete: OK values_count={0}" -f @($completion.values).Count)
+    }
+    else {
+        $failed++
+        Write-Host "completion_complete: FAIL missing completion object"
+    }
+}
+
+# Unknown method — expect JSON-RPC error response with code -32601
+$unknownResp = $mcpFeatureResponses[17]
+if ($null -eq $unknownResp) {
+    $failed++
+    Write-Host "unknown_method_error: FAIL missing response"
+}
+elseif ($unknownResp.error -and $unknownResp.error.code -eq -32601) {
+    Write-Host "unknown_method_error: OK code=-32601"
+}
+else {
+    $failed++
+    Write-Host "unknown_method_error: FAIL expected error code -32601"
+}
+
+Write-Host "=== End MCP Feature Tests ==="
+Write-Host ""
 
 Write-Host ("TOTAL_FAIL={0}" -f $failed)
 if ($failed -eq 0) {

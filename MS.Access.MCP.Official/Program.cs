@@ -9,6 +9,11 @@ class Program
     static readonly JsonElement EmptyJsonObject = JsonSerializer.Deserialize<JsonElement>("{}");
     const string PodbcDefaultSchema = "AccessCatalog";
 
+    // Logging level for MCP logging capability
+    static string _minimumLogLevel = "debug";
+    static readonly string[] LogLevelOrder = { "debug", "info", "notice", "warning", "error", "critical", "alert", "emergency" };
+    static int LogLevelSeverity(string level) => Array.IndexOf(LogLevelOrder, level) is int i and >= 0 ? i : 0;
+
     static async Task Main(string[] args)
     {
         // JSON-RPC mode — no output until we receive a request
@@ -56,16 +61,33 @@ class Program
                         "initialize" => HandleInitialize(),
                         "tools/list" => HandleToolsList(),
                         "tools/call" => WrapCallToolResult(HandleToolsCall(accessService, safeParams)),
-                        _ => new { error = $"Unknown method: {method}" }
+                        "resources/list" => HandleResourcesList(accessService),
+                        "resources/read" => HandleResourcesRead(accessService, safeParams),
+                        "resources/templates/list" => HandleResourceTemplatesList(),
+                        "prompts/list" => HandlePromptsList(),
+                        "prompts/get" => HandlePromptsGet(accessService, safeParams),
+                        "completion/complete" => HandleCompletionComplete(accessService, safeParams),
+                        "logging/setLevel" => HandleLoggingSetLevel(safeParams),
+                        _ => new JsonRpcErrorSentinel { Code = -32601, Message = $"Method not found: {method}" }
                     };
 
-                    var response = new JsonRpcResponse
+                    string jsonResponse;
+                    if (result is JsonRpcErrorSentinel errSentinel)
                     {
-                        Id = id,
-                        Result = result
-                    };
-
-                    var jsonResponse = JsonSerializer.Serialize(response);
+                        jsonResponse = JsonSerializer.Serialize(new JsonRpcErrorResponse
+                        {
+                            Id = id,
+                            Error = new JsonRpcError { Code = errSentinel.Code, Message = errSentinel.Message }
+                        });
+                    }
+                    else
+                    {
+                        jsonResponse = JsonSerializer.Serialize(new JsonRpcResponse
+                        {
+                            Id = id,
+                            Result = result
+                        });
+                    }
                     Console.WriteLine(jsonResponse);
                 }
                 catch (JsonException ex)
@@ -95,7 +117,13 @@ class Program
         return new
         {
             protocolVersion = "2024-11-05",
-            capabilities = new { tools = new { } },
+            capabilities = new
+            {
+                tools = new { },
+                resources = new { listChanged = true },
+                prompts = new { },
+                logging = new { }
+            },
             serverInfo = new
             {
                 name = "Access MCP Server",
@@ -327,11 +355,15 @@ class Program
                 databasePath,
                 string.IsNullOrWhiteSpace(databasePassword) ? null : databasePassword,
                 string.IsNullOrWhiteSpace(systemDatabasePath) ? null : systemDatabasePath);
-            
+
             // Verify connection was successful
             if (!accessService.IsConnected)
+            {
+                SendLogNotification("error", "connection", new { databasePath, message = "Failed to establish connection" });
                 return new { success = false, error = "Failed to establish database connection" };
-                
+            }
+
+            SendLogNotification("info", "connection", new { databasePath = accessService.CurrentDatabasePath ?? databasePath, message = "Connected successfully" });
             return new
             {
                 success = true,
@@ -344,6 +376,7 @@ class Program
         }
         catch (Exception ex)
         {
+            SendLogNotification("error", "connection", new { error = ex.Message });
             return BuildOperationErrorResponse("connect_access", ex);
         }
     }
@@ -819,10 +852,12 @@ class Program
             if (maxRows <= 0)
                 return new { success = false, error = "max_rows must be greater than 0" };
 
+            SendLogNotification("debug", "sql", new { sql, maxRows });
             var result = accessService.ExecuteSql(sql, maxRows);
 
             if (result.IsQuery)
             {
+                SendLogNotification("info", "sql", new { sql, rowCount = result.RowCount, truncated = result.Truncated });
                 return new
                 {
                     success = true,
@@ -835,6 +870,7 @@ class Program
                 };
             }
 
+            SendLogNotification("info", "sql", new { sql, rowsAffected = result.RowsAffected });
             return new
             {
                 success = true,
@@ -844,6 +880,7 @@ class Program
         }
         catch (Exception ex)
         {
+            SendLogNotification("error", "sql", new { error = ex.Message });
             return BuildOperationErrorResponse("execute_sql", ex);
         }
     }
@@ -2340,6 +2377,12 @@ class Program
         var preflight = BuildPreflightDiagnostics(ex);
         var error = BuildRemediatedErrorMessage(operationName, ex, preflight);
 
+        var isCom = ex is COMException || ex.InnerException is COMException;
+        SendLogNotification(
+            "error",
+            isCom ? "com" : "operation",
+            new { operation = operationName, error = ex.Message, exceptionType = ex.GetType().Name });
+
         return new
         {
             success = false,
@@ -2552,6 +2595,571 @@ class Program
 
         return null;
     }
+
+    // ── JSON-RPC error sentinel (used by dispatch to signal error responses) ──
+
+    sealed class JsonRpcErrorSentinel
+    {
+        public int Code { get; init; }
+        public string Message { get; init; } = "";
+    }
+
+    // ── Notification helpers ──
+
+    static void SendNotification(string method, object? @params = null)
+    {
+        var notification = @params != null
+            ? new { jsonrpc = "2.0", method, @params }
+            : (object)new { jsonrpc = "2.0", method };
+        Console.WriteLine(JsonSerializer.Serialize(notification));
+    }
+
+    static void SendLogNotification(string level, string logger, object data)
+    {
+        if (LogLevelSeverity(level) < LogLevelSeverity(_minimumLogLevel))
+            return;
+        SendNotification("notifications/message", new { level, logger, data });
+    }
+
+    // ── logging/setLevel handler ──
+
+    static object HandleLoggingSetLevel(JsonElement @params)
+    {
+        if (@params.TryGetProperty("level", out var levelElement) &&
+            levelElement.ValueKind == JsonValueKind.String)
+        {
+            var level = levelElement.GetString()?.ToLowerInvariant() ?? "debug";
+            if (Array.IndexOf(LogLevelOrder, level) >= 0)
+                _minimumLogLevel = level;
+        }
+        return new { };
+    }
+
+    // ── resources/list handler ──
+
+    static object HandleResourcesList(AccessInteropService accessService)
+    {
+        var resources = new List<object>
+        {
+            new { uri = "access://connection", name = "Connection Status", description = "Current database connection status and path", mimeType = "application/json" },
+            new { uri = "access://tables", name = "Tables", description = "All user tables with fields and record counts", mimeType = "application/json" },
+            new { uri = "access://queries", name = "Queries", description = "All saved queries with SQL definitions", mimeType = "application/json" },
+            new { uri = "access://relationships", name = "Relationships", description = "Table relationships and referential integrity rules", mimeType = "application/json" },
+            new { uri = "access://forms", name = "Forms", description = "All form objects in the database", mimeType = "application/json" },
+            new { uri = "access://reports", name = "Reports", description = "All report objects in the database", mimeType = "application/json" },
+            new { uri = "access://macros", name = "Macros", description = "All macro objects in the database", mimeType = "application/json" },
+            new { uri = "access://modules", name = "Modules", description = "All VBA module objects in the database", mimeType = "application/json" },
+            new { uri = "access://linked-tables", name = "Linked Tables", description = "All linked/attached table definitions", mimeType = "application/json" },
+            new { uri = "access://metadata", name = "Object Metadata", description = "MSysObjects metadata for all database objects", mimeType = "application/json" }
+        };
+
+        return new { resources };
+    }
+
+    // ── resources/templates/list handler ──
+
+    static object HandleResourceTemplatesList()
+    {
+        var resourceTemplates = new List<object>
+        {
+            new { uriTemplate = "access://schema/{tableName}", name = "Table Schema", description = "Column definitions, types, and constraints for a specific table", mimeType = "application/json" },
+            new { uriTemplate = "access://indexes/{tableName}", name = "Table Indexes", description = "Index definitions for a specific table", mimeType = "application/json" },
+            new { uriTemplate = "access://query/{queryName}", name = "Query Definition", description = "SQL definition of a specific saved query", mimeType = "application/json" },
+            new { uriTemplate = "access://vba/{moduleName}", name = "VBA Module Code", description = "Source code of a specific VBA module", mimeType = "text/plain" },
+            new { uriTemplate = "access://form/{formName}", name = "Form Definition", description = "Exported text representation of a specific form", mimeType = "application/json" },
+            new { uriTemplate = "access://report/{reportName}", name = "Report Definition", description = "Exported text representation of a specific report", mimeType = "application/json" }
+        };
+
+        return new { resourceTemplates };
+    }
+
+    // ── resources/read handler ──
+
+    static object HandleResourcesRead(AccessInteropService accessService, JsonElement @params)
+    {
+        if (!@params.TryGetProperty("uri", out var uriElement) || uriElement.ValueKind != JsonValueKind.String)
+            return new JsonRpcErrorSentinel { Code = -32602, Message = "Missing required parameter: uri" };
+
+        var uri = uriElement.GetString() ?? "";
+        if (!uri.StartsWith("access://"))
+            return new JsonRpcErrorSentinel { Code = -32602, Message = $"Invalid resource URI scheme: {uri}" };
+
+        var path = uri.Substring("access://".Length);
+
+        try
+        {
+            // Static resources
+            object? data = path switch
+            {
+                "connection" => new { connected = accessService.IsConnected, databasePath = accessService.CurrentDatabasePath },
+                "tables" => accessService.IsConnected ? accessService.GetTables() : (object)new List<object>(),
+                "queries" => accessService.IsConnected ? accessService.GetQueries() : (object)new List<object>(),
+                "relationships" => accessService.IsConnected ? accessService.GetRelationships() : (object)new List<object>(),
+                "forms" => accessService.IsConnected ? accessService.GetForms() : (object)new List<object>(),
+                "reports" => accessService.IsConnected ? accessService.GetReports() : (object)new List<object>(),
+                "macros" => accessService.IsConnected ? accessService.GetMacros() : (object)new List<object>(),
+                "modules" => accessService.IsConnected ? accessService.GetModules() : (object)new List<object>(),
+                "linked-tables" => accessService.IsConnected ? accessService.GetLinkedTables() : (object)new List<object>(),
+                "metadata" => accessService.IsConnected ? accessService.GetObjectMetadata() : (object)new List<object>(),
+                _ => null
+            };
+
+            // Template resources (parameterized)
+            if (data == null)
+            {
+                if (!accessService.IsConnected)
+                    return new JsonRpcErrorSentinel { Code = -32002, Message = "Not connected to a database" };
+
+                if (path.StartsWith("schema/"))
+                {
+                    var tableName = Uri.UnescapeDataString(path.Substring("schema/".Length));
+                    data = accessService.DescribeTable(tableName);
+                }
+                else if (path.StartsWith("indexes/"))
+                {
+                    var tableName = Uri.UnescapeDataString(path.Substring("indexes/".Length));
+                    data = accessService.GetIndexes(tableName);
+                }
+                else if (path.StartsWith("query/"))
+                {
+                    var queryName = Uri.UnescapeDataString(path.Substring("query/".Length));
+                    var allQueries = accessService.GetQueries();
+                    data = allQueries.FirstOrDefault(q => string.Equals(q.Name, queryName, StringComparison.OrdinalIgnoreCase));
+                    if (data == null)
+                        return new JsonRpcErrorSentinel { Code = -32002, Message = $"Query not found: {queryName}" };
+                }
+                else if (path.StartsWith("vba/"))
+                {
+                    var moduleName = Uri.UnescapeDataString(path.Substring("vba/".Length));
+                    var projects = accessService.GetVBAProjects();
+                    var projectName = projects.FirstOrDefault()?.Name ?? "";
+                    if (string.IsNullOrEmpty(projectName))
+                        return new JsonRpcErrorSentinel { Code = -32002, Message = "No VBA projects found in the database" };
+                    var code = accessService.GetVBACode(projectName, moduleName);
+                    return new
+                    {
+                        contents = new object[]
+                        {
+                            new { uri, mimeType = "text/plain", text = code }
+                        }
+                    };
+                }
+                else if (path.StartsWith("form/"))
+                {
+                    var formName = Uri.UnescapeDataString(path.Substring("form/".Length));
+                    var formData = accessService.ExportFormToText(formName);
+                    data = new { name = formName, definition = formData };
+                }
+                else if (path.StartsWith("report/"))
+                {
+                    var reportName = Uri.UnescapeDataString(path.Substring("report/".Length));
+                    var reportData = accessService.ExportReportToText(reportName);
+                    data = new { name = reportName, definition = reportData };
+                }
+                else
+                {
+                    return new JsonRpcErrorSentinel { Code = -32002, Message = $"Resource not found: {uri}" };
+                }
+            }
+
+            var jsonText = JsonSerializer.Serialize(data);
+            return new
+            {
+                contents = new object[]
+                {
+                    new { uri, mimeType = "application/json", text = jsonText }
+                }
+            };
+        }
+        catch (Exception ex)
+        {
+            SendLogNotification("error", "resources", new { uri, error = ex.Message });
+            return new JsonRpcErrorSentinel { Code = -32002, Message = ex.Message };
+        }
+    }
+
+    // ── prompts/list handler ──
+
+    static object HandlePromptsList()
+    {
+        var prompts = new object[]
+        {
+            new
+            {
+                name = "analyze_schema",
+                description = "Analyze the database schema for normalization issues, missing indexes, and design improvements",
+                arguments = Array.Empty<object>()
+            },
+            new
+            {
+                name = "debug_query",
+                description = "Analyze a SQL query for Jet/ACE compatibility issues, performance problems, and errors",
+                arguments = new object[]
+                {
+                    new { name = "sql", description = "The SQL query to analyze", required = true }
+                }
+            },
+            new
+            {
+                name = "create_normalized_schema",
+                description = "Design a normalized Access database schema from a natural-language description",
+                arguments = new object[]
+                {
+                    new { name = "description", description = "Natural-language description of the data to be stored", required = true }
+                }
+            },
+            new
+            {
+                name = "migrate_data",
+                description = "Plan a data migration from a source table to a new structure",
+                arguments = new object[]
+                {
+                    new { name = "source_table", description = "Name of the source table", required = true },
+                    new { name = "target_description", description = "Description of the desired target structure", required = true }
+                }
+            },
+            new
+            {
+                name = "document_database",
+                description = "Generate comprehensive documentation of all database objects",
+                arguments = Array.Empty<object>()
+            },
+            new
+            {
+                name = "vba_review",
+                description = "Review a VBA module for errors, best practices, and improvements",
+                arguments = new object[]
+                {
+                    new { name = "module_name", description = "Name of the VBA module to review", required = true }
+                }
+            }
+        };
+
+        return new { prompts };
+    }
+
+    // ── prompts/get handler ──
+
+    static object HandlePromptsGet(AccessInteropService accessService, JsonElement @params)
+    {
+        if (!@params.TryGetProperty("name", out var nameElement) || nameElement.ValueKind != JsonValueKind.String)
+            return new JsonRpcErrorSentinel { Code = -32602, Message = "Missing required parameter: name" };
+
+        var promptName = nameElement.GetString() ?? "";
+
+        // Extract arguments if provided
+        var arguments = EmptyJsonObject;
+        if (@params.TryGetProperty("arguments", out var argsElement) && argsElement.ValueKind == JsonValueKind.Object)
+            arguments = argsElement;
+
+        return promptName switch
+        {
+            "analyze_schema" => BuildAnalyzeSchemaPrompt(accessService),
+            "debug_query" => BuildDebugQueryPrompt(arguments),
+            "create_normalized_schema" => BuildCreateNormalizedSchemaPrompt(arguments),
+            "migrate_data" => BuildMigrateDataPrompt(arguments),
+            "document_database" => BuildDocumentDatabasePrompt(accessService),
+            "vba_review" => BuildVbaReviewPrompt(accessService, arguments),
+            _ => new JsonRpcErrorSentinel { Code = -32602, Message = $"Unknown prompt: {promptName}" }
+        };
+    }
+
+    static object BuildAnalyzeSchemaPrompt(AccessInteropService accessService)
+    {
+        var messages = new List<object>
+        {
+            new
+            {
+                role = "user",
+                content = new object[]
+                {
+                    new
+                    {
+                        type = "resource",
+                        resource = new { uri = "access://tables", mimeType = "application/json", text = accessService.IsConnected ? JsonSerializer.Serialize(accessService.GetTables()) : "[]" }
+                    },
+                    new
+                    {
+                        type = "resource",
+                        resource = new { uri = "access://relationships", mimeType = "application/json", text = accessService.IsConnected ? JsonSerializer.Serialize(accessService.GetRelationships()) : "[]" }
+                    },
+                    new
+                    {
+                        type = "resource",
+                        resource = new { uri = "access://queries", mimeType = "application/json", text = accessService.IsConnected ? JsonSerializer.Serialize(accessService.GetQueries()) : "[]" }
+                    },
+                    new
+                    {
+                        type = "text",
+                        text = "Analyze this Microsoft Access database schema. Examine the tables, fields, relationships, and queries. Report on:\n\n1. **Normalization issues** — identify any tables that violate 1NF, 2NF, or 3NF and suggest fixes\n2. **Missing relationships** — fields that look like foreign keys but have no defined relationship\n3. **Missing indexes** — fields used in relationships or likely query filters that lack indexes\n4. **Data type concerns** — fields using Text where Number/Date would be better, oversized field lengths, etc.\n5. **Naming conventions** — inconsistent naming patterns across tables and fields\n6. **Query optimization** — any saved queries that could be improved\n\nProvide specific, actionable recommendations for each issue found."
+                    }
+                }
+            }
+        };
+
+        return new { messages };
+    }
+
+    static object BuildDebugQueryPrompt(JsonElement arguments)
+    {
+        var sql = "";
+        if (arguments.TryGetProperty("sql", out var sqlElement) && sqlElement.ValueKind == JsonValueKind.String)
+            sql = sqlElement.GetString() ?? "";
+
+        if (string.IsNullOrWhiteSpace(sql))
+            return new JsonRpcErrorSentinel { Code = -32602, Message = "Missing required argument: sql" };
+
+        var messages = new List<object>
+        {
+            new
+            {
+                role = "user",
+                content = new object[]
+                {
+                    new
+                    {
+                        type = "text",
+                        text = $"Debug this SQL query for Microsoft Access (Jet/ACE SQL dialect):\n\n```sql\n{sql}\n```\n\nAnalyze for:\n1. **Syntax errors** — Jet/ACE SQL differs from standard SQL (no LIMIT, use TOP; no BOOLEAN, use Yes/No; date literals use #...#)\n2. **Compatibility issues** — features not supported by Access (CTEs, window functions, FULL OUTER JOIN, etc.)\n3. **Performance concerns** — missing indexes, cartesian products, unnecessary subqueries\n4. **Correctness** — logic errors, NULL handling issues, ambiguous column references\n5. **Suggested fix** — provide a corrected version of the query if issues are found"
+                    }
+                }
+            }
+        };
+
+        return new { messages };
+    }
+
+    static object BuildCreateNormalizedSchemaPrompt(JsonElement arguments)
+    {
+        var description = "";
+        if (arguments.TryGetProperty("description", out var descElement) && descElement.ValueKind == JsonValueKind.String)
+            description = descElement.GetString() ?? "";
+
+        if (string.IsNullOrWhiteSpace(description))
+            return new JsonRpcErrorSentinel { Code = -32602, Message = "Missing required argument: description" };
+
+        var messages = new List<object>
+        {
+            new
+            {
+                role = "user",
+                content = new object[]
+                {
+                    new
+                    {
+                        type = "text",
+                        text = $"Design a normalized Microsoft Access database schema for the following requirements:\n\n{description}\n\nProvide:\n1. **Table definitions** — table names, field names, data types (use Access/Jet types: Text, Long Integer, Currency, Date/Time, Yes/No, Memo, AutoNumber, etc.)\n2. **Primary keys** — every table should have a primary key (prefer AutoNumber for surrogate keys)\n3. **Relationships** — define all foreign keys with referential integrity settings (cascade update/delete where appropriate)\n4. **Indexes** — suggest indexes for frequently queried fields and foreign keys\n5. **Sample CREATE TABLE SQL** — in Jet SQL dialect\n6. **Normalization justification** — explain how the design satisfies 3NF\n\nEnsure the design follows Access best practices (e.g., avoid reserved words for field names, use appropriate field sizes)."
+                    }
+                }
+            }
+        };
+
+        return new { messages };
+    }
+
+    static object BuildMigrateDataPrompt(JsonElement arguments)
+    {
+        var sourceTable = "";
+        var targetDescription = "";
+        if (arguments.TryGetProperty("source_table", out var srcElement) && srcElement.ValueKind == JsonValueKind.String)
+            sourceTable = srcElement.GetString() ?? "";
+        if (arguments.TryGetProperty("target_description", out var tgtElement) && tgtElement.ValueKind == JsonValueKind.String)
+            targetDescription = tgtElement.GetString() ?? "";
+
+        if (string.IsNullOrWhiteSpace(sourceTable))
+            return new JsonRpcErrorSentinel { Code = -32602, Message = "Missing required argument: source_table" };
+        if (string.IsNullOrWhiteSpace(targetDescription))
+            return new JsonRpcErrorSentinel { Code = -32602, Message = "Missing required argument: target_description" };
+
+        var messages = new List<object>
+        {
+            new
+            {
+                role = "user",
+                content = new object[]
+                {
+                    new
+                    {
+                        type = "text",
+                        text = $"Plan a data migration in Microsoft Access.\n\n**Source table:** {sourceTable}\n**Target structure:** {targetDescription}\n\nProvide:\n1. **Target table DDL** — CREATE TABLE statements in Jet SQL\n2. **Migration SQL** — INSERT INTO ... SELECT queries to transform and move data\n3. **Data transformation rules** — how each source field maps to target fields\n4. **Validation queries** — SQL to verify row counts and data integrity after migration\n5. **Rollback plan** — steps to undo the migration if issues are found\n6. **Risks and considerations** — data truncation, NULL handling, type conversion issues\n\nUse the `describe_table` and `execute_sql` tools to examine the source table structure and data before generating the plan."
+                    }
+                }
+            }
+        };
+
+        return new { messages };
+    }
+
+    static object BuildDocumentDatabasePrompt(AccessInteropService accessService)
+    {
+        var messages = new List<object>
+        {
+            new
+            {
+                role = "user",
+                content = new object[]
+                {
+                    new
+                    {
+                        type = "resource",
+                        resource = new { uri = "access://tables", mimeType = "application/json", text = accessService.IsConnected ? JsonSerializer.Serialize(accessService.GetTables()) : "[]" }
+                    },
+                    new
+                    {
+                        type = "resource",
+                        resource = new { uri = "access://queries", mimeType = "application/json", text = accessService.IsConnected ? JsonSerializer.Serialize(accessService.GetQueries()) : "[]" }
+                    },
+                    new
+                    {
+                        type = "resource",
+                        resource = new { uri = "access://relationships", mimeType = "application/json", text = accessService.IsConnected ? JsonSerializer.Serialize(accessService.GetRelationships()) : "[]" }
+                    },
+                    new
+                    {
+                        type = "resource",
+                        resource = new { uri = "access://forms", mimeType = "application/json", text = accessService.IsConnected ? JsonSerializer.Serialize(accessService.GetForms()) : "[]" }
+                    },
+                    new
+                    {
+                        type = "resource",
+                        resource = new { uri = "access://reports", mimeType = "application/json", text = accessService.IsConnected ? JsonSerializer.Serialize(accessService.GetReports()) : "[]" }
+                    },
+                    new
+                    {
+                        type = "resource",
+                        resource = new { uri = "access://macros", mimeType = "application/json", text = accessService.IsConnected ? JsonSerializer.Serialize(accessService.GetMacros()) : "[]" }
+                    },
+                    new
+                    {
+                        type = "resource",
+                        resource = new { uri = "access://modules", mimeType = "application/json", text = accessService.IsConnected ? JsonSerializer.Serialize(accessService.GetModules()) : "[]" }
+                    },
+                    new
+                    {
+                        type = "text",
+                        text = "Generate comprehensive documentation for this Microsoft Access database. Include:\n\n1. **Overview** — database purpose (infer from object names), file path, object counts\n2. **Table documentation** — for each table: purpose, field descriptions, data types, primary key, record count\n3. **Relationship diagram** — text-based ERD showing all relationships and cardinality\n4. **Query documentation** — for each query: purpose, SQL, input parameters if any\n5. **Form inventory** — list all forms with likely purpose\n6. **Report inventory** — list all reports with likely purpose\n7. **Macro inventory** — list all macros with likely purpose\n8. **VBA modules** — list all modules\n9. **Recommendations** — any issues or improvements noted during documentation\n\nFormat the output as a well-structured Markdown document."
+                    }
+                }
+            }
+        };
+
+        return new { messages };
+    }
+
+    static object BuildVbaReviewPrompt(AccessInteropService accessService, JsonElement arguments)
+    {
+        var moduleName = "";
+        if (arguments.TryGetProperty("module_name", out var modElement) && modElement.ValueKind == JsonValueKind.String)
+            moduleName = modElement.GetString() ?? "";
+
+        if (string.IsNullOrWhiteSpace(moduleName))
+            return new JsonRpcErrorSentinel { Code = -32602, Message = "Missing required argument: module_name" };
+
+        // Try to fetch actual VBA code if connected
+        string codeContent = "";
+        if (accessService.IsConnected)
+        {
+            try
+            {
+                var projects = accessService.GetVBAProjects();
+                var projectName = projects.FirstOrDefault()?.Name ?? "";
+                if (!string.IsNullOrEmpty(projectName))
+                    codeContent = accessService.GetVBACode(projectName, moduleName);
+            }
+            catch
+            {
+                // Will be empty, prompt will instruct to fetch via tool
+            }
+        }
+
+        var contentParts = new List<object>();
+        if (!string.IsNullOrEmpty(codeContent))
+        {
+            contentParts.Add(new
+            {
+                type = "resource",
+                resource = new { uri = $"access://vba/{Uri.EscapeDataString(moduleName)}", mimeType = "text/plain", text = codeContent }
+            });
+        }
+        contentParts.Add(new
+        {
+            type = "text",
+            text = string.IsNullOrEmpty(codeContent)
+                ? $"Review the VBA module named \"{moduleName}\" in this Access database. Use the `get_vba_code` tool to retrieve the source code, then analyze it."
+                : $"Review this VBA module \"{moduleName}\" from the Access database."
+                + "\n\nAnalyze for:\n1. **Errors and bugs** — unhandled errors, incorrect logic, missing error handlers\n2. **Error handling** — ensure all procedures have proper On Error statements\n3. **Best practices** — Option Explicit, meaningful variable names, proper scoping (Dim vs Public)\n4. **Performance** — unnecessary loops, repeated COM calls that could be cached, missing DoEvents in long operations\n5. **Security** — SQL injection in string-concatenated queries (use parameterized queries instead)\n6. **Maintainability** — dead code, overly complex procedures that should be split, missing comments on non-obvious logic\n7. **Access-specific issues** — proper use of CurrentDb vs CodeDb, DAO vs ADO consistency, proper form/report references\n\nProvide specific line-level feedback and corrected code snippets."
+        });
+
+        var messages = new List<object>
+        {
+            new { role = "user", content = contentParts }
+        };
+
+        return new { messages };
+    }
+
+    // ── completion/complete handler ──
+
+    static object HandleCompletionComplete(AccessInteropService accessService, JsonElement @params)
+    {
+        if (!@params.TryGetProperty("ref", out var refElement) || refElement.ValueKind != JsonValueKind.Object)
+            return new { completion = new { values = Array.Empty<string>(), total = 0, hasMore = false } };
+
+        var refType = "";
+        if (refElement.TryGetProperty("type", out var typeEl) && typeEl.ValueKind == JsonValueKind.String)
+            refType = typeEl.GetString() ?? "";
+
+        var argumentName = "";
+        if (refElement.TryGetProperty("name", out var nameEl) && nameEl.ValueKind == JsonValueKind.String)
+            argumentName = nameEl.GetString() ?? "";
+
+        // Get the partial input to filter on
+        var partial = "";
+        if (@params.TryGetProperty("argument", out var argElement) && argElement.TryGetProperty("value", out var valEl) && valEl.ValueKind == JsonValueKind.String)
+            partial = valEl.GetString() ?? "";
+
+        if (!accessService.IsConnected)
+            return new { completion = new { values = Array.Empty<string>(), total = 0, hasMore = false } };
+
+        try
+        {
+            IEnumerable<string> candidates = Array.Empty<string>();
+
+            if (refType == "ref/resource")
+            {
+                // Resource template URI — determine parameter from the URI pattern
+                var uri = argumentName; // For resource refs, name holds the URI template
+                if (uri.Contains("{tableName}"))
+                    candidates = accessService.GetTables().Select(t => t.Name);
+                else if (uri.Contains("{queryName}"))
+                    candidates = accessService.GetQueries().Select(q => q.Name);
+                else if (uri.Contains("{formName}"))
+                    candidates = accessService.GetForms().Select(f => f.Name);
+                else if (uri.Contains("{reportName}"))
+                    candidates = accessService.GetReports().Select(r => r.Name);
+                else if (uri.Contains("{moduleName}"))
+                    candidates = accessService.GetModules().Select(m => m.Name);
+            }
+            else if (refType == "ref/prompt")
+            {
+                // Prompt argument completion
+                if (argumentName == "module_name")
+                    candidates = accessService.GetModules().Select(m => m.Name);
+                else if (argumentName == "source_table")
+                    candidates = accessService.GetTables().Select(t => t.Name);
+            }
+
+            var filtered = string.IsNullOrEmpty(partial)
+                ? candidates.Take(100).ToArray()
+                : candidates.Where(c => c.StartsWith(partial, StringComparison.OrdinalIgnoreCase)).Take(100).ToArray();
+
+            return new { completion = new { values = filtered, total = filtered.Length, hasMore = false } };
+        }
+        catch (Exception ex)
+        {
+            SendLogNotification("warning", "completion", new { error = ex.Message });
+            return new { completion = new { values = Array.Empty<string>(), total = 0, hasMore = false } };
+        }
+    }
 }
 
 public class JsonRpcRequest
@@ -2579,4 +3187,25 @@ public class JsonRpcResponse
 
     [JsonPropertyName("result")]
     public object Result { get; set; } = new { };
+}
+
+public class JsonRpcErrorResponse
+{
+    [JsonPropertyName("jsonrpc")]
+    public string Jsonrpc { get; set; } = "2.0";
+
+    [JsonPropertyName("id")]
+    public JsonElement? Id { get; set; }
+
+    [JsonPropertyName("error")]
+    public JsonRpcError Error { get; set; } = new();
+}
+
+public class JsonRpcError
+{
+    [JsonPropertyName("code")]
+    public int Code { get; set; }
+
+    [JsonPropertyName("message")]
+    public string Message { get; set; } = "";
 }
