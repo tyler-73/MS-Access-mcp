@@ -4,6 +4,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Resolve $ServerExe when $PSScriptRoot was empty (MSYS bash / git-bash invocations)
+if (-not (Test-Path $ServerExe -ErrorAction SilentlyContinue)) {
+    $fallbackRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+    $fallbackExe  = Join-Path $fallbackRoot "..\mcp-server-official-x64\MS.Access.MCP.Official.exe"
+    if (Test-Path $fallbackExe) { $ServerExe = $fallbackExe }
+}
+
 function Write-CiMarker {
     param([string]$Message)
     Write-Host "[CI_SMOKE] $Message"
