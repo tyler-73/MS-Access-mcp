@@ -173,6 +173,15 @@ class Program
                 new { name = "set_field_caption", description = "Set field caption.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, caption = new { type = "string" } }, required = new string[] { "table_name", "field_name", "caption" } } },
                 new { name = "get_field_properties", description = "Get field properties including validation/default/input mask/caption and lookup settings.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" } }, required = new string[] { "table_name", "field_name" } } },
                 new { name = "set_lookup_properties", description = "Set lookup properties for a field (RowSource, BoundColumn, ColumnCount, ColumnWidths, etc.).", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, row_source = new { type = "string" }, bound_column = new { type = "integer" }, column_count = new { type = "integer" }, column_widths = new { type = "string" }, limit_to_list = new { type = "boolean" }, allow_multiple_values = new { type = "boolean" }, display_control = new { type = "integer" } }, required = new string[] { "table_name", "field_name" } } },
+                new { name = "get_vba_references", description = "List VBA references for a VBA project.", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" } } } },
+                new { name = "add_vba_reference", description = "Add a VBA reference by file path or GUID.", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, reference_path = new { type = "string" }, reference_guid = new { type = "string" }, major = new { type = "integer" }, minor = new { type = "integer" } } } },
+                new { name = "remove_vba_reference", description = "Remove a VBA reference by name, GUID, or path.", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, reference_identifier = new { type = "string" } }, required = new string[] { "reference_identifier" } } },
+                new { name = "get_startup_properties", description = "Get application startup properties (StartupForm, AppTitle, AppIcon).", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "set_startup_properties", description = "Set application startup properties (StartupForm, AppTitle, AppIcon).", inputSchema = new { type = "object", properties = new { startup_form = new { type = "string" }, app_title = new { type = "string" }, app_icon = new { type = "string" } } } },
+                new { name = "get_ribbon_xml", description = "Get ribbon XML by ribbon name or by default database ribbon property.", inputSchema = new { type = "object", properties = new { ribbon_name = new { type = "string" } } } },
+                new { name = "set_ribbon_xml", description = "Create or replace ribbon XML in USysRibbons and optionally set as default.", inputSchema = new { type = "object", properties = new { ribbon_name = new { type = "string" }, ribbon_xml = new { type = "string" }, apply_as_default = new { type = "boolean" } }, required = new string[] { "ribbon_name", "ribbon_xml" } } },
+                new { name = "get_application_info", description = "Get Access application metadata and current project/data info.", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "get_current_project_data", description = "Get CurrentProject and CurrentData properties.", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "disconnect_access", description = "Disconnect from the current Access database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "is_connected", description = "Check if connected to an Access database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_tables", description = "Get list of all tables in the database", inputSchema = new { type = "object", properties = new { } } },
@@ -306,6 +315,15 @@ class Program
             "set_field_caption" => HandleSetFieldCaption(accessService, toolArguments),
             "get_field_properties" => HandleGetFieldProperties(accessService, toolArguments),
             "set_lookup_properties" => HandleSetLookupProperties(accessService, toolArguments),
+            "get_vba_references" => HandleGetVbaReferences(accessService, toolArguments),
+            "add_vba_reference" => HandleAddVbaReference(accessService, toolArguments),
+            "remove_vba_reference" => HandleRemoveVbaReference(accessService, toolArguments),
+            "get_startup_properties" => HandleGetStartupProperties(accessService, toolArguments),
+            "set_startup_properties" => HandleSetStartupProperties(accessService, toolArguments),
+            "get_ribbon_xml" => HandleGetRibbonXml(accessService, toolArguments),
+            "set_ribbon_xml" => HandleSetRibbonXml(accessService, toolArguments),
+            "get_application_info" => HandleGetApplicationInfo(accessService, toolArguments),
+            "get_current_project_data" => HandleGetCurrentProjectData(accessService, toolArguments),
             "disconnect_access" => HandleDisconnectAccess(accessService, toolArguments),
             "is_connected" => HandleIsConnected(accessService, toolArguments),
             "get_tables" => HandleGetTables(accessService, toolArguments),
@@ -1335,6 +1353,167 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("set_lookup_properties", ex);
+        }
+    }
+
+    static object HandleGetVbaReferences(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            _ = TryGetOptionalString(arguments, "project_name", out var projectName);
+            var references = accessService.GetVbaReferences(string.IsNullOrWhiteSpace(projectName) ? null : projectName);
+            return new { success = true, references = references.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_vba_references", ex);
+        }
+    }
+
+    static object HandleAddVbaReference(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            _ = TryGetOptionalString(arguments, "project_name", out var projectName);
+            _ = TryGetOptionalString(arguments, "reference_path", out var referencePath);
+            _ = TryGetOptionalString(arguments, "reference_guid", out var referenceGuid);
+
+            if (string.IsNullOrWhiteSpace(referencePath) && string.IsNullOrWhiteSpace(referenceGuid))
+                return new { success = false, error = "reference_path or reference_guid is required" };
+
+            if (!TryGetOptionalInt(arguments, "major", out var major, out var majorError))
+                return majorError;
+            if (!TryGetOptionalInt(arguments, "minor", out var minor, out var minorError))
+                return minorError;
+
+            accessService.AddVbaReference(
+                string.IsNullOrWhiteSpace(projectName) ? null : projectName,
+                string.IsNullOrWhiteSpace(referencePath) ? null : referencePath,
+                string.IsNullOrWhiteSpace(referenceGuid) ? null : referenceGuid,
+                major ?? 1,
+                minor ?? 0);
+
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("add_vba_reference", ex);
+        }
+    }
+
+    static object HandleRemoveVbaReference(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            _ = TryGetOptionalString(arguments, "project_name", out var projectName);
+            if (!TryGetRequiredString(arguments, "reference_identifier", out var referenceIdentifier, out var referenceIdentifierError))
+                return referenceIdentifierError;
+
+            accessService.RemoveVbaReference(
+                string.IsNullOrWhiteSpace(projectName) ? null : projectName,
+                referenceIdentifier);
+
+            return new { success = true, reference_identifier = referenceIdentifier };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("remove_vba_reference", ex);
+        }
+    }
+
+    static object HandleGetStartupProperties(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var properties = accessService.GetStartupProperties();
+            return new { success = true, properties };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_startup_properties", ex);
+        }
+    }
+
+    static object HandleSetStartupProperties(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var hasStartupForm = TryGetOptionalString(arguments, "startup_form", out var startupForm);
+            var hasAppTitle = TryGetOptionalString(arguments, "app_title", out var appTitle);
+            var hasAppIcon = TryGetOptionalString(arguments, "app_icon", out var appIcon);
+
+            if (!hasStartupForm && !hasAppTitle && !hasAppIcon)
+                return new { success = false, error = "At least one startup property is required" };
+
+            accessService.SetStartupProperties(
+                hasStartupForm ? startupForm : null,
+                hasAppTitle ? appTitle : null,
+                hasAppIcon ? appIcon : null);
+
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_startup_properties", ex);
+        }
+    }
+
+    static object HandleGetRibbonXml(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            _ = TryGetOptionalString(arguments, "ribbon_name", out var ribbonName);
+            var ribbon = accessService.GetRibbonXml(string.IsNullOrWhiteSpace(ribbonName) ? null : ribbonName);
+            return new { success = true, ribbon };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_ribbon_xml", ex);
+        }
+    }
+
+    static object HandleSetRibbonXml(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "ribbon_name", out var ribbonName, out var ribbonNameError))
+                return ribbonNameError;
+            if (!TryGetRequiredString(arguments, "ribbon_xml", out var ribbonXml, out var ribbonXmlError))
+                return ribbonXmlError;
+
+            var applyAsDefault = GetOptionalBool(arguments, "apply_as_default", false);
+            accessService.SetRibbonXml(ribbonName, ribbonXml, applyAsDefault);
+            return new { success = true, ribbon_name = ribbonName, apply_as_default = applyAsDefault };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_ribbon_xml", ex);
+        }
+    }
+
+    static object HandleGetApplicationInfo(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var info = accessService.GetApplicationInfo();
+            return new { success = true, application = info };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_application_info", ex);
+        }
+    }
+
+    static object HandleGetCurrentProjectData(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var info = accessService.GetCurrentProjectData();
+            return new { success = true, data = info };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_current_project_data", ex);
         }
     }
 

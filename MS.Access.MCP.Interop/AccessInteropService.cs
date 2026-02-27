@@ -2123,6 +2123,189 @@ namespace MS.Access.MCP.Interop
             releaseOleDb: false);
         }
 
+        public StartupPropertiesInfo GetStartupProperties()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+
+                return new StartupPropertiesInfo
+                {
+                    StartupForm = SafeToString(GetDaoPropertyValue(currentDb, "StartupForm")),
+                    AppTitle = SafeToString(GetDaoPropertyValue(currentDb, "AppTitle")),
+                    AppIcon = SafeToString(GetDaoPropertyValue(currentDb, "AppIcon"))
+                };
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void SetStartupProperties(string? startupForm = null, string? appTitle = null, string? appIcon = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+
+                if (startupForm != null)
+                    SetDaoPropertyValue(currentDb, "StartupForm", startupForm, daoType: 10, createIfMissing: true);
+                if (appTitle != null)
+                    SetDaoPropertyValue(currentDb, "AppTitle", appTitle, daoType: 10, createIfMissing: true);
+                if (appIcon != null)
+                    SetDaoPropertyValue(currentDb, "AppIcon", appIcon, daoType: 10, createIfMissing: true);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public RibbonInfo GetRibbonXml(string? ribbonName = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            var defaultRibbonName = ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+                return SafeToString(GetDaoPropertyValue(currentDb, "RibbonName"));
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+
+            var effectiveRibbonName = string.IsNullOrWhiteSpace(ribbonName) ? defaultRibbonName : ribbonName.Trim();
+            if (string.IsNullOrWhiteSpace(effectiveRibbonName))
+            {
+                return new RibbonInfo
+                {
+                    RibbonName = null,
+                    RibbonXml = null,
+                    DefaultRibbonName = defaultRibbonName,
+                    Exists = false
+                };
+            }
+
+            EnsureOleDbConnection();
+            if (!TableExists("USysRibbons"))
+            {
+                return new RibbonInfo
+                {
+                    RibbonName = effectiveRibbonName,
+                    RibbonXml = null,
+                    DefaultRibbonName = defaultRibbonName,
+                    Exists = false
+                };
+            }
+
+            string? ribbonXml = null;
+            using (var command = CreateCommand("SELECT TOP 1 [RibbonXML] FROM [USysRibbons] WHERE [RibbonName] = ? ORDER BY [ID] DESC"))
+            {
+                AddCommandParameter(command, "@p1", effectiveRibbonName);
+                using var reader = command.ExecuteReader();
+                if (reader.Read())
+                {
+                    ribbonXml = reader[0] == DBNull.Value ? null : reader[0]?.ToString();
+                }
+            }
+
+            return new RibbonInfo
+            {
+                RibbonName = effectiveRibbonName,
+                RibbonXml = ribbonXml,
+                DefaultRibbonName = defaultRibbonName,
+                Exists = !string.IsNullOrWhiteSpace(ribbonXml)
+            };
+        }
+
+        public void SetRibbonXml(string ribbonName, string ribbonXml, bool applyAsDefault = false)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(ribbonName)) throw new ArgumentException("Ribbon name is required.", nameof(ribbonName));
+            if (string.IsNullOrWhiteSpace(ribbonXml)) throw new ArgumentException("Ribbon XML is required.", nameof(ribbonXml));
+
+            EnsureNoActiveTransaction("Ribbon XML update");
+            EnsureUsysRibbonsTable();
+
+            using (var deleteCommand = CreateCommand("DELETE FROM [USysRibbons] WHERE [RibbonName] = ?"))
+            {
+                AddCommandParameter(deleteCommand, "@p1", ribbonName);
+                _ = deleteCommand.ExecuteNonQuery();
+            }
+
+            using (var insertCommand = CreateCommand("INSERT INTO [USysRibbons] ([RibbonName], [RibbonXML]) VALUES (?, ?)"))
+            {
+                AddCommandParameter(insertCommand, "@p1", ribbonName);
+                AddCommandParameter(insertCommand, "@p2", ribbonXml);
+                _ = insertCommand.ExecuteNonQuery();
+            }
+
+            if (applyAsDefault)
+            {
+                ExecuteComOperation(accessApp =>
+                {
+                    var currentDb = TryGetCurrentDb(accessApp)
+                        ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+                    SetDaoPropertyValue(currentDb, "RibbonName", ribbonName, daoType: 10, createIfMissing: true);
+                },
+                requireExclusive: true,
+                releaseOleDb: true);
+            }
+        }
+
+        public ApplicationInfo GetApplicationInfo()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var currentProject = TryGetDynamicProperty(accessApp, "CurrentProject");
+                var currentData = TryGetDynamicProperty(accessApp, "CurrentData");
+
+                return new ApplicationInfo
+                {
+                    Name = SafeToString(TryGetDynamicProperty(accessApp, "Name")) ?? "Microsoft Access",
+                    Version = SafeToString(TryGetDynamicProperty(accessApp, "Version")),
+                    Build = SafeToString(TryGetDynamicProperty(accessApp, "Build")),
+                    IsTrusted = ToBool(TryGetDynamicProperty(accessApp, "IsTrusted"), false),
+                    CurrentDatabasePath = _currentDatabasePath,
+                    CurrentProjectName = SafeToString(TryGetDynamicProperty(currentProject, "Name")),
+                    CurrentProjectPath = SafeToString(TryGetDynamicProperty(currentProject, "Path")),
+                    CurrentProjectFullName = SafeToString(TryGetDynamicProperty(currentProject, "FullName")),
+                    CurrentDataName = SafeToString(TryGetDynamicProperty(currentData, "Name")),
+                    CurrentDataPath = SafeToString(TryGetDynamicProperty(currentData, "Path"))
+                };
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public CurrentProjectDataInfo GetCurrentProjectData()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var currentProject = TryGetDynamicProperty(accessApp, "CurrentProject");
+                var currentData = TryGetDynamicProperty(accessApp, "CurrentData");
+
+                return new CurrentProjectDataInfo
+                {
+                    CurrentProjectName = SafeToString(TryGetDynamicProperty(currentProject, "Name")),
+                    CurrentProjectPath = SafeToString(TryGetDynamicProperty(currentProject, "Path")),
+                    CurrentProjectFullName = SafeToString(TryGetDynamicProperty(currentProject, "FullName")),
+                    CurrentDataName = SafeToString(TryGetDynamicProperty(currentData, "Name")),
+                    CurrentDataPath = SafeToString(TryGetDynamicProperty(currentData, "Path")),
+                    CurrentDataAllTablesCount = ToNullableInt(TryGetDynamicProperty(TryGetDynamicProperty(currentData, "AllTables"), "Count")),
+                    CurrentDataAllQueriesCount = ToNullableInt(TryGetDynamicProperty(TryGetDynamicProperty(currentData, "AllQueries"), "Count"))
+                };
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
         public List<FormInfo> GetForms()
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
@@ -2970,6 +3153,102 @@ namespace MS.Access.MCP.Interop
             releaseOleDb: true);
         }
 
+        public List<VBAReferenceInfo> GetVbaReferences(string? projectName = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var project = FindVbProject(accessApp, projectName)
+                    ?? throw new InvalidOperationException("No VBA project is available in the current Access database.");
+                var references = TryGetDynamicProperty(project, "References")
+                    ?? throw new InvalidOperationException("VBA references collection is unavailable.");
+
+                var results = new List<VBAReferenceInfo>();
+                foreach (var reference in references)
+                {
+                    results.Add(new VBAReferenceInfo
+                    {
+                        Name = SafeToString(TryGetDynamicProperty(reference, "Name")) ?? "",
+                        Guid = SafeToString(TryGetDynamicProperty(reference, "Guid")) ?? "",
+                        Major = ToInt32(TryGetDynamicProperty(reference, "Major")),
+                        Minor = ToInt32(TryGetDynamicProperty(reference, "Minor")),
+                        FullPath = SafeToString(TryGetDynamicProperty(reference, "FullPath")) ?? "",
+                        Description = SafeToString(TryGetDynamicProperty(reference, "Description")) ?? "",
+                        BuiltIn = ToBool(TryGetDynamicProperty(reference, "BuiltIn"), false),
+                        IsBroken = ToBool(TryGetDynamicProperty(reference, "IsBroken"), false)
+                    });
+                }
+
+                return results
+                    .OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void AddVbaReference(string? projectName, string? referencePath, string? referenceGuid, int major = 1, int minor = 0)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(referencePath) && string.IsNullOrWhiteSpace(referenceGuid))
+                throw new ArgumentException("Either referencePath or referenceGuid must be provided.");
+
+            ExecuteComOperation(accessApp =>
+            {
+                var project = FindVbProject(accessApp, projectName)
+                    ?? throw new InvalidOperationException("No VBA project is available in the current Access database.");
+                var references = TryGetDynamicProperty(project, "References")
+                    ?? throw new InvalidOperationException("VBA references collection is unavailable.");
+
+                if (!string.IsNullOrWhiteSpace(referencePath))
+                {
+                    _ = InvokeDynamicMethod(references, "AddFromFile", referencePath.Trim());
+                    return;
+                }
+
+                _ = InvokeDynamicMethod(references, "AddFromGuid", referenceGuid!.Trim(), major, minor);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void RemoveVbaReference(string? projectName, string referenceIdentifier)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(referenceIdentifier)) throw new ArgumentException("referenceIdentifier is required.", nameof(referenceIdentifier));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var project = FindVbProject(accessApp, projectName)
+                    ?? throw new InvalidOperationException("No VBA project is available in the current Access database.");
+                var references = TryGetDynamicProperty(project, "References")
+                    ?? throw new InvalidOperationException("VBA references collection is unavailable.");
+
+                dynamic? targetReference = null;
+                foreach (var reference in references)
+                {
+                    var name = SafeToString(TryGetDynamicProperty(reference, "Name"));
+                    var guid = SafeToString(TryGetDynamicProperty(reference, "Guid"));
+                    var fullPath = SafeToString(TryGetDynamicProperty(reference, "FullPath"));
+                    if (string.Equals(name, referenceIdentifier, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(guid, referenceIdentifier, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(fullPath, referenceIdentifier, StringComparison.OrdinalIgnoreCase))
+                    {
+                        targetReference = reference;
+                        break;
+                    }
+                }
+
+                if (targetReference == null)
+                    throw new InvalidOperationException($"VBA reference not found: {referenceIdentifier}");
+
+                _ = InvokeDynamicMethod(references, "Remove", targetReference);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
         #endregion
 
         #region 7. Persistence & Versioning
@@ -3297,6 +3576,18 @@ namespace MS.Access.MCP.Interop
             }
 
             return false;
+        }
+
+        private void EnsureUsysRibbonsTable()
+        {
+            if (TableExists("USysRibbons"))
+                return;
+
+            ExecuteSchemaNonQuery(
+                "CREATE TABLE [USysRibbons] (" +
+                "[ID] COUNTER CONSTRAINT [PrimaryKey] PRIMARY KEY, " +
+                "[RibbonName] TEXT(255), " +
+                "[RibbonXML] LONGTEXT)");
         }
 
         private bool FieldExists(string tableName, string fieldName)
@@ -6551,6 +6842,58 @@ namespace MS.Access.MCP.Interop
         public bool? LimitToList { get; set; }
         public bool? AllowMultipleValues { get; set; }
         public int? DisplayControl { get; set; }
+    }
+
+    public class VBAReferenceInfo
+    {
+        public string Name { get; set; } = "";
+        public string Guid { get; set; } = "";
+        public int Major { get; set; }
+        public int Minor { get; set; }
+        public string FullPath { get; set; } = "";
+        public string Description { get; set; } = "";
+        public bool BuiltIn { get; set; }
+        public bool IsBroken { get; set; }
+    }
+
+    public class StartupPropertiesInfo
+    {
+        public string? StartupForm { get; set; }
+        public string? AppTitle { get; set; }
+        public string? AppIcon { get; set; }
+    }
+
+    public class RibbonInfo
+    {
+        public string? RibbonName { get; set; }
+        public string? RibbonXml { get; set; }
+        public string? DefaultRibbonName { get; set; }
+        public bool Exists { get; set; }
+    }
+
+    public class ApplicationInfo
+    {
+        public string Name { get; set; } = "";
+        public string? Version { get; set; }
+        public string? Build { get; set; }
+        public bool IsTrusted { get; set; }
+        public string? CurrentDatabasePath { get; set; }
+        public string? CurrentProjectName { get; set; }
+        public string? CurrentProjectPath { get; set; }
+        public string? CurrentProjectFullName { get; set; }
+        public string? CurrentDataName { get; set; }
+        public string? CurrentDataPath { get; set; }
+    }
+
+    public class CurrentProjectDataInfo
+    {
+        public string? CurrentProjectName { get; set; }
+        public string? CurrentProjectPath { get; set; }
+        public string? CurrentProjectFullName { get; set; }
+        public string? CurrentDataName { get; set; }
+        public string? CurrentDataPath { get; set; }
+        public int? CurrentDataAllTablesCount { get; set; }
+        public int? CurrentDataAllQueriesCount { get; set; }
     }
 
     public class FormInfo
