@@ -158,6 +158,15 @@ class Program
                 new { name = "print_out", description = "Print the active object using DoCmd.PrintOut.", inputSchema = new { type = "object", properties = new { print_range = new { type = "string" }, page_from = new { type = "integer" }, page_to = new { type = "integer" }, print_quality = new { type = "string" }, copies = new { type = "integer" }, collate_copies = new { type = "boolean" } } } },
                 new { name = "open_query", description = "Open a saved query in Access using DoCmd.OpenQuery.", inputSchema = new { type = "object", properties = new { query_name = new { type = "string" }, view = new { type = "string" }, data_mode = new { type = "string" } }, required = new string[] { "query_name" } } },
                 new { name = "run_sql", description = "Execute SQL with Access DoCmd.RunSQL.", inputSchema = new { type = "object", properties = new { sql = new { type = "string" }, use_transaction = new { type = "boolean" } }, required = new string[] { "sql" } } },
+                new { name = "get_database_summary_properties", description = "Get Access database summary properties (Title, Author, Subject, Keywords, Comments).", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "set_database_summary_properties", description = "Set Access database summary properties.", inputSchema = new { type = "object", properties = new { title = new { type = "string" }, author = new { type = "string" }, subject = new { type = "string" }, keywords = new { type = "string" }, comments = new { type = "string" } } } },
+                new { name = "get_database_properties", description = "List database properties, including custom properties.", inputSchema = new { type = "object", properties = new { include_system = new { type = "boolean" } } } },
+                new { name = "get_database_property", description = "Get a single database property by name.", inputSchema = new { type = "object", properties = new { property_name = new { type = "string" } }, required = new string[] { "property_name" } } },
+                new { name = "set_database_property", description = "Set or create a database property.", inputSchema = new { type = "object", properties = new { property_name = new { type = "string" }, value = new { type = "string" }, property_type = new { type = "string" }, create_if_missing = new { type = "boolean" } }, required = new string[] { "property_name", "value" } } },
+                new { name = "get_table_properties", description = "Get table-level properties such as description and validation settings.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
+                new { name = "set_table_properties", description = "Set table-level properties such as description and validation settings.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, description = new { type = "string" }, validation_rule = new { type = "string" }, validation_text = new { type = "string" } }, required = new string[] { "table_name" } } },
+                new { name = "get_query_properties", description = "Get query properties including description, SQL text, and parameters.", inputSchema = new { type = "object", properties = new { query_name = new { type = "string" } }, required = new string[] { "query_name" } } },
+                new { name = "set_query_properties", description = "Set query properties such as description and SQL text.", inputSchema = new { type = "object", properties = new { query_name = new { type = "string" }, description = new { type = "string" }, sql = new { type = "string" } }, required = new string[] { "query_name" } } },
                 new { name = "disconnect_access", description = "Disconnect from the current Access database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "is_connected", description = "Check if connected to an Access database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_tables", description = "Get list of all tables in the database", inputSchema = new { type = "object", properties = new { } } },
@@ -276,6 +285,15 @@ class Program
             "print_out" => HandlePrintOut(accessService, toolArguments),
             "open_query" => HandleOpenQuery(accessService, toolArguments),
             "run_sql" => HandleRunSqlDocmd(accessService, toolArguments),
+            "get_database_summary_properties" => HandleGetDatabaseSummaryProperties(accessService, toolArguments),
+            "set_database_summary_properties" => HandleSetDatabaseSummaryProperties(accessService, toolArguments),
+            "get_database_properties" => HandleGetDatabaseProperties(accessService, toolArguments),
+            "get_database_property" => HandleGetDatabaseProperty(accessService, toolArguments),
+            "set_database_property" => HandleSetDatabaseProperty(accessService, toolArguments),
+            "get_table_properties" => HandleGetTableProperties(accessService, toolArguments),
+            "set_table_properties" => HandleSetTableProperties(accessService, toolArguments),
+            "get_query_properties" => HandleGetQueryProperties(accessService, toolArguments),
+            "set_query_properties" => HandleSetQueryProperties(accessService, toolArguments),
             "disconnect_access" => HandleDisconnectAccess(accessService, toolArguments),
             "is_connected" => HandleIsConnected(accessService, toolArguments),
             "get_tables" => HandleGetTables(accessService, toolArguments),
@@ -943,6 +961,208 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("run_sql", ex);
+        }
+    }
+
+    static object HandleGetDatabaseSummaryProperties(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var properties = accessService.GetDatabaseSummaryProperties();
+            return new { success = true, properties };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_database_summary_properties", ex);
+        }
+    }
+
+    static object HandleSetDatabaseSummaryProperties(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var hasTitle = TryGetOptionalString(arguments, "title", out var title);
+            var hasAuthor = TryGetOptionalString(arguments, "author", out var author);
+            var hasSubject = TryGetOptionalString(arguments, "subject", out var subject);
+            var hasKeywords = TryGetOptionalString(arguments, "keywords", out var keywords);
+            var hasComments = TryGetOptionalString(arguments, "comments", out var comments);
+
+            if (!hasTitle && !hasAuthor && !hasSubject && !hasKeywords && !hasComments)
+            {
+                return new
+                {
+                    success = false,
+                    error = "At least one of title, author, subject, keywords, or comments is required"
+                };
+            }
+
+            accessService.SetDatabaseSummaryProperties(
+                hasTitle ? title : null,
+                hasAuthor ? author : null,
+                hasSubject ? subject : null,
+                hasKeywords ? keywords : null,
+                hasComments ? comments : null);
+
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_database_summary_properties", ex);
+        }
+    }
+
+    static object HandleGetDatabaseProperties(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var includeSystem = GetOptionalBool(arguments, "include_system", false);
+            var properties = accessService.GetDatabaseProperties(includeSystem);
+            return new { success = true, properties = properties.ToArray(), include_system = includeSystem };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_database_properties", ex);
+        }
+    }
+
+    static object HandleGetDatabaseProperty(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "property_name", out var propertyName, out var propertyNameError))
+                return propertyNameError;
+
+            var property = accessService.GetDatabaseProperty(propertyName);
+            return new { success = true, property };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_database_property", ex);
+        }
+    }
+
+    static object HandleSetDatabaseProperty(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "property_name", out var propertyName, out var propertyNameError))
+                return propertyNameError;
+            if (!TryGetRequiredString(arguments, "value", out var value, out var valueError))
+                return valueError;
+
+            _ = TryGetOptionalString(arguments, "property_type", out var propertyType);
+            var createIfMissing = GetOptionalBool(arguments, "create_if_missing", true);
+
+            accessService.SetDatabaseProperty(
+                propertyName,
+                value,
+                string.IsNullOrWhiteSpace(propertyType) ? null : propertyType,
+                createIfMissing);
+
+            return new
+            {
+                success = true,
+                property_name = propertyName,
+                value,
+                property_type = string.IsNullOrWhiteSpace(propertyType) ? null : propertyType,
+                create_if_missing = createIfMissing
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_database_property", ex);
+        }
+    }
+
+    static object HandleGetTableProperties(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+
+            var properties = accessService.GetTableProperties(tableName);
+            return new { success = true, properties };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_table_properties", ex);
+        }
+    }
+
+    static object HandleSetTableProperties(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+
+            var hasDescription = TryGetOptionalString(arguments, "description", out var description);
+            var hasValidationRule = TryGetOptionalString(arguments, "validation_rule", out var validationRule);
+            var hasValidationText = TryGetOptionalString(arguments, "validation_text", out var validationText);
+
+            if (!hasDescription && !hasValidationRule && !hasValidationText)
+            {
+                return new
+                {
+                    success = false,
+                    error = "At least one of description, validation_rule, or validation_text is required"
+                };
+            }
+
+            accessService.SetTableProperties(
+                tableName,
+                hasDescription ? description : null,
+                hasValidationRule ? validationRule : null,
+                hasValidationText ? validationText : null);
+
+            return new { success = true, table_name = tableName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_table_properties", ex);
+        }
+    }
+
+    static object HandleGetQueryProperties(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "query_name", out var queryName, out var queryNameError))
+                return queryNameError;
+
+            var properties = accessService.GetQueryProperties(queryName);
+            return new { success = true, properties };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_query_properties", ex);
+        }
+    }
+
+    static object HandleSetQueryProperties(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "query_name", out var queryName, out var queryNameError))
+                return queryNameError;
+
+            var hasDescription = TryGetOptionalString(arguments, "description", out var description);
+            var hasSql = TryGetOptionalString(arguments, "sql", out var sql);
+
+            if (!hasDescription && !hasSql)
+                return new { success = false, error = "At least one of description or sql is required" };
+
+            accessService.SetQueryProperties(
+                queryName,
+                hasDescription ? description : null,
+                hasSql ? sql : null);
+
+            return new { success = true, query_name = queryName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_query_properties", ex);
         }
     }
 

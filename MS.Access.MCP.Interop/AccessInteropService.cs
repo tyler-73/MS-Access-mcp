@@ -1357,6 +1357,244 @@ namespace MS.Access.MCP.Interop
             };
         }
 
+        public Dictionary<string, object?> GetDatabaseSummaryProperties()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+
+                return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["Title"] = GetDaoPropertyValue(currentDb, "Title"),
+                    ["Author"] = GetDaoPropertyValue(currentDb, "Author"),
+                    ["Subject"] = GetDaoPropertyValue(currentDb, "Subject"),
+                    ["Keywords"] = GetDaoPropertyValue(currentDb, "Keywords"),
+                    ["Comments"] = GetDaoPropertyValue(currentDb, "Comments")
+                };
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void SetDatabaseSummaryProperties(string? title = null, string? author = null, string? subject = null, string? keywords = null, string? comments = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+
+                if (title != null)
+                    SetDaoPropertyValue(currentDb, "Title", title, daoType: 10, createIfMissing: true);
+                if (author != null)
+                    SetDaoPropertyValue(currentDb, "Author", author, daoType: 10, createIfMissing: true);
+                if (subject != null)
+                    SetDaoPropertyValue(currentDb, "Subject", subject, daoType: 10, createIfMissing: true);
+                if (keywords != null)
+                    SetDaoPropertyValue(currentDb, "Keywords", keywords, daoType: 12, createIfMissing: true);
+                if (comments != null)
+                    SetDaoPropertyValue(currentDb, "Comments", comments, daoType: 12, createIfMissing: true);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public List<DatabasePropertyInfo> GetDatabaseProperties(bool includeSystem = false)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+                var propertiesCollection = TryGetDynamicProperty(currentDb, "Properties")
+                    ?? throw new InvalidOperationException("DAO properties collection is unavailable.");
+
+                var properties = new List<DatabasePropertyInfo>();
+                foreach (var property in propertiesCollection)
+                {
+                    var name = SafeToString(TryGetDynamicProperty(property, "Name"));
+                    if (string.IsNullOrWhiteSpace(name))
+                        continue;
+
+                    var isSystem = IsLikelySystemDatabaseProperty(name);
+                    if (!includeSystem && isSystem)
+                        continue;
+
+                    properties.Add(new DatabasePropertyInfo
+                    {
+                        Name = name,
+                        Value = NormalizeValue(TryGetDynamicProperty(property, "Value")),
+                        TypeCode = ToInt32(TryGetDynamicProperty(property, "Type")),
+                        IsSystem = isSystem
+                    });
+                }
+
+                return properties
+                    .OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public DatabasePropertyInfo GetDatabaseProperty(string propertyName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(propertyName)) throw new ArgumentException("Property name is required.", nameof(propertyName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+                var property = FindDaoProperty(currentDb, propertyName)
+                    ?? throw new InvalidOperationException($"Database property not found: {propertyName}");
+
+                var name = SafeToString(TryGetDynamicProperty(property, "Name")) ?? propertyName;
+                return new DatabasePropertyInfo
+                {
+                    Name = name,
+                    Value = NormalizeValue(TryGetDynamicProperty(property, "Value")),
+                    TypeCode = ToInt32(TryGetDynamicProperty(property, "Type")),
+                    IsSystem = IsLikelySystemDatabaseProperty(name)
+                };
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void SetDatabaseProperty(string propertyName, string value, string? propertyType = null, bool createIfMissing = true)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(propertyName)) throw new ArgumentException("Property name is required.", nameof(propertyName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+
+                var existingProperty = FindDaoProperty(currentDb, propertyName);
+                var existingValue = existingProperty != null
+                    ? TryGetDynamicProperty(existingProperty, "Value")
+                    : null;
+
+                var daoType = ParseDaoDataType(propertyType);
+                var convertedValue = ConvertPropertyValue(value, propertyType, existingValue);
+                SetDaoPropertyValue(currentDb, propertyName, convertedValue, daoType, createIfMissing);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public TablePropertiesInfo GetTableProperties(string tableName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var tableDef = FindTableDefWithRetry(accessApp, tableName)
+                    ?? throw new InvalidOperationException($"Table not found: {tableName}");
+
+                var actualName = SafeToString(TryGetDynamicProperty(tableDef, "Name")) ?? tableName;
+                return new TablePropertiesInfo
+                {
+                    TableName = actualName,
+                    Description = SafeToString(GetDaoPropertyValue(tableDef, "Description")),
+                    ValidationRule = SafeToString(GetDaoPropertyValue(tableDef, "ValidationRule")),
+                    ValidationText = SafeToString(GetDaoPropertyValue(tableDef, "ValidationText"))
+                };
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void SetTableProperties(string tableName, string? description = null, string? validationRule = null, string? validationText = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var tableDef = FindTableDefWithRetry(accessApp, tableName)
+                    ?? throw new InvalidOperationException($"Table not found: {tableName}");
+
+                if (description != null)
+                    SetDaoPropertyValue(tableDef, "Description", description, daoType: 12, createIfMissing: true);
+                if (validationRule != null)
+                    SetDaoPropertyValue(tableDef, "ValidationRule", validationRule, daoType: 12, createIfMissing: true);
+                if (validationText != null)
+                    SetDaoPropertyValue(tableDef, "ValidationText", validationText, daoType: 12, createIfMissing: true);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public QueryPropertiesInfo GetQueryProperties(string queryName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(queryName)) throw new ArgumentException("Query name is required.", nameof(queryName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+                var queryDef = FindQueryDef(currentDb, queryName)
+                    ?? throw new InvalidOperationException($"Query not found: {queryName}");
+
+                var actualName = SafeToString(TryGetDynamicProperty(queryDef, "Name")) ?? queryName;
+                var parameters = new List<QueryParameterInfo>();
+                var parameterCollection = TryGetDynamicProperty(queryDef, "Parameters");
+                if (parameterCollection != null)
+                {
+                    foreach (var parameter in parameterCollection)
+                    {
+                        parameters.Add(new QueryParameterInfo
+                        {
+                            Name = SafeToString(TryGetDynamicProperty(parameter, "Name")) ?? "",
+                            TypeCode = ToInt32(TryGetDynamicProperty(parameter, "Type")),
+                            Value = NormalizeValue(TryGetDynamicProperty(parameter, "Value"))
+                        });
+                    }
+                }
+
+                return new QueryPropertiesInfo
+                {
+                    QueryName = actualName,
+                    Description = SafeToString(GetDaoPropertyValue(queryDef, "Description")),
+                    Sql = SafeToString(TryGetDynamicProperty(queryDef, "SQL")) ?? "",
+                    Parameters = parameters
+                };
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void SetQueryProperties(string queryName, string? description = null, string? sql = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(queryName)) throw new ArgumentException("Query name is required.", nameof(queryName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+                var queryDef = FindQueryDef(currentDb, queryName)
+                    ?? throw new InvalidOperationException($"Query not found: {queryName}");
+
+                if (description != null)
+                    SetDaoPropertyValue(queryDef, "Description", description, daoType: 12, createIfMissing: true);
+                if (sql != null)
+                    SetDynamicProperty(queryDef, "SQL", sql);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
         #endregion
 
         #region 3. COM Automation (Simplified)
@@ -3062,6 +3300,129 @@ namespace MS.Access.MCP.Interop
             }
 
             return null;
+        }
+
+        private static dynamic? FindDaoProperty(dynamic owner, string propertyName)
+        {
+            var properties = TryGetDynamicProperty(owner, "Properties");
+            if (properties == null)
+                return null;
+
+            try
+            {
+                var byItem = InvokeDynamicMethod(properties, "Item", propertyName);
+                if (byItem != null)
+                    return byItem;
+            }
+            catch
+            {
+                // Fall back to manual enumeration.
+            }
+
+            foreach (var property in properties)
+            {
+                var currentName = SafeToString(TryGetDynamicProperty(property, "Name"));
+                if (string.Equals(currentName, propertyName, StringComparison.OrdinalIgnoreCase))
+                    return property;
+            }
+
+            return null;
+        }
+
+        private static object? GetDaoPropertyValue(dynamic owner, string propertyName)
+        {
+            var property = FindDaoProperty(owner, propertyName);
+            return property == null ? null : TryGetDynamicProperty(property, "Value");
+        }
+
+        private static void SetDaoPropertyValue(dynamic owner, string propertyName, object? value, int? daoType, bool createIfMissing)
+        {
+            var property = FindDaoProperty(owner, propertyName);
+            if (property != null)
+            {
+                SetDynamicProperty(property, "Value", value);
+                return;
+            }
+
+            if (!createIfMissing)
+                throw new InvalidOperationException($"Property not found: {propertyName}");
+
+            var properties = TryGetDynamicProperty(owner, "Properties")
+                ?? throw new InvalidOperationException("DAO properties collection is unavailable.");
+
+            var effectiveType = daoType ?? (value is string s && s.Length > 255 ? 12 : 10);
+            var createdProperty = InvokeDynamicMethod(owner, "CreateProperty", propertyName, effectiveType, value)
+                ?? throw new InvalidOperationException($"Failed to create property: {propertyName}");
+            _ = InvokeDynamicMethod(properties, "Append", createdProperty);
+        }
+
+        private static int? ParseDaoDataType(string? propertyType)
+        {
+            if (string.IsNullOrWhiteSpace(propertyType))
+                return null;
+
+            var normalized = NormalizeEnumToken(propertyType);
+            return normalized switch
+            {
+                "boolean" or "bool" => 1,
+                "byte" => 2,
+                "short" or "smallint" or "integer" => 3,
+                "long" or "int" => 4,
+                "currency" => 5,
+                "single" => 6,
+                "double" or "float" => 7,
+                "date" or "datetime" or "time" => 8,
+                "binary" => 9,
+                "text" or "string" => 10,
+                "longbinary" or "blob" => 11,
+                "memo" or "longtext" or "note" => 12,
+                "guid" => 15,
+                _ => throw new ArgumentException($"Unsupported property_type: {propertyType}", nameof(propertyType))
+            };
+        }
+
+        private static object ConvertPropertyValue(string value, string? propertyType, object? existingValue)
+        {
+            if (string.IsNullOrWhiteSpace(propertyType))
+                return ConvertValueForProperty(value, existingValue) ?? value;
+
+            var normalized = NormalizeEnumToken(propertyType);
+            return normalized switch
+            {
+                "boolean" or "bool" => ToBool(value, false),
+                "byte" => byte.TryParse(value, out var byteValue) ? byteValue : throw new ArgumentException("Value must be a byte."),
+                "short" or "smallint" or "integer" => short.TryParse(value, out var shortValue) ? shortValue : throw new ArgumentException("Value must be a short integer."),
+                "long" or "int" => int.TryParse(value, out var intValue) ? intValue : throw new ArgumentException("Value must be an integer."),
+                "currency" or "single" or "double" or "float" => double.TryParse(value, out var doubleValue) ? doubleValue : throw new ArgumentException("Value must be numeric."),
+                "date" or "datetime" or "time" => DateTime.TryParse(value, out var dateValue) ? dateValue : throw new ArgumentException("Value must be a date/time."),
+                _ => value
+            };
+        }
+
+        private static bool IsLikelySystemDatabaseProperty(string propertyName)
+        {
+            if (string.IsNullOrWhiteSpace(propertyName))
+                return true;
+
+            if (string.Equals(propertyName, "Title", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(propertyName, "Author", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(propertyName, "Subject", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(propertyName, "Keywords", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(propertyName, "Comments", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (propertyName.StartsWith("{", StringComparison.Ordinal) ||
+                propertyName.StartsWith("Jet ", StringComparison.OrdinalIgnoreCase) ||
+                propertyName.StartsWith("Access", StringComparison.OrdinalIgnoreCase) ||
+                propertyName.StartsWith("NameMap", StringComparison.OrdinalIgnoreCase) ||
+                propertyName.StartsWith("db", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return false;
         }
 
         private static string NormalizeSchemaIdentifier(string identifier, string paramName, string requiredMessage)
@@ -5958,6 +6319,37 @@ namespace MS.Access.MCP.Interop
         public string? TemplateFile { get; set; }
         public string? Encoding { get; set; }
         public int? OutputQuality { get; set; }
+    }
+
+    public class DatabasePropertyInfo
+    {
+        public string Name { get; set; } = "";
+        public object? Value { get; set; }
+        public int TypeCode { get; set; }
+        public bool IsSystem { get; set; }
+    }
+
+    public class TablePropertiesInfo
+    {
+        public string TableName { get; set; } = "";
+        public string? Description { get; set; }
+        public string? ValidationRule { get; set; }
+        public string? ValidationText { get; set; }
+    }
+
+    public class QueryPropertiesInfo
+    {
+        public string QueryName { get; set; } = "";
+        public string? Description { get; set; }
+        public string Sql { get; set; } = "";
+        public List<QueryParameterInfo> Parameters { get; set; } = new();
+    }
+
+    public class QueryParameterInfo
+    {
+        public string Name { get; set; } = "";
+        public int TypeCode { get; set; }
+        public object? Value { get; set; }
     }
 
     public class FormInfo
