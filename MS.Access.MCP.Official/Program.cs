@@ -167,6 +167,12 @@ class Program
                 new { name = "set_table_properties", description = "Set table-level properties such as description and validation settings.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, description = new { type = "string" }, validation_rule = new { type = "string" }, validation_text = new { type = "string" } }, required = new string[] { "table_name" } } },
                 new { name = "get_query_properties", description = "Get query properties including description, SQL text, and parameters.", inputSchema = new { type = "object", properties = new { query_name = new { type = "string" } }, required = new string[] { "query_name" } } },
                 new { name = "set_query_properties", description = "Set query properties such as description and SQL text.", inputSchema = new { type = "object", properties = new { query_name = new { type = "string" }, description = new { type = "string" }, sql = new { type = "string" } }, required = new string[] { "query_name" } } },
+                new { name = "set_field_validation", description = "Set field validation rule and validation text.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, validation_rule = new { type = "string" }, validation_text = new { type = "string" } }, required = new string[] { "table_name", "field_name", "validation_rule" } } },
+                new { name = "set_field_default", description = "Set field default value.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, default_value = new { type = "string" } }, required = new string[] { "table_name", "field_name", "default_value" } } },
+                new { name = "set_field_input_mask", description = "Set field input mask.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, input_mask = new { type = "string" } }, required = new string[] { "table_name", "field_name", "input_mask" } } },
+                new { name = "set_field_caption", description = "Set field caption.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, caption = new { type = "string" } }, required = new string[] { "table_name", "field_name", "caption" } } },
+                new { name = "get_field_properties", description = "Get field properties including validation/default/input mask/caption and lookup settings.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" } }, required = new string[] { "table_name", "field_name" } } },
+                new { name = "set_lookup_properties", description = "Set lookup properties for a field (RowSource, BoundColumn, ColumnCount, ColumnWidths, etc.).", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, row_source = new { type = "string" }, bound_column = new { type = "integer" }, column_count = new { type = "integer" }, column_widths = new { type = "string" }, limit_to_list = new { type = "boolean" }, allow_multiple_values = new { type = "boolean" }, display_control = new { type = "integer" } }, required = new string[] { "table_name", "field_name" } } },
                 new { name = "disconnect_access", description = "Disconnect from the current Access database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "is_connected", description = "Check if connected to an Access database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_tables", description = "Get list of all tables in the database", inputSchema = new { type = "object", properties = new { } } },
@@ -294,6 +300,12 @@ class Program
             "set_table_properties" => HandleSetTableProperties(accessService, toolArguments),
             "get_query_properties" => HandleGetQueryProperties(accessService, toolArguments),
             "set_query_properties" => HandleSetQueryProperties(accessService, toolArguments),
+            "set_field_validation" => HandleSetFieldValidation(accessService, toolArguments),
+            "set_field_default" => HandleSetFieldDefault(accessService, toolArguments),
+            "set_field_input_mask" => HandleSetFieldInputMask(accessService, toolArguments),
+            "set_field_caption" => HandleSetFieldCaption(accessService, toolArguments),
+            "get_field_properties" => HandleGetFieldProperties(accessService, toolArguments),
+            "set_lookup_properties" => HandleSetLookupProperties(accessService, toolArguments),
             "disconnect_access" => HandleDisconnectAccess(accessService, toolArguments),
             "is_connected" => HandleIsConnected(accessService, toolArguments),
             "get_tables" => HandleGetTables(accessService, toolArguments),
@@ -1163,6 +1175,166 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("set_query_properties", ex);
+        }
+    }
+
+    static object HandleSetFieldValidation(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "field_name", out var fieldName, out var fieldNameError))
+                return fieldNameError;
+            if (!TryGetRequiredString(arguments, "validation_rule", out var validationRule, out var validationRuleError))
+                return validationRuleError;
+
+            _ = TryGetOptionalString(arguments, "validation_text", out var validationText);
+            accessService.SetFieldValidation(
+                tableName,
+                fieldName,
+                validationRule,
+                string.IsNullOrWhiteSpace(validationText) ? null : validationText);
+
+            return new { success = true, table_name = tableName, field_name = fieldName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_field_validation", ex);
+        }
+    }
+
+    static object HandleSetFieldDefault(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "field_name", out var fieldName, out var fieldNameError))
+                return fieldNameError;
+            if (!TryGetRequiredString(arguments, "default_value", out var defaultValue, out var defaultValueError))
+                return defaultValueError;
+
+            accessService.SetFieldDefault(tableName, fieldName, defaultValue);
+            return new { success = true, table_name = tableName, field_name = fieldName, default_value = defaultValue };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_field_default", ex);
+        }
+    }
+
+    static object HandleSetFieldInputMask(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "field_name", out var fieldName, out var fieldNameError))
+                return fieldNameError;
+            if (!TryGetRequiredString(arguments, "input_mask", out var inputMask, out var inputMaskError))
+                return inputMaskError;
+
+            accessService.SetFieldInputMask(tableName, fieldName, inputMask);
+            return new { success = true, table_name = tableName, field_name = fieldName, input_mask = inputMask };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_field_input_mask", ex);
+        }
+    }
+
+    static object HandleSetFieldCaption(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "field_name", out var fieldName, out var fieldNameError))
+                return fieldNameError;
+            if (!TryGetRequiredString(arguments, "caption", out var caption, out var captionError))
+                return captionError;
+
+            accessService.SetFieldCaption(tableName, fieldName, caption);
+            return new { success = true, table_name = tableName, field_name = fieldName, caption };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_field_caption", ex);
+        }
+    }
+
+    static object HandleGetFieldProperties(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "field_name", out var fieldName, out var fieldNameError))
+                return fieldNameError;
+
+            var properties = accessService.GetFieldProperties(tableName, fieldName);
+            return new { success = true, properties };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_field_properties", ex);
+        }
+    }
+
+    static object HandleSetLookupProperties(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "field_name", out var fieldName, out var fieldNameError))
+                return fieldNameError;
+
+            var hasRowSource = TryGetOptionalString(arguments, "row_source", out var rowSource);
+            var hasColumnWidths = TryGetOptionalString(arguments, "column_widths", out var columnWidths);
+            if (!TryGetOptionalInt(arguments, "bound_column", out var boundColumn, out var boundColumnError))
+                return boundColumnError;
+            if (!TryGetOptionalInt(arguments, "column_count", out var columnCount, out var columnCountError))
+                return columnCountError;
+            if (!TryGetOptionalInt(arguments, "display_control", out var displayControl, out var displayControlError))
+                return displayControlError;
+            if (!TryGetOptionalBoolNullable(arguments, "limit_to_list", out var limitToList, out var limitToListError))
+                return limitToListError;
+            if (!TryGetOptionalBoolNullable(arguments, "allow_multiple_values", out var allowMultipleValues, out var allowMultipleValuesError))
+                return allowMultipleValuesError;
+
+            if (!hasRowSource &&
+                !hasColumnWidths &&
+                !boundColumn.HasValue &&
+                !columnCount.HasValue &&
+                !displayControl.HasValue &&
+                !limitToList.HasValue &&
+                !allowMultipleValues.HasValue)
+            {
+                return new
+                {
+                    success = false,
+                    error = "At least one lookup property is required"
+                };
+            }
+
+            accessService.SetLookupProperties(
+                tableName,
+                fieldName,
+                hasRowSource ? rowSource : null,
+                boundColumn,
+                columnCount,
+                hasColumnWidths ? columnWidths : null,
+                limitToList,
+                allowMultipleValues,
+                displayControl);
+
+            return new { success = true, table_name = tableName, field_name = fieldName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_lookup_properties", ex);
         }
     }
 
@@ -3060,6 +3232,65 @@ class Program
         }
 
         error = new { success = false, error = $"{propertyName} must be an integer when provided" };
+        return false;
+    }
+
+    static bool TryGetOptionalBoolNullable(JsonElement arguments, string propertyName, out bool? value, out object error)
+    {
+        value = null;
+
+        if (!arguments.TryGetProperty(propertyName, out var element))
+        {
+            error = new { success = true };
+            return true;
+        }
+
+        if (element.ValueKind == JsonValueKind.Null || element.ValueKind == JsonValueKind.Undefined)
+        {
+            error = new { success = true };
+            return true;
+        }
+
+        if (element.ValueKind == JsonValueKind.True)
+        {
+            value = true;
+            error = new { success = true };
+            return true;
+        }
+
+        if (element.ValueKind == JsonValueKind.False)
+        {
+            value = false;
+            error = new { success = true };
+            return true;
+        }
+
+        if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out var numericValue))
+        {
+            value = numericValue != 0;
+            error = new { success = true };
+            return true;
+        }
+
+        if (element.ValueKind == JsonValueKind.String)
+        {
+            var text = element.GetString();
+            if (bool.TryParse(text, out var parsedBool))
+            {
+                value = parsedBool;
+                error = new { success = true };
+                return true;
+            }
+
+            if (int.TryParse(text, out var parsedInt))
+            {
+                value = parsedInt != 0;
+                error = new { success = true };
+                return true;
+            }
+        }
+
+        error = new { success = false, error = $"{propertyName} must be a boolean when provided" };
         return false;
     }
 

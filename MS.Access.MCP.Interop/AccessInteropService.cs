@@ -1595,6 +1595,140 @@ namespace MS.Access.MCP.Interop
             releaseOleDb: true);
         }
 
+        public FieldPropertiesInfo GetFieldProperties(string tableName, string fieldName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(fieldName)) throw new ArgumentException("Field name is required.", nameof(fieldName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var field = ResolveField(accessApp, tableName, fieldName);
+                return new FieldPropertiesInfo
+                {
+                    TableName = tableName,
+                    FieldName = SafeToString(TryGetDynamicProperty(field, "Name")) ?? fieldName,
+                    TypeCode = ToInt32(TryGetDynamicProperty(field, "Type")),
+                    Size = ToInt32(TryGetDynamicProperty(field, "Size")),
+                    Required = ToBool(TryGetDynamicProperty(field, "Required"), false),
+                    AllowZeroLength = ToBool(TryGetDynamicProperty(field, "AllowZeroLength"), false),
+                    DefaultValue = SafeToString(GetDaoPropertyValue(field, "DefaultValue")),
+                    ValidationRule = SafeToString(GetDaoPropertyValue(field, "ValidationRule")),
+                    ValidationText = SafeToString(GetDaoPropertyValue(field, "ValidationText")),
+                    InputMask = SafeToString(GetDaoPropertyValue(field, "InputMask")),
+                    Caption = SafeToString(GetDaoPropertyValue(field, "Caption")),
+                    RowSource = SafeToString(GetDaoPropertyValue(field, "RowSource")),
+                    BoundColumn = ToNullableInt(GetDaoPropertyValue(field, "BoundColumn")),
+                    ColumnCount = ToNullableInt(GetDaoPropertyValue(field, "ColumnCount")),
+                    ColumnWidths = SafeToString(GetDaoPropertyValue(field, "ColumnWidths")),
+                    LimitToList = ToNullableBool(GetDaoPropertyValue(field, "LimitToList")),
+                    AllowMultipleValues = ToNullableBool(GetDaoPropertyValue(field, "AllowMultipleValues")),
+                    DisplayControl = ToNullableInt(GetDaoPropertyValue(field, "DisplayControl"))
+                };
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void SetFieldValidation(string tableName, string fieldName, string validationRule, string? validationText = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(fieldName)) throw new ArgumentException("Field name is required.", nameof(fieldName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var field = ResolveField(accessApp, tableName, fieldName);
+                SetDaoPropertyValue(field, "ValidationRule", validationRule, daoType: 12, createIfMissing: true);
+                if (validationText != null)
+                    SetDaoPropertyValue(field, "ValidationText", validationText, daoType: 12, createIfMissing: true);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void SetFieldDefault(string tableName, string fieldName, string defaultValue)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(fieldName)) throw new ArgumentException("Field name is required.", nameof(fieldName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var field = ResolveField(accessApp, tableName, fieldName);
+                SetDaoPropertyValue(field, "DefaultValue", defaultValue, daoType: 12, createIfMissing: true);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void SetFieldInputMask(string tableName, string fieldName, string inputMask)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(fieldName)) throw new ArgumentException("Field name is required.", nameof(fieldName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var field = ResolveField(accessApp, tableName, fieldName);
+                SetDaoPropertyValue(field, "InputMask", inputMask, daoType: 12, createIfMissing: true);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void SetFieldCaption(string tableName, string fieldName, string caption)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(fieldName)) throw new ArgumentException("Field name is required.", nameof(fieldName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var field = ResolveField(accessApp, tableName, fieldName);
+                SetDaoPropertyValue(field, "Caption", caption, daoType: 12, createIfMissing: true);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void SetLookupProperties(
+            string tableName,
+            string fieldName,
+            string? rowSource = null,
+            int? boundColumn = null,
+            int? columnCount = null,
+            string? columnWidths = null,
+            bool? limitToList = null,
+            bool? allowMultipleValues = null,
+            int? displayControl = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(fieldName)) throw new ArgumentException("Field name is required.", nameof(fieldName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var field = ResolveField(accessApp, tableName, fieldName);
+                if (rowSource != null)
+                    SetDaoPropertyValue(field, "RowSource", rowSource, daoType: 12, createIfMissing: true);
+                if (boundColumn.HasValue)
+                    SetDaoPropertyValue(field, "BoundColumn", boundColumn.Value, daoType: 4, createIfMissing: true);
+                if (columnCount.HasValue)
+                    SetDaoPropertyValue(field, "ColumnCount", columnCount.Value, daoType: 4, createIfMissing: true);
+                if (columnWidths != null)
+                    SetDaoPropertyValue(field, "ColumnWidths", columnWidths, daoType: 12, createIfMissing: true);
+                if (limitToList.HasValue)
+                    SetDaoPropertyValue(field, "LimitToList", limitToList.Value, daoType: 1, createIfMissing: true);
+                if (allowMultipleValues.HasValue)
+                    SetDaoPropertyValue(field, "AllowMultipleValues", allowMultipleValues.Value, daoType: 1, createIfMissing: true);
+                if (displayControl.HasValue)
+                    SetDaoPropertyValue(field, "DisplayControl", displayControl.Value, daoType: 4, createIfMissing: true);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
         #endregion
 
         #region 3. COM Automation (Simplified)
@@ -3302,6 +3436,15 @@ namespace MS.Access.MCP.Interop
             return null;
         }
 
+        private dynamic ResolveField(dynamic accessApp, string tableName, string fieldName)
+        {
+            var tableDef = FindTableDefWithRetry(accessApp, tableName)
+                ?? throw new InvalidOperationException($"Table not found: {tableName}");
+            var field = FindTableField(tableDef, fieldName)
+                ?? throw new InvalidOperationException($"Field not found: {tableName}.{fieldName}");
+            return field;
+        }
+
         private static dynamic? FindDaoProperty(dynamic owner, string propertyName)
         {
             var properties = TryGetDynamicProperty(owner, "Properties");
@@ -3423,6 +3566,42 @@ namespace MS.Access.MCP.Interop
             }
 
             return false;
+        }
+
+        private static int? ToNullableInt(object? value)
+        {
+            if (value == null || value == DBNull.Value)
+                return null;
+
+            try
+            {
+                return Convert.ToInt32(value);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static bool? ToNullableBool(object? value)
+        {
+            if (value == null || value == DBNull.Value)
+                return null;
+
+            try
+            {
+                return value switch
+                {
+                    bool b => b,
+                    string s when bool.TryParse(s, out var parsed) => parsed,
+                    string s when int.TryParse(s, out var intValue) => intValue != 0,
+                    _ => Convert.ToInt32(value) != 0
+                };
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static string NormalizeSchemaIdentifier(string identifier, string paramName, string requiredMessage)
@@ -6350,6 +6529,28 @@ namespace MS.Access.MCP.Interop
         public string Name { get; set; } = "";
         public int TypeCode { get; set; }
         public object? Value { get; set; }
+    }
+
+    public class FieldPropertiesInfo
+    {
+        public string TableName { get; set; } = "";
+        public string FieldName { get; set; } = "";
+        public int TypeCode { get; set; }
+        public int Size { get; set; }
+        public bool Required { get; set; }
+        public bool AllowZeroLength { get; set; }
+        public string? DefaultValue { get; set; }
+        public string? ValidationRule { get; set; }
+        public string? ValidationText { get; set; }
+        public string? InputMask { get; set; }
+        public string? Caption { get; set; }
+        public string? RowSource { get; set; }
+        public int? BoundColumn { get; set; }
+        public int? ColumnCount { get; set; }
+        public string? ColumnWidths { get; set; }
+        public bool? LimitToList { get; set; }
+        public bool? AllowMultipleValues { get; set; }
+        public int? DisplayControl { get; set; }
     }
 
     public class FormInfo
