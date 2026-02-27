@@ -1372,6 +1372,157 @@ namespace MS.Access.MCP.Interop
             ResetAccessApplication();
         }
 
+        public TransferSpreadsheetResult TransferSpreadsheet(
+            string transferType,
+            string tableName,
+            string fileName,
+            string? spreadsheetType = null,
+            bool hasFieldNames = true,
+            string? range = null,
+            bool useOA = false)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(fileName)) throw new ArgumentException("File name is required", nameof(fileName));
+
+            var transferTypeValue = ParseTransferType(transferType, nameof(transferType));
+            var spreadsheetTypeValue = ParseSpreadsheetType(spreadsheetType);
+            var normalizedRange = string.IsNullOrWhiteSpace(range) ? null : range.Trim();
+
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+
+                _ = InvokeDynamicMethod(
+                    doCmd,
+                    "TransferSpreadsheet",
+                    transferTypeValue,
+                    spreadsheetTypeValue,
+                    tableName,
+                    fileName,
+                    hasFieldNames,
+                    normalizedRange ?? Type.Missing,
+                    useOA);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+
+            return new TransferSpreadsheetResult
+            {
+                TransferType = transferTypeValue,
+                SpreadsheetType = spreadsheetTypeValue,
+                TableName = tableName,
+                FileName = fileName,
+                HasFieldNames = hasFieldNames,
+                Range = normalizedRange,
+                UseOA = useOA
+            };
+        }
+
+        public TransferTextResult TransferText(
+            string transferType,
+            string tableName,
+            string fileName,
+            string? specificationName = null,
+            bool hasFieldNames = true,
+            string? htmlTableName = null,
+            int? codePage = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(fileName)) throw new ArgumentException("File name is required", nameof(fileName));
+
+            var transferTypeValue = ParseTransferType(transferType, nameof(transferType));
+            var normalizedSpecificationName = string.IsNullOrWhiteSpace(specificationName) ? null : specificationName.Trim();
+            var normalizedHtmlTableName = string.IsNullOrWhiteSpace(htmlTableName) ? null : htmlTableName.Trim();
+
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+
+                _ = InvokeDynamicMethod(
+                    doCmd,
+                    "TransferText",
+                    transferTypeValue,
+                    normalizedSpecificationName ?? Type.Missing,
+                    tableName,
+                    fileName,
+                    hasFieldNames,
+                    normalizedHtmlTableName ?? Type.Missing,
+                    codePage.HasValue ? codePage.Value : Type.Missing);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+
+            return new TransferTextResult
+            {
+                TransferType = transferTypeValue,
+                SpecificationName = normalizedSpecificationName,
+                TableName = tableName,
+                FileName = fileName,
+                HasFieldNames = hasFieldNames,
+                HtmlTableName = normalizedHtmlTableName,
+                CodePage = codePage
+            };
+        }
+
+        public OutputToResult OutputTo(
+            string objectType,
+            string? objectName,
+            string outputFormat,
+            string? outputFile = null,
+            bool autoStart = false,
+            string? templateFile = null,
+            string? encoding = null,
+            string? outputQuality = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(objectType)) throw new ArgumentException("Object type is required", nameof(objectType));
+            if (string.IsNullOrWhiteSpace(outputFormat)) throw new ArgumentException("Output format is required", nameof(outputFormat));
+
+            var objectTypeValue = ParseOutputObjectType(objectType, nameof(objectType));
+            var normalizedObjectName = string.IsNullOrWhiteSpace(objectName) ? null : objectName.Trim();
+            var normalizedOutputFile = string.IsNullOrWhiteSpace(outputFile) ? null : outputFile.Trim();
+            var normalizedTemplateFile = string.IsNullOrWhiteSpace(templateFile) ? null : templateFile.Trim();
+            var normalizedEncoding = string.IsNullOrWhiteSpace(encoding) ? null : encoding.Trim();
+            var normalizedOutputFormat = ParseOutputFormat(outputFormat);
+            var outputQualityValue = ParseOutputQuality(outputQuality);
+
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+
+                _ = InvokeDynamicMethod(
+                    doCmd,
+                    "OutputTo",
+                    objectTypeValue,
+                    normalizedObjectName ?? Type.Missing,
+                    normalizedOutputFormat,
+                    normalizedOutputFile ?? Type.Missing,
+                    autoStart,
+                    normalizedTemplateFile ?? Type.Missing,
+                    normalizedEncoding ?? Type.Missing,
+                    outputQualityValue.HasValue ? outputQualityValue.Value : Type.Missing);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+
+            return new OutputToResult
+            {
+                ObjectType = objectTypeValue,
+                ObjectName = normalizedObjectName,
+                OutputFormat = normalizedOutputFormat?.ToString() ?? outputFormat,
+                OutputFile = normalizedOutputFile,
+                AutoStart = autoStart,
+                TemplateFile = normalizedTemplateFile,
+                Encoding = normalizedEncoding,
+                OutputQuality = outputQualityValue
+            };
+        }
+
         public List<FormInfo> GetForms()
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
@@ -4513,6 +4664,117 @@ namespace MS.Access.MCP.Interop
             };
         }
 
+        private static int ParseTransferType(string transferType, string paramName)
+        {
+            if (string.IsNullOrWhiteSpace(transferType))
+                throw new ArgumentException("Transfer type is required.", paramName);
+
+            var trimmed = transferType.Trim();
+            if (int.TryParse(trimmed, out var numericTransferType))
+                return numericTransferType;
+
+            var normalized = NormalizeEnumToken(trimmed);
+            return normalized switch
+            {
+                "import" or "acimport" => 0,
+                "export" or "acexport" => 1,
+                "link" or "aclink" => 2,
+                _ => throw new ArgumentException("transfer_type must be import, export, link, or an Access enum integer value.", paramName)
+            };
+        }
+
+        private static int ParseSpreadsheetType(string? spreadsheetType)
+        {
+            if (string.IsNullOrWhiteSpace(spreadsheetType))
+                return 10; // acSpreadsheetTypeExcel12Xml
+
+            var trimmed = spreadsheetType.Trim();
+            if (int.TryParse(trimmed, out var numericSpreadsheetType))
+                return numericSpreadsheetType;
+
+            var normalized = NormalizeEnumToken(trimmed);
+            return normalized switch
+            {
+                "excel3" or "acspreadsheettypeexcel3" => 0,
+                "excel4" or "acspreadsheettypeexcel4" => 6,
+                "excel5" or "excel7" or "acspreadsheettypeexcel5" or "acspreadsheettypeexcel7" => 5,
+                "excel8" or "excel9" or "acspreadsheettypeexcel8" or "acspreadsheettypeexcel9" => 8,
+                "excel12" or "acspreadsheettypeexcel12" => 9,
+                "excel12xml" or "acspreadsheettypeexcel12xml" => 10,
+                _ => throw new ArgumentException("spreadsheet_type must be a supported name (excel12xml, excel12, excel8, excel5, etc.) or an Access enum integer value.", nameof(spreadsheetType))
+            };
+        }
+
+        private static int ParseOutputObjectType(string objectType, string paramName)
+        {
+            var trimmed = objectType.Trim();
+            if (int.TryParse(trimmed, out var numericObjectType))
+                return numericObjectType;
+
+            var normalized = NormalizeEnumToken(trimmed);
+            return normalized switch
+            {
+                "table" or "acoutputtable" => 0,
+                "query" or "acoutputquery" => 1,
+                "form" or "acoutputform" => 2,
+                "report" or "acoutputreport" => 3,
+                "module" or "acoutputmodule" => 5,
+                "dataaccesspage" or "acoutputdataaccesspage" => 6,
+                "serverview" or "acoutputserverview" => 7,
+                "storedprocedure" or "acoutputstoredprocedure" => 9,
+                "function" or "acoutputfunction" => 10,
+                _ => throw new ArgumentException("object_type must be table, query, form, report, module, data_access_page, server_view, stored_procedure, function, or an Access enum integer value.", paramName)
+            };
+        }
+
+        private static object ParseOutputFormat(string outputFormat)
+        {
+            var trimmed = outputFormat.Trim();
+            if (int.TryParse(trimmed, out var numericFormat))
+                return numericFormat;
+
+            var normalized = NormalizeEnumToken(trimmed);
+            return normalized switch
+            {
+                "pdf" or "acformatpdf" => "PDF Format (*.pdf)",
+                "xps" or "acformatxps" => "XPS Format (*.xps)",
+                "rtf" or "acformatrtf" => "Rich Text Format (*.rtf)",
+                "txt" or "text" or "acformattxt" => "Text Files (*.txt)",
+                "html" or "htm" or "acformathtml" => "HTML Files (*.html)",
+                "xls" or "acformatxls" => "Microsoft Excel 97-2003 Workbook(*.xls)",
+                "xlsx" or "acformatxlsx" => "Microsoft Excel Workbook(*.xlsx)",
+                _ => trimmed
+            };
+        }
+
+        private static int? ParseOutputQuality(string? outputQuality)
+        {
+            if (string.IsNullOrWhiteSpace(outputQuality))
+                return null;
+
+            var trimmed = outputQuality.Trim();
+            if (int.TryParse(trimmed, out var numericQuality))
+                return numericQuality;
+
+            var normalized = NormalizeEnumToken(trimmed);
+            return normalized switch
+            {
+                "print" or "acexportqualityprint" => 0,
+                "screen" or "acexportqualityscreen" => 1,
+                _ => throw new ArgumentException("output_quality must be print, screen, or an Access enum integer value.", nameof(outputQuality))
+            };
+        }
+
+        private static string NormalizeEnumToken(string value)
+        {
+            return value
+                .Trim()
+                .Replace("_", string.Empty, StringComparison.Ordinal)
+                .Replace("-", string.Empty, StringComparison.Ordinal)
+                .Replace(" ", string.Empty, StringComparison.Ordinal)
+                .ToLowerInvariant();
+        }
+
         private dynamic EnsureFormOpen(dynamic accessApp, string formName, bool openInDesignView, out bool openedHere)
         {
             openedHere = false;
@@ -5420,6 +5682,40 @@ namespace MS.Access.MCP.Interop
         public long DestinationSizeBytes { get; set; }
         public DateTime DestinationLastWriteTimeUtc { get; set; }
         public bool OperatedOnConnectedDatabase { get; set; }
+    }
+
+    public class TransferSpreadsheetResult
+    {
+        public int TransferType { get; set; }
+        public int SpreadsheetType { get; set; }
+        public string TableName { get; set; } = "";
+        public string FileName { get; set; } = "";
+        public bool HasFieldNames { get; set; }
+        public string? Range { get; set; }
+        public bool UseOA { get; set; }
+    }
+
+    public class TransferTextResult
+    {
+        public int TransferType { get; set; }
+        public string? SpecificationName { get; set; }
+        public string TableName { get; set; } = "";
+        public string FileName { get; set; } = "";
+        public bool HasFieldNames { get; set; }
+        public string? HtmlTableName { get; set; }
+        public int? CodePage { get; set; }
+    }
+
+    public class OutputToResult
+    {
+        public int ObjectType { get; set; }
+        public string? ObjectName { get; set; }
+        public string OutputFormat { get; set; } = "";
+        public string? OutputFile { get; set; }
+        public bool AutoStart { get; set; }
+        public string? TemplateFile { get; set; }
+        public string? Encoding { get; set; }
+        public int? OutputQuality { get; set; }
     }
 
     public class FormInfo

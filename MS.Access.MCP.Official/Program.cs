@@ -142,6 +142,9 @@ class Program
                 new { name = "create_database", description = "Create a new Access database file (.accdb or .mdb).", inputSchema = new { type = "object", properties = new { database_path = new { type = "string" }, overwrite = new { type = "boolean" } }, required = new string[] { "database_path" } } },
                 new { name = "backup_database", description = "Back up an Access database by copying it to a destination path.", inputSchema = new { type = "object", properties = new { source_database_path = new { type = "string" }, destination_database_path = new { type = "string" }, overwrite = new { type = "boolean" } }, required = new string[] { "destination_database_path" } } },
                 new { name = "compact_repair_database", description = "Compact and repair an Access database. Supports in-place replacement when destination_database_path is omitted.", inputSchema = new { type = "object", properties = new { source_database_path = new { type = "string" }, destination_database_path = new { type = "string" }, overwrite = new { type = "boolean" } } } },
+                new { name = "transfer_spreadsheet", description = "Import, export, or link spreadsheet data using Access DoCmd.TransferSpreadsheet.", inputSchema = new { type = "object", properties = new { transfer_type = new { type = "string", description = "import, export, link, or Access enum integer value as string" }, spreadsheet_type = new { type = "string", description = "Optional spreadsheet type name or Access enum integer value as string" }, table_name = new { type = "string" }, file_name = new { type = "string" }, has_field_names = new { type = "boolean" }, range = new { type = "string" }, use_oa = new { type = "boolean" } }, required = new string[] { "transfer_type", "table_name", "file_name" } } },
+                new { name = "transfer_text", description = "Import, export, or link text/CSV data using Access DoCmd.TransferText.", inputSchema = new { type = "object", properties = new { transfer_type = new { type = "string", description = "import, export, link, or Access enum integer value as string" }, specification_name = new { type = "string" }, table_name = new { type = "string" }, file_name = new { type = "string" }, has_field_names = new { type = "boolean" }, html_table_name = new { type = "string" }, code_page = new { type = "integer" } }, required = new string[] { "transfer_type", "table_name", "file_name" } } },
+                new { name = "output_to", description = "Export Access objects using DoCmd.OutputTo.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string", description = "table, query, form, report, module, etc. or Access enum integer value as string" }, object_name = new { type = "string" }, output_format = new { type = "string", description = "pdf/xlsx/etc. or Access format value" }, output_file = new { type = "string" }, auto_start = new { type = "boolean" }, template_file = new { type = "string" }, encoding = new { type = "string" }, output_quality = new { type = "string", description = "print, screen, or Access enum integer value as string" } }, required = new string[] { "object_type", "output_format" } } },
                 new { name = "disconnect_access", description = "Disconnect from the current Access database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "is_connected", description = "Check if connected to an Access database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_tables", description = "Get list of all tables in the database", inputSchema = new { type = "object", properties = new { } } },
@@ -244,6 +247,9 @@ class Program
             "create_database" => HandleCreateDatabase(accessService, toolArguments),
             "backup_database" => HandleBackupDatabase(accessService, toolArguments),
             "compact_repair_database" => HandleCompactRepairDatabase(accessService, toolArguments),
+            "transfer_spreadsheet" => HandleTransferSpreadsheet(accessService, toolArguments),
+            "transfer_text" => HandleTransferText(accessService, toolArguments),
+            "output_to" => HandleOutputTo(accessService, toolArguments),
             "disconnect_access" => HandleDisconnectAccess(accessService, toolArguments),
             "is_connected" => HandleIsConnected(accessService, toolArguments),
             "get_tables" => HandleGetTables(accessService, toolArguments),
@@ -491,6 +497,153 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("compact_repair_database", ex);
+        }
+    }
+
+    static object HandleTransferSpreadsheet(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "transfer_type", out var transferType, out var transferTypeError))
+                return transferTypeError;
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "file_name", out var fileName, out var fileNameError))
+                return fileNameError;
+
+            _ = TryGetOptionalString(arguments, "spreadsheet_type", out var spreadsheetType);
+            _ = TryGetOptionalString(arguments, "range", out var range);
+            var hasFieldNames = GetOptionalBool(arguments, "has_field_names", true);
+            var useOA = GetOptionalBool(arguments, "use_oa", false);
+
+            var result = accessService.TransferSpreadsheet(
+                transferType,
+                tableName,
+                fileName,
+                string.IsNullOrWhiteSpace(spreadsheetType) ? null : spreadsheetType,
+                hasFieldNames,
+                string.IsNullOrWhiteSpace(range) ? null : range,
+                useOA);
+
+            return new
+            {
+                success = true,
+                transfer_type = result.TransferType,
+                spreadsheet_type = result.SpreadsheetType,
+                table_name = result.TableName,
+                file_name = result.FileName,
+                has_field_names = result.HasFieldNames,
+                range = result.Range,
+                use_oa = result.UseOA
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("transfer_spreadsheet", ex);
+        }
+    }
+
+    static object HandleTransferText(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "transfer_type", out var transferType, out var transferTypeError))
+                return transferTypeError;
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "file_name", out var fileName, out var fileNameError))
+                return fileNameError;
+
+            _ = TryGetOptionalString(arguments, "specification_name", out var specificationName);
+            _ = TryGetOptionalString(arguments, "html_table_name", out var htmlTableName);
+            var hasFieldNames = GetOptionalBool(arguments, "has_field_names", true);
+
+            int? codePage = null;
+            if (arguments.TryGetProperty("code_page", out var codePageElement))
+            {
+                if (codePageElement.ValueKind == JsonValueKind.Number && codePageElement.TryGetInt32(out var numericCodePage))
+                {
+                    codePage = numericCodePage;
+                }
+                else if (codePageElement.ValueKind == JsonValueKind.String && int.TryParse(codePageElement.GetString(), out var parsedCodePage))
+                {
+                    codePage = parsedCodePage;
+                }
+                else if (codePageElement.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined))
+                {
+                    return new { success = false, error = "code_page must be an integer when provided" };
+                }
+            }
+
+            var result = accessService.TransferText(
+                transferType,
+                tableName,
+                fileName,
+                string.IsNullOrWhiteSpace(specificationName) ? null : specificationName,
+                hasFieldNames,
+                string.IsNullOrWhiteSpace(htmlTableName) ? null : htmlTableName,
+                codePage);
+
+            return new
+            {
+                success = true,
+                transfer_type = result.TransferType,
+                specification_name = result.SpecificationName,
+                table_name = result.TableName,
+                file_name = result.FileName,
+                has_field_names = result.HasFieldNames,
+                html_table_name = result.HtmlTableName,
+                code_page = result.CodePage
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("transfer_text", ex);
+        }
+    }
+
+    static object HandleOutputTo(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "object_type", out var objectType, out var objectTypeError))
+                return objectTypeError;
+            if (!TryGetRequiredString(arguments, "output_format", out var outputFormat, out var outputFormatError))
+                return outputFormatError;
+
+            _ = TryGetOptionalString(arguments, "object_name", out var objectName);
+            _ = TryGetOptionalString(arguments, "output_file", out var outputFile);
+            _ = TryGetOptionalString(arguments, "template_file", out var templateFile);
+            _ = TryGetOptionalString(arguments, "encoding", out var encoding);
+            _ = TryGetOptionalString(arguments, "output_quality", out var outputQuality);
+            var autoStart = GetOptionalBool(arguments, "auto_start", false);
+
+            var result = accessService.OutputTo(
+                objectType,
+                string.IsNullOrWhiteSpace(objectName) ? null : objectName,
+                outputFormat,
+                string.IsNullOrWhiteSpace(outputFile) ? null : outputFile,
+                autoStart,
+                string.IsNullOrWhiteSpace(templateFile) ? null : templateFile,
+                string.IsNullOrWhiteSpace(encoding) ? null : encoding,
+                string.IsNullOrWhiteSpace(outputQuality) ? null : outputQuality);
+
+            return new
+            {
+                success = true,
+                object_type = result.ObjectType,
+                object_name = result.ObjectName,
+                output_format = result.OutputFormat,
+                output_file = result.OutputFile,
+                auto_start = result.AutoStart,
+                template_file = result.TemplateFile,
+                encoding = result.Encoding,
+                output_quality = result.OutputQuality
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("output_to", ex);
         }
     }
 
