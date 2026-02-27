@@ -39,6 +39,9 @@ namespace MS.Access.MCP.Interop
             ".accdb",
             ".mdb"
         };
+        private readonly Dictionary<string, dynamic> _openRecordsets = new();
+        private int _recordsetCounter = 0;
+        private const int MaxOpenRecordsets = 10;
 
         private enum DataProviderKind
         {
@@ -7591,6 +7594,221 @@ namespace MS.Access.MCP.Interop
 
         #endregion
 
+        #region 11. DAO Recordset Operations
+
+        public string OpenRecordset(string source, int type = 2, bool readOnly = false)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(source)) throw new ArgumentException("Source is required", nameof(source));
+            if (_openRecordsets.Count >= MaxOpenRecordsets)
+                throw new InvalidOperationException($"Maximum number of open recordsets ({MaxOpenRecordsets}) reached. Close existing recordsets first.");
+
+            string id = "";
+            ExecuteComOperation(app =>
+            {
+                var db = InvokeDynamicMethod(app, "CurrentDb");
+                // dbOpenDynaset=2, dbReadOnly=4
+                int options = readOnly ? 4 : 0;
+                dynamic rs = db.OpenRecordset(source, type, options);
+                id = $"rs_{++_recordsetCounter}";
+                _openRecordsets[id] = rs;
+            }, requireExclusive: false, releaseOleDb: false);
+            return id;
+        }
+
+        public void CloseRecordset(string recordsetId)
+        {
+            if (!_openRecordsets.TryGetValue(recordsetId, out var rs))
+                throw new ArgumentException($"Recordset '{recordsetId}' not found");
+            try { rs.Close(); } catch { }
+            try { Marshal.ReleaseComObject(rs); } catch { }
+            _openRecordsets.Remove(recordsetId);
+        }
+
+        private dynamic GetRecordset(string recordsetId)
+        {
+            if (!_openRecordsets.TryGetValue(recordsetId, out var rs))
+                throw new ArgumentException($"Recordset '{recordsetId}' not found");
+            return rs;
+        }
+
+        public void RecordsetMove(string recordsetId, string direction, int offset = 0)
+        {
+            var rs = GetRecordset(recordsetId);
+            switch (direction.ToLowerInvariant())
+            {
+                case "first": rs.MoveFirst(); break;
+                case "last": rs.MoveLast(); break;
+                case "next": rs.MoveNext(); break;
+                case "previous": rs.MovePrevious(); break;
+                case "move": rs.Move(offset); break;
+                default: throw new ArgumentException($"Invalid direction: {direction}");
+            }
+        }
+
+        public bool RecordsetFind(string recordsetId, string criteria, string direction)
+        {
+            var rs = GetRecordset(recordsetId);
+            switch (direction.ToLowerInvariant())
+            {
+                case "first": rs.FindFirst(criteria); break;
+                case "last": rs.FindLast(criteria); break;
+                case "next": rs.FindNext(criteria); break;
+                case "previous": rs.FindPrevious(criteria); break;
+                default: rs.FindFirst(criteria); break;
+            }
+            return !(bool)rs.NoMatch;
+        }
+
+        public Dictionary<string, object?> RecordsetGetRecord(string recordsetId)
+        {
+            var rs = GetRecordset(recordsetId);
+            var record = new Dictionary<string, object?>();
+
+            if ((bool)rs.EOF || (bool)rs.BOF)
+                return record;
+
+            int fieldCount = (int)rs.Fields.Count;
+            for (int i = 0; i < fieldCount; i++)
+            {
+                var field = rs.Fields[i];
+                string name = (string)field.Name;
+                object? value = field.Value;
+                if (value is DBNull) value = null;
+                record[name] = value;
+            }
+            return record;
+        }
+
+        public RecordsetGetRowsResult RecordsetGetRows(string recordsetId, int numRows)
+        {
+            var rs = GetRecordset(recordsetId);
+            var result = new RecordsetGetRowsResult();
+
+            if ((bool)rs.EOF)
+            {
+                // Get column names even if no rows
+                int fc = (int)rs.Fields.Count;
+                for (int i = 0; i < fc; i++)
+                    result.Columns.Add((string)rs.Fields[i].Name);
+                return result;
+            }
+
+            // GetRows returns a 2D array: (fieldIndex, rowIndex)
+            object rawRows = rs.GetRows(numRows);
+            if (rawRows is object[,] arr)
+            {
+                int cols = arr.GetLength(0);
+                int rows = arr.GetLength(1);
+
+                // Get column names
+                int fieldCount = (int)rs.Fields.Count;
+                for (int i = 0; i < Math.Min(cols, fieldCount); i++)
+                    result.Columns.Add((string)rs.Fields[i].Name);
+
+                for (int r = 0; r < rows; r++)
+                {
+                    var row = new Dictionary<string, object?>();
+                    for (int c = 0; c < cols; c++)
+                    {
+                        var val = arr[c, r];
+                        if (val is DBNull) val = null;
+                        row[result.Columns[c]] = val;
+                    }
+                    result.Rows.Add(row);
+                }
+                result.RowCount = rows;
+            }
+            return result;
+        }
+
+        public void RecordsetAddRecord(string recordsetId, Dictionary<string, object?> fields)
+        {
+            var rs = GetRecordset(recordsetId);
+            rs.AddNew();
+            foreach (var kvp in fields)
+            {
+                rs.Fields[kvp.Key].Value = kvp.Value ?? DBNull.Value;
+            }
+            rs.Update();
+        }
+
+        public void RecordsetEditRecord(string recordsetId, Dictionary<string, object?> fields)
+        {
+            var rs = GetRecordset(recordsetId);
+            rs.Edit();
+            foreach (var kvp in fields)
+            {
+                rs.Fields[kvp.Key].Value = kvp.Value ?? DBNull.Value;
+            }
+            rs.Update();
+        }
+
+        public void RecordsetDeleteRecord(string recordsetId)
+        {
+            var rs = GetRecordset(recordsetId);
+            rs.Delete();
+            // Move to next record after delete
+            try { rs.MoveNext(); } catch { }
+        }
+
+        public RecordsetStatusInfo RecordsetCount(string recordsetId)
+        {
+            var rs = GetRecordset(recordsetId);
+            // MoveLast to get accurate count
+            try { if (!(bool)rs.EOF) rs.MoveLast(); } catch { }
+            try { if (!(bool)rs.BOF) rs.MoveFirst(); } catch { }
+
+            return new RecordsetStatusInfo
+            {
+                RecordCount = (int)rs.RecordCount,
+                BOF = (bool)rs.BOF,
+                EOF = (bool)rs.EOF,
+                AbsolutePosition = (bool)rs.BOF || (bool)rs.EOF ? -1 : (int)rs.AbsolutePosition
+            };
+        }
+
+        public string GetRecordsetBookmark(string recordsetId)
+        {
+            var rs = GetRecordset(recordsetId);
+            var bookmark = rs.Bookmark;
+            if (bookmark is byte[] bytes)
+                return Convert.ToBase64String(bytes);
+            return bookmark?.ToString() ?? "";
+        }
+
+        public void SetRecordsetBookmark(string recordsetId, string base64Bookmark)
+        {
+            var rs = GetRecordset(recordsetId);
+            var bytes = Convert.FromBase64String(base64Bookmark);
+            rs.Bookmark = bytes;
+        }
+
+        public string RecordsetFilterSort(string recordsetId, string? filter, string? sort)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            var rs = GetRecordset(recordsetId);
+
+            if (filter != null) rs.Filter = filter;
+            if (sort != null) rs.Sort = sort;
+
+            // Open a new filtered/sorted recordset
+            dynamic newRs = rs.OpenRecordset();
+            var newId = $"rs_{++_recordsetCounter}";
+
+            if (_openRecordsets.Count >= MaxOpenRecordsets)
+            {
+                try { newRs.Close(); } catch { }
+                try { Marshal.ReleaseComObject(newRs); } catch { }
+                throw new InvalidOperationException($"Maximum open recordsets ({MaxOpenRecordsets}) reached");
+            }
+
+            _openRecordsets[newId] = newRs;
+            return newId;
+        }
+
+        #endregion
+
         #region Helper Methods
 
         private List<FieldInfo> GetTableFields(string tableName)
@@ -11569,6 +11787,14 @@ namespace MS.Access.MCP.Interop
         {
             if (!_disposed)
             {
+                // Close any open recordsets
+                foreach (var kvp in _openRecordsets)
+                {
+                    try { kvp.Value.Close(); } catch { }
+                    try { Marshal.ReleaseComObject(kvp.Value); } catch { }
+                }
+                _openRecordsets.Clear();
+
                 try
                 {
                     CloseAccess();
@@ -12308,5 +12534,20 @@ namespace MS.Access.MCP.Interop
         public string? DefaultValue { get; set; }
     }
 
+    public class RecordsetGetRowsResult
+    {
+        public List<string> Columns { get; set; } = new();
+        public List<Dictionary<string, object?>> Rows { get; set; } = new();
+        public int RowCount { get; set; }
+    }
+
+    public class RecordsetStatusInfo
+    {
+        public int RecordCount { get; set; }
+        public bool BOF { get; set; }
+        public bool EOF { get; set; }
+        public int AbsolutePosition { get; set; }
+    }
+
     #endregion
-} 
+}

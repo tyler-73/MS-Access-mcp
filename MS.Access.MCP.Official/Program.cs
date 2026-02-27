@@ -418,7 +418,20 @@ class Program
                 new { name = "get_form_bookmark", description = "Get the current bookmark position of an open form (Form.Bookmark). Returns a Base64-encoded bookmark string.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the open form" }, bookmark = new { type = "string", description = "Optional Base64-encoded bookmark to set. If omitted, returns current bookmark." } }, required = new string[] { "form_name" } } },
                 new { name = "get_form_view", description = "Get the current view mode of an open form (Form.CurrentView). Returns 0=Design, 1=Form, 2=Datasheet.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the open form" } }, required = new string[] { "form_name" } } },
                 new { name = "get_form_open_args", description = "Get the OpenArgs value passed when the form was opened (Form.OpenArgs).", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the open form" } }, required = new string[] { "form_name" } } },
-                new { name = "set_form_painting", description = "Suspend or resume form painting for batch updates (Form.Painting). WARNING: If set to false and not restored to true, the form UI will appear frozen.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the open form" }, painting = new { type = "boolean", description = "True to enable painting (normal), false to suspend painting for batch updates" } }, required = new string[] { "form_name", "painting" } } }
+                new { name = "set_form_painting", description = "Suspend or resume form painting for batch updates (Form.Painting). WARNING: If set to false and not restored to true, the form UI will appear frozen.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the open form" }, painting = new { type = "boolean", description = "True to enable painting (normal), false to suspend painting for batch updates" } }, required = new string[] { "form_name", "painting" } } },
+                // Priority 20: DAO Recordset Operations
+                new { name = "open_recordset", description = "Open a DAO recordset on a table, query, or SQL string. Returns a handle ID for subsequent recordset operations. Max 10 open recordsets.", inputSchema = new { type = "object", properties = new { source = new { type = "string", description = "Table name, query name, or SQL SELECT statement" }, type = new { type = "integer", description = "Optional recordset type: 1=dbOpenTable, 2=dbOpenDynaset (default), 4=dbOpenSnapshot, 8=dbOpenForwardOnly" }, read_only = new { type = "boolean", description = "Open as read-only (default false)" } }, required = new string[] { "source" } } },
+                new { name = "close_recordset", description = "Close a previously opened recordset by its handle ID.", inputSchema = new { type = "object", properties = new { recordset_id = new { type = "string", description = "The recordset handle ID returned by open_recordset" } }, required = new string[] { "recordset_id" } } },
+                new { name = "recordset_move", description = "Navigate records in an open recordset. Supports First, Last, Next, Previous, or move by offset.", inputSchema = new { type = "object", properties = new { recordset_id = new { type = "string", description = "The recordset handle ID" }, direction = new { type = "string", @enum = new[] { "First", "Last", "Next", "Previous", "Move" }, description = "Navigation direction" }, offset = new { type = "integer", description = "Number of rows to move (only used when direction is 'Move')" } }, required = new string[] { "recordset_id", "direction" } } },
+                new { name = "recordset_find", description = "Find a record matching criteria in an open recordset.", inputSchema = new { type = "object", properties = new { recordset_id = new { type = "string", description = "The recordset handle ID" }, criteria = new { type = "string", description = "Search criteria, e.g. \"[Name] = 'Smith'\"" }, direction = new { type = "string", @enum = new[] { "First", "Last", "Next", "Previous" }, description = "Search direction (default: First)" } }, required = new string[] { "recordset_id", "criteria" } } },
+                new { name = "recordset_get_record", description = "Get the current record's field names and values from an open recordset.", inputSchema = new { type = "object", properties = new { recordset_id = new { type = "string", description = "The recordset handle ID" } }, required = new string[] { "recordset_id" } } },
+                new { name = "recordset_get_rows", description = "Get multiple rows from the current position using GetRows (batch read).", inputSchema = new { type = "object", properties = new { recordset_id = new { type = "string", description = "The recordset handle ID" }, num_rows = new { type = "integer", description = "Number of rows to retrieve (default 10, max 200)" } }, required = new string[] { "recordset_id" } } },
+                new { name = "recordset_add_record", description = "Add a new record to an open recordset. Performs AddNew, sets field values, then Update in one operation.", inputSchema = new { type = "object", properties = new { recordset_id = new { type = "string", description = "The recordset handle ID" }, fields = new { type = "object", description = "Object mapping field names to values, e.g. {\"Name\": \"John\", \"Age\": 30}" } }, required = new string[] { "recordset_id", "fields" } } },
+                new { name = "recordset_edit_record", description = "Edit the current record in an open recordset. Performs Edit, sets field values, then Update in one operation.", inputSchema = new { type = "object", properties = new { recordset_id = new { type = "string", description = "The recordset handle ID" }, fields = new { type = "object", description = "Object mapping field names to new values" } }, required = new string[] { "recordset_id", "fields" } } },
+                new { name = "recordset_delete_record", description = "Delete the current record from an open recordset.", inputSchema = new { type = "object", properties = new { recordset_id = new { type = "string", description = "The recordset handle ID" } }, required = new string[] { "recordset_id" } } },
+                new { name = "recordset_count", description = "Get the record count, BOF, EOF, and position status of an open recordset.", inputSchema = new { type = "object", properties = new { recordset_id = new { type = "string", description = "The recordset handle ID" } }, required = new string[] { "recordset_id" } } },
+                new { name = "recordset_bookmark", description = "Get or set the bookmark position of an open recordset.", inputSchema = new { type = "object", properties = new { recordset_id = new { type = "string", description = "The recordset handle ID" }, bookmark = new { type = "string", description = "Optional Base64-encoded bookmark to set. If omitted, returns current bookmark." } }, required = new string[] { "recordset_id" } } },
+                new { name = "recordset_filter_sort", description = "Set Filter and/or Sort properties on a recordset, then clone it with the new settings applied.", inputSchema = new { type = "object", properties = new { recordset_id = new { type = "string", description = "The recordset handle ID" }, filter = new { type = "string", description = "Optional filter criteria, e.g. \"[Age] > 25\"" }, sort = new { type = "string", description = "Optional sort expression, e.g. \"[Name] ASC\"" } }, required = new string[] { "recordset_id" } } }
             }
         };
     }
@@ -717,6 +730,19 @@ class Program
             "get_form_view" => HandleGetFormView(accessService, toolArguments),
             "get_form_open_args" => HandleGetFormOpenArgs(accessService, toolArguments),
             "set_form_painting" => HandleSetFormPainting(accessService, toolArguments),
+            // Priority 20: DAO Recordset Operations
+            "open_recordset" => HandleOpenRecordset(accessService, toolArguments),
+            "close_recordset" => HandleCloseRecordset(accessService, toolArguments),
+            "recordset_move" => HandleRecordsetMove(accessService, toolArguments),
+            "recordset_find" => HandleRecordsetFind(accessService, toolArguments),
+            "recordset_get_record" => HandleRecordsetGetRecord(accessService, toolArguments),
+            "recordset_get_rows" => HandleRecordsetGetRows(accessService, toolArguments),
+            "recordset_add_record" => HandleRecordsetAddRecord(accessService, toolArguments),
+            "recordset_edit_record" => HandleRecordsetEditRecord(accessService, toolArguments),
+            "recordset_delete_record" => HandleRecordsetDeleteRecord(accessService, toolArguments),
+            "recordset_count" => HandleRecordsetCount(accessService, toolArguments),
+            "recordset_bookmark" => HandleRecordsetBookmark(accessService, toolArguments),
+            "recordset_filter_sort" => HandleRecordsetFilterSort(accessService, toolArguments),
             _ => new { success = false, error = $"Unknown tool: {toolName}" }
         };
     }
@@ -6447,6 +6473,253 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("set_form_painting", ex);
+        }
+    }
+
+    // ===== Priority 20: DAO Recordset Operations =====
+
+    static object HandleOpenRecordset(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "source", out var source, out var sourceError))
+                return sourceError;
+            var type = GetOptionalIntFromAliases(arguments, new[] { "type" }, 2); // default dbOpenDynaset
+            var readOnly = GetOptionalBool(arguments, "read_only", false);
+
+            var id = accessService.OpenRecordset(source, type, readOnly);
+            return new { success = true, message = $"Recordset opened", recordset_id = id, source, type };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("open_recordset", ex);
+        }
+    }
+
+    static object HandleCloseRecordset(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "recordset_id", out var id, out var idError))
+                return idError;
+            accessService.CloseRecordset(id);
+            return new { success = true, message = $"Recordset '{id}' closed" };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("close_recordset", ex);
+        }
+    }
+
+    static object HandleRecordsetMove(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "recordset_id", out var id, out var idError))
+                return idError;
+            if (!TryGetRequiredString(arguments, "direction", out var direction, out var dirError))
+                return dirError;
+            var offset = GetOptionalIntFromAliases(arguments, new[] { "offset" }, 0);
+
+            accessService.RecordsetMove(id, direction, offset);
+            return new { success = true, message = $"Moved {direction}", recordset_id = id };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("recordset_move", ex);
+        }
+    }
+
+    static object HandleRecordsetFind(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "recordset_id", out var id, out var idError))
+                return idError;
+            if (!TryGetRequiredString(arguments, "criteria", out var criteria, out var critError))
+                return critError;
+            _ = TryGetOptionalString(arguments, "direction", out var direction);
+            if (string.IsNullOrWhiteSpace(direction)) direction = "First";
+
+            var found = accessService.RecordsetFind(id, criteria, direction);
+            return new { success = true, found, recordset_id = id, criteria, direction };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("recordset_find", ex);
+        }
+    }
+
+    static object HandleRecordsetGetRecord(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "recordset_id", out var id, out var idError))
+                return idError;
+            var record = accessService.RecordsetGetRecord(id);
+            return new { success = true, recordset_id = id, record };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("recordset_get_record", ex);
+        }
+    }
+
+    static object HandleRecordsetGetRows(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "recordset_id", out var id, out var idError))
+                return idError;
+            var numRows = GetOptionalIntFromAliases(arguments, new[] { "num_rows" }, 10);
+            if (numRows > 200) numRows = 200;
+            if (numRows < 1) numRows = 1;
+
+            var result = accessService.RecordsetGetRows(id, numRows);
+            return new { success = true, recordset_id = id, rows = result.Rows, columns = result.Columns, row_count = result.RowCount };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("recordset_get_rows", ex);
+        }
+    }
+
+    static object HandleRecordsetAddRecord(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "recordset_id", out var id, out var idError))
+                return idError;
+            if (!arguments.TryGetProperty("fields", out var fieldsElement) || fieldsElement.ValueKind != JsonValueKind.Object)
+                return new { success = false, error = "fields is required and must be an object" };
+
+            var fields = new Dictionary<string, object?>();
+            foreach (var prop in fieldsElement.EnumerateObject())
+            {
+                fields[prop.Name] = prop.Value.ValueKind switch
+                {
+                    JsonValueKind.String => prop.Value.GetString(),
+                    JsonValueKind.Number => prop.Value.TryGetInt64(out var l) ? (object)l : prop.Value.GetDouble(),
+                    JsonValueKind.True => true,
+                    JsonValueKind.False => false,
+                    JsonValueKind.Null => null,
+                    _ => prop.Value.GetRawText()
+                };
+            }
+
+            accessService.RecordsetAddRecord(id, fields);
+            return new { success = true, message = "Record added", recordset_id = id };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("recordset_add_record", ex);
+        }
+    }
+
+    static object HandleRecordsetEditRecord(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "recordset_id", out var id, out var idError))
+                return idError;
+            if (!arguments.TryGetProperty("fields", out var fieldsElement) || fieldsElement.ValueKind != JsonValueKind.Object)
+                return new { success = false, error = "fields is required and must be an object" };
+
+            var fields = new Dictionary<string, object?>();
+            foreach (var prop in fieldsElement.EnumerateObject())
+            {
+                fields[prop.Name] = prop.Value.ValueKind switch
+                {
+                    JsonValueKind.String => prop.Value.GetString(),
+                    JsonValueKind.Number => prop.Value.TryGetInt64(out var l) ? (object)l : prop.Value.GetDouble(),
+                    JsonValueKind.True => true,
+                    JsonValueKind.False => false,
+                    JsonValueKind.Null => null,
+                    _ => prop.Value.GetRawText()
+                };
+            }
+
+            accessService.RecordsetEditRecord(id, fields);
+            return new { success = true, message = "Record updated", recordset_id = id };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("recordset_edit_record", ex);
+        }
+    }
+
+    static object HandleRecordsetDeleteRecord(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "recordset_id", out var id, out var idError))
+                return idError;
+            accessService.RecordsetDeleteRecord(id);
+            return new { success = true, message = "Record deleted", recordset_id = id };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("recordset_delete_record", ex);
+        }
+    }
+
+    static object HandleRecordsetCount(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "recordset_id", out var id, out var idError))
+                return idError;
+            var status = accessService.RecordsetCount(id);
+            return new { success = true, recordset_id = id, record_count = status.RecordCount, bof = status.BOF, eof = status.EOF, absolute_position = status.AbsolutePosition };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("recordset_count", ex);
+        }
+    }
+
+    static object HandleRecordsetBookmark(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "recordset_id", out var id, out var idError))
+                return idError;
+            _ = TryGetOptionalString(arguments, "bookmark", out var bookmark);
+
+            if (!string.IsNullOrWhiteSpace(bookmark))
+            {
+                accessService.SetRecordsetBookmark(id, bookmark);
+                return new { success = true, message = "Bookmark set", recordset_id = id };
+            }
+            else
+            {
+                var result = accessService.GetRecordsetBookmark(id);
+                return new { success = true, recordset_id = id, bookmark = result };
+            }
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("recordset_bookmark", ex);
+        }
+    }
+
+    static object HandleRecordsetFilterSort(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "recordset_id", out var id, out var idError))
+                return idError;
+            _ = TryGetOptionalString(arguments, "filter", out var filter);
+            _ = TryGetOptionalString(arguments, "sort", out var sort);
+
+            var newId = accessService.RecordsetFilterSort(id,
+                string.IsNullOrWhiteSpace(filter) ? null : filter,
+                string.IsNullOrWhiteSpace(sort) ? null : sort);
+            return new { success = true, message = "Filter/sort applied", old_recordset_id = id, recordset_id = newId, filter, sort };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("recordset_filter_sort", ex);
         }
     }
 
