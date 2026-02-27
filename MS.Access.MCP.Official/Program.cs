@@ -293,6 +293,20 @@ class Program
                 new { name = "get_report_controls", description = "Get list of controls in a report", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" } }, required = new string[] { "report_name" } } },
                 new { name = "get_report_control_properties", description = "Get properties of a report control", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" }, control_name = new { type = "string" } }, required = new string[] { "report_name", "control_name" } } },
                 new { name = "set_report_control_property", description = "Set a property of a report control", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" }, control_name = new { type = "string" }, property_name = new { type = "string" }, value = new { type = "string" } }, required = new string[] { "report_name", "control_name", "property_name", "value" } } },
+                new { name = "get_form_sections", description = "Get design-time sections from a form.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
+                new { name = "get_report_sections", description = "Get design-time sections from a report.", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" } }, required = new string[] { "report_name" } } },
+                new { name = "set_section_property", description = "Set a form/report section property in design view.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string", description = "form or report" }, object_name = new { type = "string" }, section = new { type = "string", description = "Section name or section index" }, property_name = new { type = "string" }, value = new { type = "string" } }, required = new string[] { "object_type", "object_name", "section", "property_name", "value" } } },
+                new { name = "create_control", description = "Create a control on a form in design view.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" }, control_type = new { type = "string" }, control_name = new { type = "string" }, section = new { type = "integer" }, parent_control_name = new { type = "string" }, column_name = new { type = "string" }, left = new { type = "integer" }, top = new { type = "integer" }, width = new { type = "integer" }, height = new { type = "integer" } }, required = new string[] { "form_name", "control_type" } } },
+                new { name = "create_report_control", description = "Create a control on a report in design view.", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" }, control_type = new { type = "string" }, control_name = new { type = "string" }, section = new { type = "integer" }, parent_control_name = new { type = "string" }, column_name = new { type = "string" }, left = new { type = "integer" }, top = new { type = "integer" }, width = new { type = "integer" }, height = new { type = "integer" } }, required = new string[] { "report_name", "control_type" } } },
+                new { name = "delete_control", description = "Delete a control from a form in design view.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" }, control_name = new { type = "string" } }, required = new string[] { "form_name", "control_name" } } },
+                new { name = "delete_report_control", description = "Delete a control from a report in design view.", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" }, control_name = new { type = "string" } }, required = new string[] { "report_name", "control_name" } } },
+                new { name = "get_form_properties", description = "Get form design properties.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
+                new { name = "set_form_property", description = "Set a form design property.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" }, property_name = new { type = "string" }, value = new { type = "string" } }, required = new string[] { "form_name", "property_name", "value" } } },
+                new { name = "get_report_properties", description = "Get report design properties.", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" } }, required = new string[] { "report_name" } } },
+                new { name = "set_report_property", description = "Set a report design property.", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" }, property_name = new { type = "string" }, value = new { type = "string" } }, required = new string[] { "report_name", "property_name", "value" } } },
+                new { name = "get_tab_order", description = "Get tab order for form controls.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
+                new { name = "set_tab_order", description = "Set tab order for form controls.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" }, control_names = new { type = "array", items = new { type = "string" } } }, required = new string[] { "form_name", "control_names" } } },
+                new { name = "get_page_setup", description = "Get page setup properties for a form or report.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string", description = "form or report" }, object_name = new { type = "string" } }, required = new string[] { "object_type", "object_name" } } },
                 new { name = "export_form_to_text", description = "Export a form to text format", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" }, mode = new { type = "string", @enum = new[] { "json", "access_text" }, description = "Optional mode. Defaults to json." } }, required = new string[] { "form_name" } } },
                 new { name = "import_form_from_text", description = "Import a form from text format", inputSchema = new { type = "object", properties = new { form_data = new { type = "string" }, form_name = new { type = "string", description = "Optional form name override. Required for some access_text payloads." }, mode = new { type = "string", @enum = new[] { "json", "access_text" }, description = "Optional mode. Defaults to json." } }, required = new string[] { "form_data" } } },
                 new { name = "delete_form", description = "Delete a form from the database", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
@@ -471,6 +485,20 @@ class Program
             "get_report_controls" => HandleGetReportControls(accessService, toolArguments),
             "get_report_control_properties" => HandleGetReportControlProperties(accessService, toolArguments),
             "set_report_control_property" => HandleSetReportControlProperty(accessService, toolArguments),
+            "get_form_sections" => HandleGetFormSections(accessService, toolArguments),
+            "get_report_sections" => HandleGetReportSections(accessService, toolArguments),
+            "set_section_property" => HandleSetSectionProperty(accessService, toolArguments),
+            "create_control" => HandleCreateControl(accessService, toolArguments),
+            "create_report_control" => HandleCreateReportControl(accessService, toolArguments),
+            "delete_control" => HandleDeleteControl(accessService, toolArguments),
+            "delete_report_control" => HandleDeleteReportControl(accessService, toolArguments),
+            "get_form_properties" => HandleGetFormProperties(accessService, toolArguments),
+            "set_form_property" => HandleSetFormProperty(accessService, toolArguments),
+            "get_report_properties" => HandleGetReportProperties(accessService, toolArguments),
+            "set_report_property" => HandleSetReportProperty(accessService, toolArguments),
+            "get_tab_order" => HandleGetTabOrder(accessService, toolArguments),
+            "set_tab_order" => HandleSetTabOrder(accessService, toolArguments),
+            "get_page_setup" => HandleGetPageSetup(accessService, toolArguments),
             "export_form_to_text" => HandleExportFormToText(accessService, toolArguments),
             "import_form_from_text" => HandleImportFormFromText(accessService, toolArguments),
             "delete_form" => HandleDeleteForm(accessService, toolArguments),
@@ -3880,6 +3908,310 @@ class Program
         catch (Exception ex)
         {
             return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleGetFormSections(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var formNameError))
+                return formNameError;
+
+            var sections = accessService.GetFormSections(formName);
+            return new { success = true, sections = sections.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_form_sections", ex);
+        }
+    }
+
+    static object HandleGetReportSections(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "report_name", out var reportName, out var reportNameError))
+                return reportNameError;
+
+            var sections = accessService.GetReportSections(reportName);
+            return new { success = true, sections = sections.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_report_sections", ex);
+        }
+    }
+
+    static object HandleSetSectionProperty(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "object_type", out var objectType, out var objectTypeError))
+                return objectTypeError;
+            if (!TryGetRequiredString(arguments, "object_name", out var objectName, out var objectNameError))
+                return objectNameError;
+            if (!TryGetRequiredString(arguments, "section", out var section, out var sectionError))
+                return sectionError;
+            if (!TryGetRequiredString(arguments, "property_name", out var propertyName, out var propertyNameError))
+                return propertyNameError;
+            if (!TryGetRequiredString(arguments, "value", out var value, out var valueError))
+                return valueError;
+
+            accessService.SetSectionProperty(objectType, objectName, section, propertyName, value);
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_section_property", ex);
+        }
+    }
+
+    static object HandleCreateControl(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var formNameError))
+                return formNameError;
+            if (!TryGetRequiredString(arguments, "control_type", out var controlType, out var controlTypeError))
+                return controlTypeError;
+
+            _ = TryGetOptionalString(arguments, "control_name", out var controlName);
+            _ = TryGetOptionalString(arguments, "parent_control_name", out var parentControlName);
+            _ = TryGetOptionalString(arguments, "column_name", out var columnName);
+
+            if (!TryGetOptionalInt(arguments, "section", out var section, out var sectionError))
+                return sectionError;
+            if (!TryGetOptionalInt(arguments, "left", out var left, out var leftError))
+                return leftError;
+            if (!TryGetOptionalInt(arguments, "top", out var top, out var topError))
+                return topError;
+            if (!TryGetOptionalInt(arguments, "width", out var width, out var widthError))
+                return widthError;
+            if (!TryGetOptionalInt(arguments, "height", out var height, out var heightError))
+                return heightError;
+
+            var control = accessService.CreateControl(
+                formName,
+                controlType,
+                string.IsNullOrWhiteSpace(controlName) ? null : controlName,
+                section ?? 0,
+                string.IsNullOrWhiteSpace(parentControlName) ? null : parentControlName,
+                string.IsNullOrWhiteSpace(columnName) ? null : columnName,
+                left,
+                top,
+                width,
+                height);
+
+            return new { success = true, control };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("create_control", ex);
+        }
+    }
+
+    static object HandleCreateReportControl(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "report_name", out var reportName, out var reportNameError))
+                return reportNameError;
+            if (!TryGetRequiredString(arguments, "control_type", out var controlType, out var controlTypeError))
+                return controlTypeError;
+
+            _ = TryGetOptionalString(arguments, "control_name", out var controlName);
+            _ = TryGetOptionalString(arguments, "parent_control_name", out var parentControlName);
+            _ = TryGetOptionalString(arguments, "column_name", out var columnName);
+
+            if (!TryGetOptionalInt(arguments, "section", out var section, out var sectionError))
+                return sectionError;
+            if (!TryGetOptionalInt(arguments, "left", out var left, out var leftError))
+                return leftError;
+            if (!TryGetOptionalInt(arguments, "top", out var top, out var topError))
+                return topError;
+            if (!TryGetOptionalInt(arguments, "width", out var width, out var widthError))
+                return widthError;
+            if (!TryGetOptionalInt(arguments, "height", out var height, out var heightError))
+                return heightError;
+
+            var control = accessService.CreateReportControl(
+                reportName,
+                controlType,
+                string.IsNullOrWhiteSpace(controlName) ? null : controlName,
+                section ?? 0,
+                string.IsNullOrWhiteSpace(parentControlName) ? null : parentControlName,
+                string.IsNullOrWhiteSpace(columnName) ? null : columnName,
+                left,
+                top,
+                width,
+                height);
+
+            return new { success = true, control };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("create_report_control", ex);
+        }
+    }
+
+    static object HandleDeleteControl(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var formNameError))
+                return formNameError;
+            if (!TryGetRequiredString(arguments, "control_name", out var controlName, out var controlNameError))
+                return controlNameError;
+
+            accessService.DeleteControl(formName, controlName);
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("delete_control", ex);
+        }
+    }
+
+    static object HandleDeleteReportControl(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "report_name", out var reportName, out var reportNameError))
+                return reportNameError;
+            if (!TryGetRequiredString(arguments, "control_name", out var controlName, out var controlNameError))
+                return controlNameError;
+
+            accessService.DeleteReportControl(reportName, controlName);
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("delete_report_control", ex);
+        }
+    }
+
+    static object HandleGetFormProperties(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var formNameError))
+                return formNameError;
+
+            var properties = accessService.GetFormProperties(formName);
+            return new { success = true, properties };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_form_properties", ex);
+        }
+    }
+
+    static object HandleSetFormProperty(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var formNameError))
+                return formNameError;
+            if (!TryGetRequiredString(arguments, "property_name", out var propertyName, out var propertyNameError))
+                return propertyNameError;
+            if (!TryGetRequiredString(arguments, "value", out var value, out var valueError))
+                return valueError;
+
+            accessService.SetFormProperty(formName, propertyName, value);
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_form_property", ex);
+        }
+    }
+
+    static object HandleGetReportProperties(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "report_name", out var reportName, out var reportNameError))
+                return reportNameError;
+
+            var properties = accessService.GetReportProperties(reportName);
+            return new { success = true, properties };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_report_properties", ex);
+        }
+    }
+
+    static object HandleSetReportProperty(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "report_name", out var reportName, out var reportNameError))
+                return reportNameError;
+            if (!TryGetRequiredString(arguments, "property_name", out var propertyName, out var propertyNameError))
+                return propertyNameError;
+            if (!TryGetRequiredString(arguments, "value", out var value, out var valueError))
+                return valueError;
+
+            accessService.SetReportProperty(reportName, propertyName, value);
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_report_property", ex);
+        }
+    }
+
+    static object HandleGetTabOrder(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var formNameError))
+                return formNameError;
+
+            var tabOrder = accessService.GetTabOrder(formName);
+            return new { success = true, tab_order = tabOrder.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_tab_order", ex);
+        }
+    }
+
+    static object HandleSetTabOrder(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var formNameError))
+                return formNameError;
+            if (!TryGetRequiredStringArray(arguments, "control_names", out var controlNames, out var controlNamesError))
+                return controlNamesError;
+
+            accessService.SetTabOrder(formName, controlNames);
+            return new { success = true, form_name = formName, control_count = controlNames.Count };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_tab_order", ex);
+        }
+    }
+
+    static object HandleGetPageSetup(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "object_type", out var objectType, out var objectTypeError))
+                return objectTypeError;
+            if (!TryGetRequiredString(arguments, "object_name", out var objectName, out var objectNameError))
+                return objectNameError;
+
+            var pageSetup = accessService.GetPageSetup(objectType, objectName);
+            return new { success = true, page_setup = pageSetup };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_page_setup", ex);
         }
     }
 

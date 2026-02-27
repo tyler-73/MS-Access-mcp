@@ -4028,6 +4028,522 @@ namespace MS.Access.MCP.Interop
             releaseOleDb: true);
         }
 
+        public List<SectionInfo> GetFormSections(string formName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(formName)) throw new ArgumentException("Form name is required", nameof(formName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var openedHere = false;
+                var form = EnsureFormOpen(accessApp, formName, true, out openedHere);
+                try
+                {
+                    return GetSectionObjects((object)form)
+                        .Select((section, index) => BuildSectionInfo(section, index, isReport: false))
+                        .OrderBy(s => s.Index)
+                        .ToList();
+                }
+                finally
+                {
+                    if (openedHere)
+                        CloseFormInternal(accessApp, formName, saveChanges: false);
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public List<SectionInfo> GetReportSections(string reportName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(reportName)) throw new ArgumentException("Report name is required", nameof(reportName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var openedHere = false;
+                var report = EnsureReportOpen(accessApp, reportName, true, out openedHere);
+                try
+                {
+                    return GetSectionObjects((object)report)
+                        .Select((section, index) => BuildSectionInfo(section, index, isReport: true))
+                        .OrderBy(s => s.Index)
+                        .ToList();
+                }
+                finally
+                {
+                    if (openedHere)
+                        CloseReportInternal(accessApp, reportName, saveChanges: false);
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void SetSectionProperty(string objectType, string objectName, string section, string propertyName, object value)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(objectType)) throw new ArgumentException("Object type is required.", nameof(objectType));
+            if (string.IsNullOrWhiteSpace(objectName)) throw new ArgumentException("Object name is required.", nameof(objectName));
+            if (string.IsNullOrWhiteSpace(section)) throw new ArgumentException("Section is required.", nameof(section));
+            if (string.IsNullOrWhiteSpace(propertyName)) throw new ArgumentException("Property name is required.", nameof(propertyName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var normalizedType = NormalizeEnumToken(objectType);
+                var isReport = normalizedType == "report" || normalizedType == "acreport";
+                bool openedHere;
+                object targetObject;
+                if (isReport)
+                {
+                    targetObject = EnsureReportOpen(accessApp, objectName, true, out openedHere);
+                }
+                else if (normalizedType == "form" || normalizedType == "acform")
+                {
+                    targetObject = EnsureFormOpen(accessApp, objectName, true, out openedHere);
+                }
+                else
+                {
+                    throw new ArgumentException("objectType must be form or report.", nameof(objectType));
+                }
+
+                try
+                {
+                    var targetSection = FindSection(targetObject, section)
+                        ?? throw new InvalidOperationException($"Section '{section}' was not found on {objectType} '{objectName}'.");
+
+                    var existingValue = TryGetDynamicProperty(targetSection, propertyName);
+                    var convertedValue = ConvertValueForProperty(value, existingValue);
+                    SetDynamicProperty(targetSection, propertyName, convertedValue);
+                    accessApp.DoCmd.Save(isReport ? 3 : 2, objectName);
+                }
+                finally
+                {
+                    if (openedHere)
+                    {
+                        if (isReport)
+                            CloseReportInternal(accessApp, objectName, saveChanges: false);
+                        else
+                            CloseFormInternal(accessApp, objectName, saveChanges: false);
+                    }
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public ControlInfo CreateControl(
+            string formName,
+            string controlType,
+            string? controlName = null,
+            int section = 0,
+            string? parentControlName = null,
+            string? columnName = null,
+            int? left = null,
+            int? top = null,
+            int? width = null,
+            int? height = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(formName)) throw new ArgumentException("Form name is required.", nameof(formName));
+            if (string.IsNullOrWhiteSpace(controlType)) throw new ArgumentException("Control type is required.", nameof(controlType));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var openedHere = false;
+                EnsureFormOpen(accessApp, formName, true, out openedHere);
+                try
+                {
+                    var created = accessApp.CreateControl(
+                        formName,
+                        MapControlTypeToConstant(controlType),
+                        section,
+                        string.IsNullOrWhiteSpace(parentControlName) ? Type.Missing : parentControlName.Trim(),
+                        string.IsNullOrWhiteSpace(columnName) ? Type.Missing : columnName.Trim(),
+                        left.HasValue ? left.Value : 1000,
+                        top.HasValue ? top.Value : 1000,
+                        width.HasValue ? width.Value : 1500,
+                        height.HasValue ? height.Value : 300);
+
+                    if (!string.IsNullOrWhiteSpace(controlName))
+                        SetDynamicProperty(created, "Name", controlName.Trim());
+
+                    accessApp.DoCmd.Save(2, formName);
+                    return BuildControlInfo((object)created);
+                }
+                finally
+                {
+                    if (openedHere)
+                        CloseFormInternal(accessApp, formName, saveChanges: false);
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public ControlInfo CreateReportControl(
+            string reportName,
+            string controlType,
+            string? controlName = null,
+            int section = 0,
+            string? parentControlName = null,
+            string? columnName = null,
+            int? left = null,
+            int? top = null,
+            int? width = null,
+            int? height = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(reportName)) throw new ArgumentException("Report name is required.", nameof(reportName));
+            if (string.IsNullOrWhiteSpace(controlType)) throw new ArgumentException("Control type is required.", nameof(controlType));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var openedHere = false;
+                EnsureReportOpen(accessApp, reportName, true, out openedHere);
+                try
+                {
+                    var created = accessApp.CreateReportControl(
+                        reportName,
+                        MapControlTypeToConstant(controlType),
+                        section,
+                        string.IsNullOrWhiteSpace(parentControlName) ? Type.Missing : parentControlName.Trim(),
+                        string.IsNullOrWhiteSpace(columnName) ? Type.Missing : columnName.Trim(),
+                        left.HasValue ? left.Value : 1000,
+                        top.HasValue ? top.Value : 1000,
+                        width.HasValue ? width.Value : 1500,
+                        height.HasValue ? height.Value : 300);
+
+                    if (!string.IsNullOrWhiteSpace(controlName))
+                        SetDynamicProperty(created, "Name", controlName.Trim());
+
+                    accessApp.DoCmd.Save(3, reportName);
+                    return BuildControlInfo((object)created);
+                }
+                finally
+                {
+                    if (openedHere)
+                        CloseReportInternal(accessApp, reportName, saveChanges: false);
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void DeleteControl(string formName, string controlName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(formName)) throw new ArgumentException("Form name is required.", nameof(formName));
+            if (string.IsNullOrWhiteSpace(controlName)) throw new ArgumentException("Control name is required.", nameof(controlName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var openedHere = false;
+                EnsureFormOpen(accessApp, formName, true, out openedHere);
+                try
+                {
+                    _ = InvokeDynamicMethod(accessApp, "DeleteControl", formName, controlName.Trim());
+                    accessApp.DoCmd.Save(2, formName);
+                }
+                finally
+                {
+                    if (openedHere)
+                        CloseFormInternal(accessApp, formName, saveChanges: false);
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void DeleteReportControl(string reportName, string controlName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(reportName)) throw new ArgumentException("Report name is required.", nameof(reportName));
+            if (string.IsNullOrWhiteSpace(controlName)) throw new ArgumentException("Control name is required.", nameof(controlName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var openedHere = false;
+                EnsureReportOpen(accessApp, reportName, true, out openedHere);
+                try
+                {
+                    _ = InvokeDynamicMethod(accessApp, "DeleteReportControl", reportName, controlName.Trim());
+                    accessApp.DoCmd.Save(3, reportName);
+                }
+                finally
+                {
+                    if (openedHere)
+                        CloseReportInternal(accessApp, reportName, saveChanges: false);
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public FormDesignPropertiesInfo GetFormProperties(string formName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(formName)) throw new ArgumentException("Form name is required.", nameof(formName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var openedHere = false;
+                var form = EnsureFormOpen(accessApp, formName, true, out openedHere);
+                try
+                {
+                    return new FormDesignPropertiesInfo
+                    {
+                        FormName = formName,
+                        RecordSource = SafeToString(TryGetDynamicProperty(form, "RecordSource")),
+                        DefaultView = ToNullableInt(TryGetDynamicProperty(form, "DefaultView")),
+                        AllowEdits = ToNullableBool(TryGetDynamicProperty(form, "AllowEdits")),
+                        AllowAdditions = ToNullableBool(TryGetDynamicProperty(form, "AllowAdditions")),
+                        AllowDeletions = ToNullableBool(TryGetDynamicProperty(form, "AllowDeletions")),
+                        DataEntry = ToNullableBool(TryGetDynamicProperty(form, "DataEntry")),
+                        NavigationButtons = ToNullableBool(TryGetDynamicProperty(form, "NavigationButtons")),
+                        DividingLines = ToNullableBool(TryGetDynamicProperty(form, "DividingLines")),
+                        ScrollBars = ToNullableInt(TryGetDynamicProperty(form, "ScrollBars")),
+                        Caption = SafeToString(TryGetDynamicProperty(form, "Caption")),
+                        Modal = ToNullableBool(TryGetDynamicProperty(form, "Modal")),
+                        PopUp = ToNullableBool(TryGetDynamicProperty(form, "PopUp"))
+                    };
+                }
+                finally
+                {
+                    if (openedHere)
+                        CloseFormInternal(accessApp, formName, saveChanges: false);
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void SetFormProperty(string formName, string propertyName, object value)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(formName)) throw new ArgumentException("Form name is required.", nameof(formName));
+            if (string.IsNullOrWhiteSpace(propertyName)) throw new ArgumentException("Property name is required.", nameof(propertyName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var openedHere = false;
+                var form = EnsureFormOpen(accessApp, formName, true, out openedHere);
+                try
+                {
+                    var existingValue = TryGetDynamicProperty(form, propertyName);
+                    var convertedValue = ConvertValueForProperty(value, existingValue);
+                    SetDynamicProperty(form, propertyName, convertedValue);
+                    accessApp.DoCmd.Save(2, formName);
+                }
+                finally
+                {
+                    if (openedHere)
+                        CloseFormInternal(accessApp, formName, saveChanges: false);
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public ReportDesignPropertiesInfo GetReportProperties(string reportName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(reportName)) throw new ArgumentException("Report name is required.", nameof(reportName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var openedHere = false;
+                var report = EnsureReportOpen(accessApp, reportName, true, out openedHere);
+                try
+                {
+                    return new ReportDesignPropertiesInfo
+                    {
+                        ReportName = reportName,
+                        RecordSource = SafeToString(TryGetDynamicProperty(report, "RecordSource")),
+                        DefaultView = ToNullableInt(TryGetDynamicProperty(report, "DefaultView")),
+                        Caption = SafeToString(TryGetDynamicProperty(report, "Caption")),
+                        ForceNewPage = ToNullableInt(TryGetDynamicProperty(report, "ForceNewPage")),
+                        KeepTogether = ToNullableInt(TryGetDynamicProperty(report, "KeepTogether")),
+                        PopUp = ToNullableBool(TryGetDynamicProperty(report, "PopUp")),
+                        Modal = ToNullableBool(TryGetDynamicProperty(report, "Modal")),
+                        ColumnCount = ToNullableInt(TryGetDynamicProperty(report, "ColumnCount")),
+                        ColumnSpacing = ToNullableInt(TryGetDynamicProperty(report, "ColumnSpacing"))
+                    };
+                }
+                finally
+                {
+                    if (openedHere)
+                        CloseReportInternal(accessApp, reportName, saveChanges: false);
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void SetReportProperty(string reportName, string propertyName, object value)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(reportName)) throw new ArgumentException("Report name is required.", nameof(reportName));
+            if (string.IsNullOrWhiteSpace(propertyName)) throw new ArgumentException("Property name is required.", nameof(propertyName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var openedHere = false;
+                var report = EnsureReportOpen(accessApp, reportName, true, out openedHere);
+                try
+                {
+                    var existingValue = TryGetDynamicProperty(report, propertyName);
+                    var convertedValue = ConvertValueForProperty(value, existingValue);
+                    SetDynamicProperty(report, propertyName, convertedValue);
+                    accessApp.DoCmd.Save(3, reportName);
+                }
+                finally
+                {
+                    if (openedHere)
+                        CloseReportInternal(accessApp, reportName, saveChanges: false);
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public List<TabOrderEntryInfo> GetTabOrder(string formName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(formName)) throw new ArgumentException("Form name is required.", nameof(formName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var openedHere = false;
+                var form = EnsureFormOpen(accessApp, formName, true, out openedHere);
+                try
+                {
+                    return GetControlObjects((object)form)
+                        .Select(control => new TabOrderEntryInfo
+                        {
+                            ControlName = SafeToString(TryGetDynamicProperty(control, "Name")) ?? string.Empty,
+                            TabIndex = ToInt32(TryGetDynamicProperty(control, "TabIndex")),
+                            TabStop = ToBool(TryGetDynamicProperty(control, "TabStop"), true)
+                        })
+                        .Where(entry => !string.IsNullOrWhiteSpace(entry.ControlName))
+                        .OrderBy(entry => entry.TabIndex)
+                        .ThenBy(entry => entry.ControlName, StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                }
+                finally
+                {
+                    if (openedHere)
+                        CloseFormInternal(accessApp, formName, saveChanges: false);
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void SetTabOrder(string formName, IEnumerable<string> controlNames)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(formName)) throw new ArgumentException("Form name is required.", nameof(formName));
+
+            var normalizedControlNames = controlNames
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Select(name => name.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (normalizedControlNames.Count == 0)
+                throw new ArgumentException("At least one control name is required.", nameof(controlNames));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var openedHere = false;
+                var form = EnsureFormOpen(accessApp, formName, true, out openedHere);
+                try
+                {
+                    var controlsByName = GetControlObjects((object)form)
+                        .Select(control => new
+                        {
+                            Name = SafeToString(TryGetDynamicProperty(control, "Name")),
+                            Control = control
+                        })
+                        .Where(entry => !string.IsNullOrWhiteSpace(entry.Name))
+                        .ToDictionary(entry => entry.Name!, entry => entry.Control, StringComparer.OrdinalIgnoreCase);
+
+                    for (var i = 0; i < normalizedControlNames.Count; i++)
+                    {
+                        if (!controlsByName.TryGetValue(normalizedControlNames[i], out var control))
+                            throw new InvalidOperationException($"Control '{normalizedControlNames[i]}' was not found on form '{formName}'.");
+
+                        SetDynamicProperty(control, "TabIndex", i);
+                    }
+
+                    accessApp.DoCmd.Save(2, formName);
+                }
+                finally
+                {
+                    if (openedHere)
+                        CloseFormInternal(accessApp, formName, saveChanges: false);
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public PageSetupInfo GetPageSetup(string objectType, string objectName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(objectType)) throw new ArgumentException("Object type is required.", nameof(objectType));
+            if (string.IsNullOrWhiteSpace(objectName)) throw new ArgumentException("Object name is required.", nameof(objectName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var normalizedType = NormalizeEnumToken(objectType);
+                var isReport = normalizedType == "report" || normalizedType == "acreport";
+                bool openedHere;
+                object targetObject;
+                if (isReport)
+                {
+                    targetObject = EnsureReportOpen(accessApp, objectName, true, out openedHere);
+                }
+                else if (normalizedType == "form" || normalizedType == "acform")
+                {
+                    targetObject = EnsureFormOpen(accessApp, objectName, true, out openedHere);
+                }
+                else
+                {
+                    throw new ArgumentException("objectType must be form or report.", nameof(objectType));
+                }
+
+                try
+                {
+                    var printer = TryGetDynamicProperty(targetObject, "Printer");
+                    return new PageSetupInfo
+                    {
+                        ObjectType = isReport ? "report" : "form",
+                        ObjectName = objectName,
+                        TopMargin = ToNullableInt(TryGetDynamicProperty(printer ?? targetObject, "TopMargin")),
+                        BottomMargin = ToNullableInt(TryGetDynamicProperty(printer ?? targetObject, "BottomMargin")),
+                        LeftMargin = ToNullableInt(TryGetDynamicProperty(printer ?? targetObject, "LeftMargin")),
+                        RightMargin = ToNullableInt(TryGetDynamicProperty(printer ?? targetObject, "RightMargin")),
+                        Orientation = ToNullableInt(TryGetDynamicProperty(printer ?? targetObject, "Orientation")),
+                        PaperSize = ToNullableInt(TryGetDynamicProperty(printer ?? targetObject, "PaperSize")),
+                        DataOnly = ToNullableBool(TryGetDynamicProperty(printer ?? targetObject, "DataOnly"))
+                    };
+                }
+                finally
+                {
+                    if (openedHere)
+                    {
+                        if (isReport)
+                            CloseReportInternal(accessApp, objectName, saveChanges: false);
+                        else
+                            CloseFormInternal(accessApp, objectName, saveChanges: false);
+                    }
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
         public List<VBAReferenceInfo> GetVbaReferences(string? projectName = null)
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
@@ -7114,6 +7630,106 @@ namespace MS.Access.MCP.Interop
             };
         }
 
+        private static SectionInfo BuildSectionInfo(object section, int index, bool isReport)
+        {
+            var name = SafeToString(TryGetDynamicProperty(section, "Name"));
+            var typeCode = ToNullableInt(TryGetDynamicProperty(section, "Section"));
+
+            return new SectionInfo
+            {
+                Name = string.IsNullOrWhiteSpace(name) ? BuildSectionName(index, typeCode, isReport) : name!,
+                Index = typeCode ?? index,
+                Height = ToInt32(TryGetDynamicProperty(section, "Height")),
+                Visible = ToBool(TryGetDynamicProperty(section, "Visible"), true),
+                BackColor = ToNullableInt(TryGetDynamicProperty(section, "BackColor")),
+                KeepTogether = ToNullableInt(TryGetDynamicProperty(section, "KeepTogether"))
+            };
+        }
+
+        private static string BuildSectionName(int index, int? typeCode, bool isReport)
+        {
+            var effective = typeCode ?? index;
+            return (effective, isReport) switch
+            {
+                (0, _) => "Detail",
+                (1, false) => "FormHeader",
+                (2, false) => "FormFooter",
+                (1, true) => "ReportHeader",
+                (2, true) => "ReportFooter",
+                (3, _) => "PageHeader",
+                (4, _) => "PageFooter",
+                _ => $"Section{effective}"
+            };
+        }
+
+        private static List<object> GetSectionObjects(object formOrReport)
+        {
+            var sections = TryGetDynamicProperty(formOrReport, "Sections") ?? InvokeDynamicMethod(formOrReport, "Sections");
+            if (sections == null)
+                throw new InvalidOperationException("Sections collection is not available for this Access object.");
+
+            var sectionObjects = new List<object>();
+            foreach (var section in (dynamic)sections)
+            {
+                sectionObjects.Add(section);
+            }
+
+            return sectionObjects;
+        }
+
+        private static object? FindSection(object formOrReport, string sectionIdentifier)
+        {
+            var sections = GetSectionObjects(formOrReport);
+            if (sections.Count == 0)
+                return null;
+
+            if (int.TryParse(sectionIdentifier.Trim(), out var parsedIndex))
+            {
+                return sections.FirstOrDefault(section =>
+                {
+                    var typeCode = ToNullableInt(TryGetDynamicProperty(section, "Section"));
+                    if (typeCode.HasValue)
+                        return typeCode.Value == parsedIndex;
+
+                    var index = ToNullableInt(TryGetDynamicProperty(section, "Index"));
+                    return index.HasValue && index.Value == parsedIndex;
+                });
+            }
+
+            var normalizedIdentifier = NormalizeEnumToken(sectionIdentifier);
+            var fallbackIndex = ParseSectionAlias(normalizedIdentifier);
+
+            return sections.FirstOrDefault(section =>
+            {
+                var name = SafeToString(TryGetDynamicProperty(section, "Name"));
+                if (!string.IsNullOrWhiteSpace(name) && NormalizeEnumToken(name) == normalizedIdentifier)
+                    return true;
+
+                if (!fallbackIndex.HasValue)
+                    return false;
+
+                var typeCode = ToNullableInt(TryGetDynamicProperty(section, "Section"));
+                if (typeCode.HasValue)
+                    return typeCode.Value == fallbackIndex.Value;
+
+                var index = ToNullableInt(TryGetDynamicProperty(section, "Index"));
+                return index.HasValue && index.Value == fallbackIndex.Value;
+            });
+        }
+
+        private static int? ParseSectionAlias(string normalizedIdentifier)
+        {
+            return normalizedIdentifier switch
+            {
+                "detail" or "acdetail" => 0,
+                "header" or "formheader" or "reportheader" or "acheader" => 1,
+                "footer" or "formfooter" or "reportfooter" or "acfooter" => 2,
+                "pageheader" or "acpageheader" => 3,
+                "pagefooter" or "acpagefooter" => 4,
+                _ => null
+            };
+        }
+
         private static List<object> GetControlObjects(object formOrReport)
         {
             var controlsCollection = GetControlsCollection(formOrReport)
@@ -8162,6 +8778,67 @@ namespace MS.Access.MCP.Interop
         public int FontSize { get; set; }
         public bool FontBold { get; set; }
         public bool FontItalic { get; set; }
+    }
+
+    public class SectionInfo
+    {
+        public string Name { get; set; } = "";
+        public int Index { get; set; }
+        public int Height { get; set; }
+        public bool Visible { get; set; }
+        public int? BackColor { get; set; }
+        public int? KeepTogether { get; set; }
+    }
+
+    public class FormDesignPropertiesInfo
+    {
+        public string FormName { get; set; } = "";
+        public string? RecordSource { get; set; }
+        public int? DefaultView { get; set; }
+        public bool? AllowEdits { get; set; }
+        public bool? AllowAdditions { get; set; }
+        public bool? AllowDeletions { get; set; }
+        public bool? DataEntry { get; set; }
+        public bool? NavigationButtons { get; set; }
+        public bool? DividingLines { get; set; }
+        public int? ScrollBars { get; set; }
+        public string? Caption { get; set; }
+        public bool? Modal { get; set; }
+        public bool? PopUp { get; set; }
+    }
+
+    public class ReportDesignPropertiesInfo
+    {
+        public string ReportName { get; set; } = "";
+        public string? RecordSource { get; set; }
+        public int? DefaultView { get; set; }
+        public string? Caption { get; set; }
+        public int? ForceNewPage { get; set; }
+        public int? KeepTogether { get; set; }
+        public bool? PopUp { get; set; }
+        public bool? Modal { get; set; }
+        public int? ColumnCount { get; set; }
+        public int? ColumnSpacing { get; set; }
+    }
+
+    public class TabOrderEntryInfo
+    {
+        public string ControlName { get; set; } = "";
+        public int TabIndex { get; set; }
+        public bool TabStop { get; set; }
+    }
+
+    public class PageSetupInfo
+    {
+        public string ObjectType { get; set; } = "";
+        public string ObjectName { get; set; } = "";
+        public int? TopMargin { get; set; }
+        public int? BottomMargin { get; set; }
+        public int? LeftMargin { get; set; }
+        public int? RightMargin { get; set; }
+        public int? Orientation { get; set; }
+        public int? PaperSize { get; set; }
+        public bool? DataOnly { get; set; }
     }
 
     public class FormExportData
