@@ -168,6 +168,7 @@ class Program
                 new { name = "close_object", description = "Close an Access object using DoCmd.Close.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string", description = "table, query, form, report, macro, module, or Access enum integer value as string" }, object_name = new { type = "string" }, save = new { type = "string", description = "prompt, yes, no, or Access enum integer value as string" } } } },
                 new { name = "transfer_database", description = "Transfer database objects using DoCmd.TransferDatabase.", inputSchema = new { type = "object", properties = new { transfer_type = new { type = "string", description = "import, export, link, or Access enum integer value as string" }, database_type = new { type = "string", description = "Database type such as Microsoft Access" }, database_name = new { type = "string", description = "External database path or DSN" }, object_type = new { type = "string", description = "table, query, form, report, macro, module, or Access enum integer value as string" }, source = new { type = "string", description = "Source object name" }, destination = new { type = "string", description = "Destination object name when importing/exporting" }, structure_only = new { type = "boolean" }, store_login = new { type = "boolean" } }, required = new string[] { "transfer_type", "database_type", "database_name", "object_type", "source" } } },
                 new { name = "run_command", description = "Run an Access command using DoCmd.RunCommand.", inputSchema = new { type = "object", properties = new { command = new { type = "string", description = "acCommand integer value as string (or supported acCmd constant name)" } }, required = new string[] { "command" } } },
+                new { name = "sys_cmd", description = "Execute Access SysCmd for status/progress operations.", inputSchema = new { type = "object", properties = new { command = new { type = "string" }, arg1 = new { }, arg2 = new { }, arg3 = new { } }, required = new string[] { "command" } } },
                 new { name = "goto_page", description = "Navigate to a form page using DoCmd.GoToPage.", inputSchema = new { type = "object", properties = new { page_number = new { type = "string" }, right = new { type = "string" }, down = new { type = "string" } }, required = new string[] { "page_number" } } },
                 new { name = "goto_control", description = "Move focus to a control using DoCmd.GoToControl.", inputSchema = new { type = "object", properties = new { control_name = new { type = "string" } }, required = new string[] { "control_name" } } },
                 new { name = "move_size", description = "Move or resize the active window using DoCmd.MoveSize.", inputSchema = new { type = "object", properties = new { right = new { type = "integer" }, down = new { type = "integer" }, width = new { type = "integer" }, height = new { type = "integer" } } } },
@@ -213,6 +214,10 @@ class Program
                 new { name = "get_current_project_data", description = "Get CurrentProject and CurrentData properties.", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_application_option", description = "Get an Access application option value using Application.GetOption.", inputSchema = new { type = "object", properties = new { option_name = new { type = "string" } }, required = new string[] { "option_name" } } },
                 new { name = "set_application_option", description = "Set an Access application option value using Application.SetOption.", inputSchema = new { type = "object", properties = new { option_name = new { type = "string" }, value = new { type = "string" } }, required = new string[] { "option_name", "value" } } },
+                new { name = "get_temp_vars", description = "List all Access TempVars.", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "set_temp_var", description = "Set or create an Access TempVar.", inputSchema = new { type = "object", properties = new { name = new { type = "string" }, value = new { } }, required = new string[] { "name" } } },
+                new { name = "remove_temp_var", description = "Remove an Access TempVar.", inputSchema = new { type = "object", properties = new { name = new { type = "string" } }, required = new string[] { "name" } } },
+                new { name = "clear_temp_vars", description = "Remove all Access TempVars.", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "export_data_macro_axl", description = "Export table data macro definition as AXL.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
                 new { name = "import_data_macro_axl", description = "Import table data macro definition from AXL.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, axl_xml = new { type = "string" } }, required = new string[] { "table_name", "axl_xml" } } },
                 new { name = "run_data_macro", description = "Run a data macro by name.", inputSchema = new { type = "object", properties = new { macro_name = new { type = "string" } }, required = new string[] { "macro_name" } } },
@@ -226,6 +231,7 @@ class Program
                 new { name = "encrypt_database", description = "Compact/encrypt the current database with a password.", inputSchema = new { type = "object", properties = new { password = new { type = "string" } } } },
                 new { name = "get_navigation_groups", description = "List Access navigation pane groups.", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "set_display_categories", description = "Show or hide navigation pane display categories.", inputSchema = new { type = "object", properties = new { show_categories = new { type = "boolean" } } } },
+                new { name = "refresh_database_window", description = "Refresh the Access navigation/database window.", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "create_navigation_group", description = "Create a navigation pane group.", inputSchema = new { type = "object", properties = new { group_name = new { type = "string" } }, required = new string[] { "group_name" } } },
                 new { name = "add_navigation_group_object", description = "Add an object to a navigation pane group.", inputSchema = new { type = "object", properties = new { group_name = new { type = "string" }, object_name = new { type = "string" }, object_type = new { type = "string" } }, required = new string[] { "group_name", "object_name" } } },
                 new { name = "delete_navigation_group", description = "Delete a navigation pane group.", inputSchema = new { type = "object", properties = new { group_name = new { type = "string" } }, required = new string[] { "group_name" } } },
@@ -298,6 +304,10 @@ class Program
                 new { name = "get_modules", description = "Get list of all modules in the database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "open_form", description = "Open a form in Access", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
                 new { name = "close_form", description = "Close a form in Access", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
+                new { name = "get_form_record_count", description = "Get record count from an open form.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
+                new { name = "get_form_current_record", description = "Get current record data from an open form.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
+                new { name = "set_form_filter", description = "Set Filter and FilterOn on a form at runtime.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" }, filter = new { type = "string" }, filter_on = new { type = "boolean" } }, required = new string[] { "form_name" } } },
+                new { name = "get_open_objects", description = "List currently open Access objects.", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "open_report", description = "Open a report in Access", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" } }, required = new string[] { "report_name" } } },
                 new { name = "close_report", description = "Close a report in Access", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" } }, required = new string[] { "report_name" } } },
                 new { name = "run_macro", description = "Run an Access macro", inputSchema = new { type = "object", properties = new { macro_name = new { type = "string" } }, required = new string[] { "macro_name" } } },
@@ -421,6 +431,7 @@ class Program
             "close_object" => HandleCloseObject(accessService, toolArguments),
             "transfer_database" => HandleTransferDatabase(accessService, toolArguments),
             "run_command" => HandleRunCommand(accessService, toolArguments),
+            "sys_cmd" => HandleSysCmd(accessService, toolArguments),
             "goto_page" => HandleGoToPage(accessService, toolArguments),
             "goto_control" => HandleGoToControl(accessService, toolArguments),
             "move_size" => HandleMoveSize(accessService, toolArguments),
@@ -466,6 +477,10 @@ class Program
             "get_current_project_data" => HandleGetCurrentProjectData(accessService, toolArguments),
             "get_application_option" => HandleGetApplicationOption(accessService, toolArguments),
             "set_application_option" => HandleSetApplicationOption(accessService, toolArguments),
+            "get_temp_vars" => HandleGetTempVars(accessService, toolArguments),
+            "set_temp_var" => HandleSetTempVar(accessService, toolArguments),
+            "remove_temp_var" => HandleRemoveTempVar(accessService, toolArguments),
+            "clear_temp_vars" => HandleClearTempVars(accessService, toolArguments),
             "export_data_macro_axl" => HandleExportDataMacroAxl(accessService, toolArguments),
             "import_data_macro_axl" => HandleImportDataMacroAxl(accessService, toolArguments),
             "run_data_macro" => HandleRunDataMacro(accessService, toolArguments),
@@ -479,6 +494,7 @@ class Program
             "encrypt_database" => HandleEncryptDatabase(accessService, toolArguments),
             "get_navigation_groups" => HandleGetNavigationGroups(accessService, toolArguments),
             "set_display_categories" => HandleSetDisplayCategories(accessService, toolArguments),
+            "refresh_database_window" => HandleRefreshDatabaseWindow(accessService, toolArguments),
             "create_navigation_group" => HandleCreateNavigationGroup(accessService, toolArguments),
             "add_navigation_group_object" => HandleAddNavigationGroupObject(accessService, toolArguments),
             "delete_navigation_group" => HandleDeleteNavigationGroup(accessService, toolArguments),
@@ -551,6 +567,10 @@ class Program
             "get_modules" => HandleGetModules(accessService, toolArguments),
             "open_form" => HandleOpenForm(accessService, toolArguments),
             "close_form" => HandleCloseForm(accessService, toolArguments),
+            "get_form_record_count" => HandleGetFormRecordCount(accessService, toolArguments),
+            "get_form_current_record" => HandleGetFormCurrentRecord(accessService, toolArguments),
+            "set_form_filter" => HandleSetFormFilter(accessService, toolArguments),
+            "get_open_objects" => HandleGetOpenObjects(accessService, toolArguments),
             "open_report" => HandleOpenReport(accessService, toolArguments),
             "close_report" => HandleCloseReport(accessService, toolArguments),
             "run_macro" => HandleRunMacro(accessService, toolArguments),
@@ -1490,6 +1510,28 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("run_command", ex);
+        }
+    }
+
+    static object HandleSysCmd(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "command", out var command, out var commandError))
+                return commandError;
+            if (!TryGetOptionalPrimitiveValue(arguments, "arg1", out var arg1, out var arg1Error))
+                return arg1Error;
+            if (!TryGetOptionalPrimitiveValue(arguments, "arg2", out var arg2, out var arg2Error))
+                return arg2Error;
+            if (!TryGetOptionalPrimitiveValue(arguments, "arg3", out var arg3, out var arg3Error))
+                return arg3Error;
+
+            var result = accessService.SysCmd(command, arg1, arg2, arg3);
+            return new { success = true, result = result };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("sys_cmd", ex);
         }
     }
 
@@ -2451,6 +2493,66 @@ class Program
         }
     }
 
+    static object HandleGetTempVars(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var tempVars = accessService.GetTempVars();
+            return new { success = true, temp_vars = tempVars.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_temp_vars", ex);
+        }
+    }
+
+    static object HandleSetTempVar(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "name", out var name, out var nameError))
+                return nameError;
+            if (!TryGetOptionalPrimitiveValue(arguments, "value", out var value, out var valueError))
+                return valueError;
+
+            accessService.SetTempVar(name, value);
+            return new { success = true, name = name };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_temp_var", ex);
+        }
+    }
+
+    static object HandleRemoveTempVar(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "name", out var name, out var nameError))
+                return nameError;
+
+            accessService.RemoveTempVar(name);
+            return new { success = true, name = name };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("remove_temp_var", ex);
+        }
+    }
+
+    static object HandleClearTempVars(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            accessService.ClearTempVars();
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("clear_temp_vars", ex);
+        }
+    }
+
     static object HandleExportDataMacroAxl(AccessInteropService accessService, JsonElement arguments)
     {
         try
@@ -2641,6 +2743,19 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("set_display_categories", ex);
+        }
+    }
+
+    static object HandleRefreshDatabaseWindow(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            accessService.RefreshDatabaseWindow();
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("refresh_database_window", ex);
         }
     }
 
@@ -4157,6 +4272,75 @@ class Program
         catch (Exception ex)
         {
             return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleGetFormRecordCount(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var formNameError))
+                return formNameError;
+
+            var recordCount = accessService.GetFormRecordCount(formName);
+            return new { success = true, form_name = formName, record_count = recordCount };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_form_record_count", ex);
+        }
+    }
+
+    static object HandleGetFormCurrentRecord(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var formNameError))
+                return formNameError;
+
+            var record = accessService.GetFormCurrentRecord(formName);
+            return new { success = true, record = record };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_form_current_record", ex);
+        }
+    }
+
+    static object HandleSetFormFilter(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var formNameError))
+                return formNameError;
+
+            _ = TryGetOptionalString(arguments, "filter", out var filter);
+            if (!TryGetOptionalBoolNullable(arguments, "filter_on", out var filterOn, out var filterOnError))
+                return filterOnError;
+
+            accessService.SetFormFilter(
+                formName,
+                string.IsNullOrWhiteSpace(filter) ? null : filter,
+                filterOn);
+
+            return new { success = true, form_name = formName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_form_filter", ex);
+        }
+    }
+
+    static object HandleGetOpenObjects(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var openObjects = accessService.GetOpenObjects();
+            return new { success = true, open_objects = openObjects.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_open_objects", ex);
         }
     }
 
@@ -6001,6 +6185,46 @@ class Program
 
         error = new { success = true };
         return true;
+    }
+
+    static bool TryGetOptionalPrimitiveValue(JsonElement arguments, string propertyName, out object? value, out object error)
+    {
+        value = null;
+        if (!arguments.TryGetProperty(propertyName, out var element))
+        {
+            error = new { success = true };
+            return true;
+        }
+
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Undefined:
+            case JsonValueKind.Null:
+                value = null;
+                error = new { success = true };
+                return true;
+            case JsonValueKind.String:
+                value = element.GetString();
+                error = new { success = true };
+                return true;
+            case JsonValueKind.True:
+            case JsonValueKind.False:
+                value = element.GetBoolean();
+                error = new { success = true };
+                return true;
+            case JsonValueKind.Number:
+                if (element.TryGetInt64(out var intValue))
+                    value = intValue;
+                else if (element.TryGetDouble(out var doubleValue))
+                    value = doubleValue;
+                else
+                    value = element.GetRawText();
+                error = new { success = true };
+                return true;
+            default:
+                error = new { success = false, error = $"{propertyName} must be a primitive JSON value when provided" };
+                return false;
+        }
     }
 
     static bool TryGetOptionalInt(JsonElement arguments, string propertyName, out int? value, out object error)

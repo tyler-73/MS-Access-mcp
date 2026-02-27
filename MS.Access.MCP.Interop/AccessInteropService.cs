@@ -2989,6 +2989,266 @@ namespace MS.Access.MCP.Interop
             releaseOleDb: false);
         }
 
+        public List<TempVarInfo> GetTempVars()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var tempVars = TryGetDynamicProperty(accessApp, "TempVars");
+                var results = new List<TempVarInfo>();
+                if (tempVars == null)
+                    return results;
+
+                foreach (var tempVar in tempVars)
+                {
+                    var name = SafeToString(TryGetDynamicProperty(tempVar, "Name"));
+                    if (string.IsNullOrWhiteSpace(name))
+                        continue;
+
+                    results.Add(new TempVarInfo
+                    {
+                        Name = name,
+                        Value = NormalizeValue(TryGetDynamicProperty(tempVar, "Value"))
+                    });
+                }
+
+                return results
+                    .OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void SetTempVar(string name, object? value)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required.", nameof(name));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var tempVars = TryGetDynamicProperty(accessApp, "TempVars")
+                    ?? throw new InvalidOperationException("TempVars collection is unavailable.");
+                var existing = FindTempVar(tempVars, name);
+                if (existing != null)
+                {
+                    SetDynamicProperty(existing, "Value", value ?? DBNull.Value);
+                    return;
+                }
+
+                _ = InvokeDynamicMethod(tempVars, "Add", name.Trim(), value ?? DBNull.Value);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void RemoveTempVar(string name)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required.", nameof(name));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var tempVars = TryGetDynamicProperty(accessApp, "TempVars")
+                    ?? throw new InvalidOperationException("TempVars collection is unavailable.");
+                _ = InvokeDynamicMethod(tempVars, "Remove", name.Trim());
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void ClearTempVars()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(accessApp =>
+            {
+                var tempVars = TryGetDynamicProperty(accessApp, "TempVars")
+                    ?? throw new InvalidOperationException("TempVars collection is unavailable.");
+                _ = InvokeDynamicMethod(tempVars, "RemoveAll");
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public List<OpenObjectInfo> GetOpenObjects()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var results = new List<OpenObjectInfo>();
+                var currentProject = TryGetDynamicProperty(accessApp, "CurrentProject");
+
+                AddOpenObjectsFromCollection(TryGetDynamicProperty(currentProject, "AllForms"), "form", results);
+                AddOpenObjectsFromCollection(TryGetDynamicProperty(currentProject, "AllReports"), "report", results);
+                AddOpenObjectsFromCollection(TryGetDynamicProperty(currentProject, "AllTables"), "table", results);
+                AddOpenObjectsFromCollection(TryGetDynamicProperty(currentProject, "AllQueries"), "query", results);
+                AddOpenObjectsFromCollection(TryGetDynamicProperty(currentProject, "AllModules"), "module", results);
+
+                return results
+                    .OrderBy(item => item.ObjectType, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(item => item.ObjectName, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public int GetFormRecordCount(string formName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(formName)) throw new ArgumentException("formName is required.", nameof(formName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var openedHere = false;
+                var form = EnsureFormOpen(accessApp, formName, false, out openedHere);
+                try
+                {
+                    var recordset = TryGetDynamicProperty(form, "RecordsetClone") ?? TryGetDynamicProperty(form, "Recordset");
+                    if (recordset == null)
+                        return 0;
+
+                    try
+                    {
+                        _ = InvokeDynamicMethod(recordset, "MoveLast");
+                    }
+                    catch
+                    {
+                        // Recordset may not support MoveLast.
+                    }
+
+                    return ToInt32(TryGetDynamicProperty(recordset, "RecordCount"));
+                }
+                finally
+                {
+                    if (openedHere)
+                        CloseFormInternal(accessApp, formName, saveChanges: false);
+                }
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public FormCurrentRecordInfo GetFormCurrentRecord(string formName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(formName)) throw new ArgumentException("formName is required.", nameof(formName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var openedHere = false;
+                var form = EnsureFormOpen(accessApp, formName, false, out openedHere);
+                try
+                {
+                    var recordset = TryGetDynamicProperty(form, "RecordsetClone") ?? TryGetDynamicProperty(form, "Recordset");
+                    if (recordset == null)
+                    {
+                        return new FormCurrentRecordInfo
+                        {
+                            FormName = formName
+                        };
+                    }
+
+                    var bookmark = TryGetDynamicProperty(form, "Bookmark");
+                    if (bookmark != null)
+                    {
+                        try
+                        {
+                            SetDynamicProperty(recordset, "Bookmark", bookmark);
+                        }
+                        catch
+                        {
+                            // Bookmark assignment may fail for unbound forms.
+                        }
+                    }
+
+                    var fields = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+                    var fieldCollection = TryGetDynamicProperty(recordset, "Fields");
+                    if (fieldCollection != null)
+                    {
+                        foreach (var field in fieldCollection)
+                        {
+                            var name = SafeToString(TryGetDynamicProperty(field, "Name"));
+                            if (string.IsNullOrWhiteSpace(name))
+                                continue;
+                            fields[name] = NormalizeValue(TryGetDynamicProperty(field, "Value"));
+                        }
+                    }
+
+                    return new FormCurrentRecordInfo
+                    {
+                        FormName = formName,
+                        CurrentRecord = ToNullableInt(TryGetDynamicProperty(form, "CurrentRecord")),
+                        Fields = fields
+                    };
+                }
+                finally
+                {
+                    if (openedHere)
+                        CloseFormInternal(accessApp, formName, saveChanges: false);
+                }
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void SetFormFilter(string formName, string? filter, bool? filterOn = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(formName)) throw new ArgumentException("formName is required.", nameof(formName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var openedHere = false;
+                var form = EnsureFormOpen(accessApp, formName, false, out openedHere);
+                try
+                {
+                    SetDynamicProperty(form, "Filter", filter ?? string.Empty);
+                    SetDynamicProperty(form, "FilterOn", filterOn ?? !string.IsNullOrWhiteSpace(filter));
+                }
+                finally
+                {
+                    if (openedHere)
+                        CloseFormInternal(accessApp, formName, saveChanges: false);
+                }
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void RefreshDatabaseWindow()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(accessApp =>
+            {
+                _ = InvokeDynamicMethod(accessApp, "RefreshDatabaseWindow");
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public object? SysCmd(string command, object? arg1 = null, object? arg2 = null, object? arg3 = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(command)) throw new ArgumentException("command is required.", nameof(command));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                object commandValue = int.TryParse(command.Trim(), out var numericCommand)
+                    ? numericCommand
+                    : command.Trim();
+
+                var result = InvokeDynamicMethod(accessApp, "SysCmd", commandValue, arg1 ?? Type.Missing, arg2 ?? Type.Missing, arg3 ?? Type.Missing);
+                return result == null ? null : NormalizeValue(result);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
         public void RunDataMacro(string macroName)
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
@@ -9910,6 +10170,41 @@ namespace MS.Access.MCP.Interop
             return null;
         }
 
+        private static dynamic? FindTempVar(dynamic tempVarsCollection, string name)
+        {
+            foreach (var tempVar in tempVarsCollection)
+            {
+                var currentName = SafeToString(TryGetDynamicProperty(tempVar, "Name"));
+                if (string.Equals(currentName, name, StringComparison.OrdinalIgnoreCase))
+                    return tempVar;
+            }
+
+            return null;
+        }
+
+        private static void AddOpenObjectsFromCollection(dynamic? collection, string objectType, List<OpenObjectInfo> results)
+        {
+            if (collection == null)
+                return;
+
+            foreach (var item in collection)
+            {
+                var isLoaded = ToBool(TryGetDynamicProperty(item, "IsLoaded"), false);
+                if (!isLoaded)
+                    continue;
+
+                var objectName = SafeToString(TryGetDynamicProperty(item, "Name"));
+                if (string.IsNullOrWhiteSpace(objectName))
+                    continue;
+
+                results.Add(new OpenObjectInfo
+                {
+                    ObjectType = objectType,
+                    ObjectName = objectName
+                });
+            }
+        }
+
         private static object? GetControlByName(object formOrReport, string controlName)
         {
             var controlsCollection = GetControlsCollection(formOrReport);
@@ -11091,6 +11386,25 @@ namespace MS.Access.MCP.Interop
         public string? CurrentDataPath { get; set; }
         public int? CurrentDataAllTablesCount { get; set; }
         public int? CurrentDataAllQueriesCount { get; set; }
+    }
+
+    public class TempVarInfo
+    {
+        public string Name { get; set; } = "";
+        public object? Value { get; set; }
+    }
+
+    public class OpenObjectInfo
+    {
+        public string ObjectType { get; set; } = "";
+        public string ObjectName { get; set; } = "";
+    }
+
+    public class FormCurrentRecordInfo
+    {
+        public string FormName { get; set; } = "";
+        public int? CurrentRecord { get; set; }
+        public Dictionary<string, object?> Fields { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
     public class DatabaseSecurityInfo
