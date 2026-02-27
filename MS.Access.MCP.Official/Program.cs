@@ -186,6 +186,7 @@ class Program
                 new { name = "get_table_properties", description = "Get table-level properties such as description and validation settings.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
                 new { name = "set_table_properties", description = "Set table-level properties such as description and validation settings.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, description = new { type = "string" }, validation_rule = new { type = "string" }, validation_text = new { type = "string" } }, required = new string[] { "table_name" } } },
                 new { name = "get_query_properties", description = "Get query properties including description, SQL text, and parameters.", inputSchema = new { type = "object", properties = new { query_name = new { type = "string" } }, required = new string[] { "query_name" } } },
+                new { name = "get_query_parameters", description = "Get query parameter metadata for a saved query.", inputSchema = new { type = "object", properties = new { query_name = new { type = "string" } }, required = new string[] { "query_name" } } },
                 new { name = "set_query_properties", description = "Set query properties such as description and SQL text.", inputSchema = new { type = "object", properties = new { query_name = new { type = "string" }, description = new { type = "string" }, sql = new { type = "string" } }, required = new string[] { "query_name" } } },
                 new { name = "set_field_validation", description = "Set field validation rule and validation text.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, validation_rule = new { type = "string" }, validation_text = new { type = "string" } }, required = new string[] { "table_name", "field_name", "validation_rule" } } },
                 new { name = "set_field_default", description = "Set field default value.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, default_value = new { type = "string" } }, required = new string[] { "table_name", "field_name", "default_value" } } },
@@ -202,13 +203,21 @@ class Program
                 new { name = "set_ribbon_xml", description = "Create or replace ribbon XML in USysRibbons and optionally set as default.", inputSchema = new { type = "object", properties = new { ribbon_name = new { type = "string" }, ribbon_xml = new { type = "string" }, apply_as_default = new { type = "boolean" } }, required = new string[] { "ribbon_name", "ribbon_xml" } } },
                 new { name = "get_application_info", description = "Get Access application metadata and current project/data info.", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_current_project_data", description = "Get CurrentProject and CurrentData properties.", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "get_application_option", description = "Get an Access application option value using Application.GetOption.", inputSchema = new { type = "object", properties = new { option_name = new { type = "string" } }, required = new string[] { "option_name" } } },
+                new { name = "set_application_option", description = "Set an Access application option value using Application.SetOption.", inputSchema = new { type = "object", properties = new { option_name = new { type = "string" }, value = new { type = "string" } }, required = new string[] { "option_name", "value" } } },
                 new { name = "export_data_macro_axl", description = "Export table data macro definition as AXL.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
                 new { name = "import_data_macro_axl", description = "Import table data macro definition from AXL.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, axl_xml = new { type = "string" } }, required = new string[] { "table_name", "axl_xml" } } },
+                new { name = "run_data_macro", description = "Run a data macro by name.", inputSchema = new { type = "object", properties = new { macro_name = new { type = "string" } }, required = new string[] { "macro_name" } } },
+                new { name = "get_table_data_macros", description = "List data macros defined on a table.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
+                new { name = "delete_data_macro", description = "Delete a data macro from a table.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, macro_name = new { type = "string" } }, required = new string[] { "table_name", "macro_name" } } },
+                new { name = "get_autoexec_info", description = "Check if the AutoExec macro exists.", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "run_autoexec", description = "Run the AutoExec macro.", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_database_security", description = "Get current database security state (password/encryption indicators).", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "set_database_password", description = "Set or replace the database password (compact/repair based).", inputSchema = new { type = "object", properties = new { new_password = new { type = "string" } }, required = new string[] { "new_password" } } },
                 new { name = "remove_database_password", description = "Remove the current database password (compact/repair based).", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "encrypt_database", description = "Compact/encrypt the current database with a password.", inputSchema = new { type = "object", properties = new { password = new { type = "string" } } } },
                 new { name = "get_navigation_groups", description = "List Access navigation pane groups.", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "set_display_categories", description = "Show or hide navigation pane display categories.", inputSchema = new { type = "object", properties = new { show_categories = new { type = "boolean" } } } },
                 new { name = "create_navigation_group", description = "Create a navigation pane group.", inputSchema = new { type = "object", properties = new { group_name = new { type = "string" } }, required = new string[] { "group_name" } } },
                 new { name = "add_navigation_group_object", description = "Add an object to a navigation pane group.", inputSchema = new { type = "object", properties = new { group_name = new { type = "string" }, object_name = new { type = "string" }, object_type = new { type = "string" } }, required = new string[] { "group_name", "object_name" } } },
                 new { name = "get_conditional_formatting", description = "Get conditional formatting rules for a form/report control.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string" }, object_name = new { type = "string" }, control_name = new { type = "string" } }, required = new string[] { "object_type", "object_name", "control_name" } } },
@@ -298,6 +307,8 @@ class Program
                 new { name = "delete_import_export_spec", description = "Delete a saved import/export specification.", inputSchema = new { type = "object", properties = new { specification_name = new { type = "string" } }, required = new string[] { "specification_name" } } },
                 new { name = "run_import_export_spec", description = "Run a saved import/export specification.", inputSchema = new { type = "object", properties = new { specification_name = new { type = "string" } }, required = new string[] { "specification_name" } } },
                 new { name = "get_system_tables", description = "Get list of system tables", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "get_containers", description = "List DAO Containers in the current database.", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "get_container_documents", description = "List DAO Documents in a Container.", inputSchema = new { type = "object", properties = new { container_name = new { type = "string" } }, required = new string[] { "container_name" } } },
                 new { name = "get_object_metadata", description = "Get metadata for database objects", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "form_exists", description = "Check if a form exists", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
                 new { name = "get_form_controls", description = "Get list of controls in a form", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
@@ -391,6 +402,7 @@ class Program
             "get_table_properties" => HandleGetTableProperties(accessService, toolArguments),
             "set_table_properties" => HandleSetTableProperties(accessService, toolArguments),
             "get_query_properties" => HandleGetQueryProperties(accessService, toolArguments),
+            "get_query_parameters" => HandleGetQueryParameters(accessService, toolArguments),
             "set_query_properties" => HandleSetQueryProperties(accessService, toolArguments),
             "set_field_validation" => HandleSetFieldValidation(accessService, toolArguments),
             "set_field_default" => HandleSetFieldDefault(accessService, toolArguments),
@@ -407,13 +419,21 @@ class Program
             "set_ribbon_xml" => HandleSetRibbonXml(accessService, toolArguments),
             "get_application_info" => HandleGetApplicationInfo(accessService, toolArguments),
             "get_current_project_data" => HandleGetCurrentProjectData(accessService, toolArguments),
+            "get_application_option" => HandleGetApplicationOption(accessService, toolArguments),
+            "set_application_option" => HandleSetApplicationOption(accessService, toolArguments),
             "export_data_macro_axl" => HandleExportDataMacroAxl(accessService, toolArguments),
             "import_data_macro_axl" => HandleImportDataMacroAxl(accessService, toolArguments),
+            "run_data_macro" => HandleRunDataMacro(accessService, toolArguments),
+            "get_table_data_macros" => HandleGetTableDataMacros(accessService, toolArguments),
+            "delete_data_macro" => HandleDeleteDataMacro(accessService, toolArguments),
+            "get_autoexec_info" => HandleGetAutoExecInfo(accessService, toolArguments),
+            "run_autoexec" => HandleRunAutoExec(accessService, toolArguments),
             "get_database_security" => HandleGetDatabaseSecurity(accessService, toolArguments),
             "set_database_password" => HandleSetDatabasePassword(accessService, toolArguments),
             "remove_database_password" => HandleRemoveDatabasePassword(accessService, toolArguments),
             "encrypt_database" => HandleEncryptDatabase(accessService, toolArguments),
             "get_navigation_groups" => HandleGetNavigationGroups(accessService, toolArguments),
+            "set_display_categories" => HandleSetDisplayCategories(accessService, toolArguments),
             "create_navigation_group" => HandleCreateNavigationGroup(accessService, toolArguments),
             "add_navigation_group_object" => HandleAddNavigationGroupObject(accessService, toolArguments),
             "get_conditional_formatting" => HandleGetConditionalFormatting(accessService, toolArguments),
@@ -503,6 +523,8 @@ class Program
             "delete_import_export_spec" => HandleDeleteImportExportSpec(accessService, toolArguments),
             "run_import_export_spec" => HandleRunImportExportSpec(accessService, toolArguments),
             "get_system_tables" => HandleGetSystemTables(accessService, toolArguments),
+            "get_containers" => HandleGetContainers(accessService, toolArguments),
+            "get_container_documents" => HandleGetContainerDocuments(accessService, toolArguments),
             "get_object_metadata" => HandleGetObjectMetadata(accessService, toolArguments),
             "form_exists" => HandleFormExists(accessService, toolArguments),
             "get_form_controls" => HandleGetFormControls(accessService, toolArguments),
@@ -1806,6 +1828,22 @@ class Program
         }
     }
 
+    static object HandleGetQueryParameters(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "query_name", out var queryName, out var queryNameError))
+                return queryNameError;
+
+            var parameters = accessService.GetQueryParameters(queryName);
+            return new { success = true, query_name = queryName, parameters = parameters.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_query_parameters", ex);
+        }
+    }
+
     static object HandleSetQueryProperties(AccessInteropService accessService, JsonElement arguments)
     {
         try
@@ -2153,6 +2191,40 @@ class Program
         }
     }
 
+    static object HandleGetApplicationOption(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "option_name", out var optionName, out var optionNameError))
+                return optionNameError;
+
+            var value = accessService.GetApplicationOption(optionName);
+            return new { success = true, option_name = optionName, value };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_application_option", ex);
+        }
+    }
+
+    static object HandleSetApplicationOption(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "option_name", out var optionName, out var optionNameError))
+                return optionNameError;
+            if (!TryGetRequiredString(arguments, "value", out var value, out var valueError))
+                return valueError;
+
+            accessService.SetApplicationOption(optionName, value);
+            return new { success = true, option_name = optionName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_application_option", ex);
+        }
+    }
+
     static object HandleExportDataMacroAxl(AccessInteropService accessService, JsonElement arguments)
     {
         try
@@ -2184,6 +2256,82 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("import_data_macro_axl", ex);
+        }
+    }
+
+    static object HandleRunDataMacro(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "macro_name", out var macroName, out var macroNameError))
+                return macroNameError;
+
+            accessService.RunDataMacro(macroName);
+            return new { success = true, macro_name = macroName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("run_data_macro", ex);
+        }
+    }
+
+    static object HandleGetTableDataMacros(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+
+            var macros = accessService.GetTableDataMacros(tableName);
+            return new { success = true, table_name = tableName, macros = macros.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_table_data_macros", ex);
+        }
+    }
+
+    static object HandleDeleteDataMacro(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "macro_name", out var macroName, out var macroNameError))
+                return macroNameError;
+
+            accessService.DeleteDataMacro(tableName, macroName);
+            return new { success = true, table_name = tableName, macro_name = macroName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("delete_data_macro", ex);
+        }
+    }
+
+    static object HandleGetAutoExecInfo(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var info = accessService.GetAutoExecInfo();
+            return new { success = true, autoexec = info };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_autoexec_info", ex);
+        }
+    }
+
+    static object HandleRunAutoExec(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            accessService.RunAutoExec();
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("run_autoexec", ex);
         }
     }
 
@@ -2253,6 +2401,20 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("get_navigation_groups", ex);
+        }
+    }
+
+    static object HandleSetDisplayCategories(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var showCategories = GetOptionalBool(arguments, "show_categories", true);
+            accessService.SetDisplayCategories(showCategories);
+            return new { success = true, show_categories = showCategories };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_display_categories", ex);
         }
     }
 
@@ -3916,6 +4078,35 @@ class Program
         catch (Exception ex)
         {
             return new { success = false, error = ex.Message };
+        }
+    }
+
+    static object HandleGetContainers(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var containers = accessService.GetContainers();
+            return new { success = true, containers = containers.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_containers", ex);
+        }
+    }
+
+    static object HandleGetContainerDocuments(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "container_name", out var containerName, out var containerNameError))
+                return containerNameError;
+
+            var documents = accessService.GetContainerDocuments(containerName);
+            return new { success = true, container_name = containerName, documents = documents.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_container_documents", ex);
         }
     }
 

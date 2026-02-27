@@ -2743,6 +2743,291 @@ namespace MS.Access.MCP.Interop
             releaseOleDb: false);
         }
 
+        public object? GetApplicationOption(string optionName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(optionName)) throw new ArgumentException("Option name is required.", nameof(optionName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var optionValue = InvokeDynamicMethod(accessApp, "GetOption", optionName.Trim());
+                return NormalizeValue(optionValue ?? DBNull.Value);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void SetApplicationOption(string optionName, object value)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(optionName)) throw new ArgumentException("Option name is required.", nameof(optionName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                _ = InvokeDynamicMethod(accessApp, "SetOption", optionName.Trim(), value);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void RunDataMacro(string macroName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(macroName)) throw new ArgumentException("Macro name is required.", nameof(macroName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                try
+                {
+                    _ = InvokeDynamicMethod(accessApp, "RunDataMacro", macroName.Trim());
+                }
+                catch
+                {
+                    var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                        ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+                    _ = InvokeDynamicMethod(doCmd, "RunMacro", macroName.Trim());
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public List<DataMacroInfo> GetTableDataMacros(string tableName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var currentData = TryGetDynamicProperty(accessApp, "CurrentData");
+                var allTables = TryGetDynamicProperty(currentData, "AllTables");
+                var table = allTables == null ? null : FindObjectByName(allTables, tableName);
+                var dataMacros = table == null ? null : TryGetDynamicProperty(table, "DataMacros");
+                var results = new List<DataMacroInfo>();
+
+                if (dataMacros != null)
+                {
+                    foreach (var dataMacro in dataMacros)
+                    {
+                        var name = SafeToString(TryGetDynamicProperty(dataMacro, "Name"));
+                        if (string.IsNullOrWhiteSpace(name))
+                            continue;
+
+                        results.Add(new DataMacroInfo
+                        {
+                            Name = name,
+                            MacroType = SafeToString(TryGetDynamicProperty(dataMacro, "Type"))
+                        });
+                    }
+                }
+
+                if (results.Count > 0)
+                {
+                    return results
+                        .OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                }
+
+                var axlObject = InvokeDynamicMethod(accessApp, "SaveAsAXL", 0, tableName);
+                var axl = SafeToString(axlObject) ?? string.Empty;
+                foreach (Match match in Regex.Matches(axl, "<[^>]*DataMacro[^>]*\\bName\\s*=\\s*\"(?<name>[^\"]+)\"", RegexOptions.IgnoreCase))
+                {
+                    var name = match.Groups["name"].Value.Trim();
+                    if (string.IsNullOrWhiteSpace(name) || results.Any(entry => string.Equals(entry.Name, name, StringComparison.OrdinalIgnoreCase)))
+                        continue;
+
+                    results.Add(new DataMacroInfo { Name = name, MacroType = null });
+                }
+
+                return results
+                    .OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void DeleteDataMacro(string tableName, string macroName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(macroName)) throw new ArgumentException("Macro name is required.", nameof(macroName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var currentData = TryGetDynamicProperty(accessApp, "CurrentData");
+                var allTables = TryGetDynamicProperty(currentData, "AllTables")
+                    ?? throw new InvalidOperationException("CurrentData.AllTables is unavailable.");
+                var table = FindObjectByName(allTables, tableName)
+                    ?? throw new InvalidOperationException($"Table '{tableName}' was not found in CurrentData.AllTables.");
+                var dataMacros = TryGetDynamicProperty(table, "DataMacros")
+                    ?? throw new InvalidOperationException("DataMacros collection is unavailable for this table.");
+
+                dynamic? targetMacro = null;
+                foreach (var dataMacro in dataMacros)
+                {
+                    var name = SafeToString(TryGetDynamicProperty(dataMacro, "Name"));
+                    if (string.Equals(name, macroName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        targetMacro = dataMacro;
+                        break;
+                    }
+                }
+
+                if (targetMacro == null)
+                    throw new InvalidOperationException($"Data macro '{macroName}' was not found on table '{tableName}'.");
+
+                _ = InvokeDynamicMethod(targetMacro, "Delete");
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public AutoExecInfo GetAutoExecInfo()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var exists = MacroExists(accessApp, "AutoExec");
+                return new AutoExecInfo
+                {
+                    Exists = exists,
+                    MacroName = "AutoExec"
+                };
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void RunAutoExec()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(accessApp =>
+            {
+                if (!MacroExists(accessApp, "AutoExec"))
+                    throw new InvalidOperationException("AutoExec macro does not exist.");
+
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+                _ = InvokeDynamicMethod(doCmd, "RunMacro", "AutoExec");
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public List<QueryParameterInfo> GetQueryParameters(string queryName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(queryName)) throw new ArgumentException("Query name is required.", nameof(queryName));
+
+            var properties = GetQueryProperties(queryName);
+            return properties.Parameters
+                .OrderBy(parameter => parameter.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        public List<DaoContainerInfo> GetContainers()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+                var containers = TryGetDynamicProperty(currentDb, "Containers")
+                    ?? throw new InvalidOperationException("DAO Containers collection is unavailable.");
+
+                var results = new List<DaoContainerInfo>();
+                foreach (var container in containers)
+                {
+                    var name = SafeToString(TryGetDynamicProperty(container, "Name"));
+                    if (string.IsNullOrWhiteSpace(name))
+                        continue;
+
+                    results.Add(new DaoContainerInfo
+                    {
+                        Name = name,
+                        DocumentCount = ToInt32(TryGetDynamicProperty(TryGetDynamicProperty(container, "Documents"), "Count"))
+                    });
+                }
+
+                return results
+                    .OrderBy(container => container.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public List<DaoContainerDocumentInfo> GetContainerDocuments(string containerName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(containerName)) throw new ArgumentException("Container name is required.", nameof(containerName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+                var containers = TryGetDynamicProperty(currentDb, "Containers")
+                    ?? throw new InvalidOperationException("DAO Containers collection is unavailable.");
+
+                dynamic? targetContainer = null;
+                foreach (var container in containers)
+                {
+                    var name = SafeToString(TryGetDynamicProperty(container, "Name"));
+                    if (string.Equals(name, containerName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        targetContainer = container;
+                        break;
+                    }
+                }
+
+                if (targetContainer == null)
+                    throw new InvalidOperationException($"Container not found: {containerName}");
+
+                var documents = TryGetDynamicProperty(targetContainer, "Documents")
+                    ?? throw new InvalidOperationException($"Documents collection is unavailable for container '{containerName}'.");
+
+                var results = new List<DaoContainerDocumentInfo>();
+                foreach (var document in documents)
+                {
+                    var name = SafeToString(TryGetDynamicProperty(document, "Name"));
+                    if (string.IsNullOrWhiteSpace(name))
+                        continue;
+
+                    results.Add(new DaoContainerDocumentInfo
+                    {
+                        ContainerName = containerName,
+                        Name = name,
+                        Owner = SafeToString(TryGetDynamicProperty(document, "Owner")),
+                        DateCreated = SafeToString(TryGetDynamicProperty(document, "DateCreated")),
+                        LastUpdated = SafeToString(TryGetDynamicProperty(document, "LastUpdated"))
+                    });
+                }
+
+                return results
+                    .OrderBy(document => document.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void SetDisplayCategories(bool showCategories)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(accessApp =>
+            {
+                _ = InvokeDynamicMethod(accessApp, "SetOption", "Show Navigation Pane Grouping Options", showCategories);
+                _ = InvokeDynamicMethod(accessApp, "SetOption", "Show Navigation Pane Object Tabs", showCategories);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
         public string ExportDataMacroAxl(string tableName)
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
@@ -9125,6 +9410,33 @@ namespace MS.Access.MCP.Interop
     {
         public string EventName { get; set; } = "";
         public string Handler { get; set; } = "";
+    }
+
+    public class DataMacroInfo
+    {
+        public string Name { get; set; } = "";
+        public string? MacroType { get; set; }
+    }
+
+    public class AutoExecInfo
+    {
+        public bool Exists { get; set; }
+        public string MacroName { get; set; } = "";
+    }
+
+    public class DaoContainerInfo
+    {
+        public string Name { get; set; } = "";
+        public int DocumentCount { get; set; }
+    }
+
+    public class DaoContainerDocumentInfo
+    {
+        public string ContainerName { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string? Owner { get; set; }
+        public string? DateCreated { get; set; }
+        public string? LastUpdated { get; set; }
     }
 
     public class FormInfo
