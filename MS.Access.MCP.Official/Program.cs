@@ -185,6 +185,10 @@ class Program
                 new { name = "set_database_property", description = "Set or create a database property.", inputSchema = new { type = "object", properties = new { property_name = new { type = "string" }, value = new { type = "string" }, property_type = new { type = "string" }, create_if_missing = new { type = "boolean" } }, required = new string[] { "property_name", "value" } } },
                 new { name = "get_table_properties", description = "Get table-level properties such as description and validation settings.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
                 new { name = "set_table_properties", description = "Set table-level properties such as description and validation settings.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, description = new { type = "string" }, validation_rule = new { type = "string" }, validation_text = new { type = "string" } }, required = new string[] { "table_name" } } },
+                new { name = "get_table_validation", description = "Get table-level ValidationRule and ValidationText.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
+                new { name = "get_table_description", description = "Get table Description property.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
+                new { name = "set_table_description", description = "Set table Description property.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, description = new { type = "string" } }, required = new string[] { "table_name", "description" } } },
+                new { name = "get_all_field_descriptions", description = "Get descriptions for all fields in a table.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
                 new { name = "get_query_properties", description = "Get query properties including description, SQL text, and parameters.", inputSchema = new { type = "object", properties = new { query_name = new { type = "string" } }, required = new string[] { "query_name" } } },
                 new { name = "get_query_parameters", description = "Get query parameter metadata for a saved query.", inputSchema = new { type = "object", properties = new { query_name = new { type = "string" } }, required = new string[] { "query_name" } } },
                 new { name = "set_query_properties", description = "Set query properties such as description and SQL text.", inputSchema = new { type = "object", properties = new { query_name = new { type = "string" }, description = new { type = "string" }, sql = new { type = "string" } }, required = new string[] { "query_name" } } },
@@ -193,6 +197,10 @@ class Program
                 new { name = "set_field_input_mask", description = "Set field input mask.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, input_mask = new { type = "string" } }, required = new string[] { "table_name", "field_name", "input_mask" } } },
                 new { name = "set_field_caption", description = "Set field caption.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, caption = new { type = "string" } }, required = new string[] { "table_name", "field_name", "caption" } } },
                 new { name = "get_field_properties", description = "Get field properties including validation/default/input mask/caption and lookup settings.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" } }, required = new string[] { "table_name", "field_name" } } },
+                new { name = "get_field_attributes", description = "Get detailed field attributes.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" } }, required = new string[] { "table_name", "field_name" } } },
+                new { name = "detect_multi_value_fields", description = "Identify multi-value lookup fields in a table.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
+                new { name = "get_multi_value_field_values", description = "Read multi-value field values.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, where_condition = new { type = "string" }, max_rows = new { type = "integer" } }, required = new string[] { "table_name", "field_name" } } },
+                new { name = "set_multi_value_field_values", description = "Write multi-value field values.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, values = new { type = "array" }, where_condition = new { type = "string" } }, required = new string[] { "table_name", "field_name", "values" } } },
                 new { name = "set_lookup_properties", description = "Set lookup properties for a field (RowSource, BoundColumn, ColumnCount, ColumnWidths, etc.).", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, row_source = new { type = "string" }, bound_column = new { type = "integer" }, column_count = new { type = "integer" }, column_widths = new { type = "string" }, limit_to_list = new { type = "boolean" }, allow_multiple_values = new { type = "boolean" }, display_control = new { type = "integer" } }, required = new string[] { "table_name", "field_name" } } },
                 new { name = "get_vba_references", description = "List VBA references for a VBA project.", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" } } } },
                 new { name = "add_vba_reference", description = "Add a VBA reference by file path or GUID.", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, reference_path = new { type = "string" }, reference_guid = new { type = "string" }, major = new { type = "integer" }, minor = new { type = "integer" } } } },
@@ -319,6 +327,8 @@ class Program
                 new { name = "get_system_tables", description = "Get list of system tables", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_containers", description = "List DAO Containers in the current database.", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_container_documents", description = "List DAO Documents in a Container.", inputSchema = new { type = "object", properties = new { container_name = new { type = "string" } }, required = new string[] { "container_name" } } },
+                new { name = "get_document_properties", description = "Get DAO Document properties.", inputSchema = new { type = "object", properties = new { container_name = new { type = "string" }, document_name = new { type = "string" } }, required = new string[] { "container_name", "document_name" } } },
+                new { name = "set_document_property", description = "Set DAO Document property.", inputSchema = new { type = "object", properties = new { container_name = new { type = "string" }, document_name = new { type = "string" }, property_name = new { type = "string" }, value = new { type = "string" }, property_type = new { type = "string" }, create_if_missing = new { type = "boolean" } }, required = new string[] { "container_name", "document_name", "property_name", "value" } } },
                 new { name = "get_object_metadata", description = "Get metadata for database objects", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "form_exists", description = "Check if a form exists", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
                 new { name = "get_form_controls", description = "Get list of controls in a form", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
@@ -419,6 +429,10 @@ class Program
             "set_database_property" => HandleSetDatabaseProperty(accessService, toolArguments),
             "get_table_properties" => HandleGetTableProperties(accessService, toolArguments),
             "set_table_properties" => HandleSetTableProperties(accessService, toolArguments),
+            "get_table_validation" => HandleGetTableValidation(accessService, toolArguments),
+            "get_table_description" => HandleGetTableDescription(accessService, toolArguments),
+            "set_table_description" => HandleSetTableDescription(accessService, toolArguments),
+            "get_all_field_descriptions" => HandleGetAllFieldDescriptions(accessService, toolArguments),
             "get_query_properties" => HandleGetQueryProperties(accessService, toolArguments),
             "get_query_parameters" => HandleGetQueryParameters(accessService, toolArguments),
             "set_query_properties" => HandleSetQueryProperties(accessService, toolArguments),
@@ -427,6 +441,10 @@ class Program
             "set_field_input_mask" => HandleSetFieldInputMask(accessService, toolArguments),
             "set_field_caption" => HandleSetFieldCaption(accessService, toolArguments),
             "get_field_properties" => HandleGetFieldProperties(accessService, toolArguments),
+            "get_field_attributes" => HandleGetFieldAttributes(accessService, toolArguments),
+            "detect_multi_value_fields" => HandleDetectMultiValueFields(accessService, toolArguments),
+            "get_multi_value_field_values" => HandleGetMultiValueFieldValues(accessService, toolArguments),
+            "set_multi_value_field_values" => HandleSetMultiValueFieldValues(accessService, toolArguments),
             "set_lookup_properties" => HandleSetLookupProperties(accessService, toolArguments),
             "get_vba_references" => HandleGetVbaReferences(accessService, toolArguments),
             "add_vba_reference" => HandleAddVbaReference(accessService, toolArguments),
@@ -553,6 +571,8 @@ class Program
             "get_system_tables" => HandleGetSystemTables(accessService, toolArguments),
             "get_containers" => HandleGetContainers(accessService, toolArguments),
             "get_container_documents" => HandleGetContainerDocuments(accessService, toolArguments),
+            "get_document_properties" => HandleGetDocumentProperties(accessService, toolArguments),
+            "set_document_property" => HandleSetDocumentProperty(accessService, toolArguments),
             "get_object_metadata" => HandleGetObjectMetadata(accessService, toolArguments),
             "form_exists" => HandleFormExists(accessService, toolArguments),
             "get_form_controls" => HandleGetFormControls(accessService, toolArguments),
@@ -1848,6 +1868,72 @@ class Program
         }
     }
 
+    static object HandleGetTableValidation(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+
+            var validation = accessService.GetTableValidation(tableName);
+            return new { success = true, validation = validation };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_table_validation", ex);
+        }
+    }
+
+    static object HandleGetTableDescription(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+
+            var description = accessService.GetTableDescription(tableName);
+            return new { success = true, table_name = tableName, description = description };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_table_description", ex);
+        }
+    }
+
+    static object HandleSetTableDescription(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "description", out var description, out var descriptionError))
+                return descriptionError;
+
+            accessService.SetTableDescription(tableName, description);
+            return new { success = true, table_name = tableName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_table_description", ex);
+        }
+    }
+
+    static object HandleGetAllFieldDescriptions(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+
+            var fields = accessService.GetAllFieldDescriptions(tableName);
+            return new { success = true, fields = fields.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_all_field_descriptions", ex);
+        }
+    }
+
     static object HandleGetQueryProperties(AccessInteropService accessService, JsonElement arguments)
     {
         try
@@ -2007,6 +2093,92 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("get_field_properties", ex);
+        }
+    }
+
+    static object HandleGetFieldAttributes(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "field_name", out var fieldName, out var fieldNameError))
+                return fieldNameError;
+
+            var attributes = accessService.GetFieldAttributes(tableName, fieldName);
+            return new { success = true, attributes = attributes };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_field_attributes", ex);
+        }
+    }
+
+    static object HandleDetectMultiValueFields(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+
+            var fields = accessService.DetectMultiValueFields(tableName);
+            return new { success = true, fields = fields.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("detect_multi_value_fields", ex);
+        }
+    }
+
+    static object HandleGetMultiValueFieldValues(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "field_name", out var fieldName, out var fieldNameError))
+                return fieldNameError;
+            if (!TryGetOptionalInt(arguments, "max_rows", out var maxRows, out var maxRowsError))
+                return maxRowsError;
+
+            _ = TryGetOptionalString(arguments, "where_condition", out var whereCondition);
+            var values = accessService.GetMultiValueFieldValues(
+                tableName,
+                fieldName,
+                string.IsNullOrWhiteSpace(whereCondition) ? null : whereCondition,
+                maxRows ?? 100);
+
+            return new { success = true, values = values.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_multi_value_field_values", ex);
+        }
+    }
+
+    static object HandleSetMultiValueFieldValues(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "field_name", out var fieldName, out var fieldNameError))
+                return fieldNameError;
+            if (!TryGetRequiredPrimitiveArray(arguments, "values", out var values, out var valuesError))
+                return valuesError;
+
+            _ = TryGetOptionalString(arguments, "where_condition", out var whereCondition);
+            var result = accessService.SetMultiValueFieldValues(
+                tableName,
+                fieldName,
+                values,
+                string.IsNullOrWhiteSpace(whereCondition) ? null : whereCondition);
+
+            return new { success = true, result = result };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_multi_value_field_values", ex);
         }
     }
 
@@ -4364,6 +4536,55 @@ class Program
         }
     }
 
+    static object HandleGetDocumentProperties(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "container_name", out var containerName, out var containerNameError))
+                return containerNameError;
+            if (!TryGetRequiredString(arguments, "document_name", out var documentName, out var documentNameError))
+                return documentNameError;
+
+            var properties = accessService.GetDocumentProperties(containerName, documentName);
+            return new { success = true, container_name = containerName, document_name = documentName, properties = properties.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_document_properties", ex);
+        }
+    }
+
+    static object HandleSetDocumentProperty(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "container_name", out var containerName, out var containerNameError))
+                return containerNameError;
+            if (!TryGetRequiredString(arguments, "document_name", out var documentName, out var documentNameError))
+                return documentNameError;
+            if (!TryGetRequiredString(arguments, "property_name", out var propertyName, out var propertyNameError))
+                return propertyNameError;
+            if (!TryGetRequiredString(arguments, "value", out var value, out var valueError))
+                return valueError;
+
+            _ = TryGetOptionalString(arguments, "property_type", out var propertyType);
+            var createIfMissing = GetOptionalBool(arguments, "create_if_missing", false);
+            var updated = accessService.SetDocumentProperty(
+                containerName,
+                documentName,
+                propertyName,
+                value,
+                string.IsNullOrWhiteSpace(propertyType) ? null : propertyType,
+                createIfMissing);
+
+            return new { success = true, property = updated };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_document_property", ex);
+        }
+    }
+
     static object HandleGetObjectMetadata(AccessInteropService accessService, JsonElement arguments)
     {
         try
@@ -5496,6 +5717,54 @@ class Program
         {
             error = new { success = false, error = $"{propertyName} must contain at least one non-empty value" };
             return false;
+        }
+
+        error = new { success = true };
+        return true;
+    }
+
+    static bool TryGetRequiredPrimitiveArray(JsonElement arguments, string propertyName, out List<object?> values, out object error)
+    {
+        values = new List<object?>();
+
+        if (!arguments.TryGetProperty(propertyName, out var element) || element.ValueKind != JsonValueKind.Array)
+        {
+            error = new { success = false, error = $"{propertyName} is required" };
+            return false;
+        }
+
+        foreach (var item in element.EnumerateArray())
+        {
+            switch (item.ValueKind)
+            {
+                case JsonValueKind.Null:
+                    values.Add(null);
+                    break;
+                case JsonValueKind.String:
+                    values.Add(item.GetString());
+                    break;
+                case JsonValueKind.True:
+                case JsonValueKind.False:
+                    values.Add(item.GetBoolean());
+                    break;
+                case JsonValueKind.Number:
+                    if (item.TryGetInt64(out var intValue))
+                    {
+                        values.Add(intValue);
+                    }
+                    else if (item.TryGetDouble(out var doubleValue))
+                    {
+                        values.Add(doubleValue);
+                    }
+                    else
+                    {
+                        values.Add(item.GetRawText());
+                    }
+                    break;
+                default:
+                    error = new { success = false, error = $"{propertyName} must be an array of primitive JSON values" };
+                    return false;
+            }
         }
 
         error = new { success = true };

@@ -1534,6 +1534,63 @@ namespace MS.Access.MCP.Interop
             releaseOleDb: true);
         }
 
+        public TableValidationInfo GetTableValidation(string tableName)
+        {
+            var tableProperties = GetTableProperties(tableName);
+            return new TableValidationInfo
+            {
+                TableName = tableProperties.TableName,
+                ValidationRule = tableProperties.ValidationRule,
+                ValidationText = tableProperties.ValidationText
+            };
+        }
+
+        public string? GetTableDescription(string tableName)
+        {
+            return GetTableProperties(tableName).Description;
+        }
+
+        public void SetTableDescription(string tableName, string description)
+        {
+            if (string.IsNullOrWhiteSpace(description)) throw new ArgumentException("description is required.", nameof(description));
+            SetTableProperties(tableName, description: description);
+        }
+
+        public List<TableFieldDescriptionInfo> GetAllFieldDescriptions(string tableName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var tableDef = FindTableDefWithRetry(accessApp, tableName)
+                    ?? throw new InvalidOperationException($"Table not found: {tableName}");
+                var fields = TryGetDynamicProperty(tableDef, "Fields")
+                    ?? throw new InvalidOperationException("DAO Fields collection is unavailable.");
+
+                var results = new List<TableFieldDescriptionInfo>();
+                foreach (var field in fields)
+                {
+                    var fieldName = SafeToString(TryGetDynamicProperty(field, "Name"));
+                    if (string.IsNullOrWhiteSpace(fieldName))
+                        continue;
+
+                    results.Add(new TableFieldDescriptionInfo
+                    {
+                        TableName = tableName,
+                        FieldName = fieldName,
+                        Description = SafeToString(GetDaoPropertyValue(field, "Description"))
+                    });
+                }
+
+                return results
+                    .OrderBy(item => item.FieldName, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
         public QueryPropertiesInfo GetQueryProperties(string queryName)
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
@@ -1628,6 +1685,168 @@ namespace MS.Access.MCP.Interop
             },
             requireExclusive: false,
             releaseOleDb: false);
+        }
+
+        public FieldAttributesInfo GetFieldAttributes(string tableName, string fieldName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(fieldName)) throw new ArgumentException("Field name is required.", nameof(fieldName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var field = ResolveField(accessApp, tableName, fieldName);
+                var allowMultipleValues = ToNullableBool(GetDaoPropertyValue(field, "AllowMultipleValues"));
+                var isComplex = ToNullableBool(TryGetDynamicProperty(field, "IsComplex")) ?? allowMultipleValues;
+                return new FieldAttributesInfo
+                {
+                    TableName = tableName,
+                    FieldName = SafeToString(TryGetDynamicProperty(field, "Name")) ?? fieldName,
+                    TypeCode = ToInt32(TryGetDynamicProperty(field, "Type")),
+                    Size = ToInt32(TryGetDynamicProperty(field, "Size")),
+                    Required = ToBool(TryGetDynamicProperty(field, "Required"), false),
+                    AllowZeroLength = ToBool(TryGetDynamicProperty(field, "AllowZeroLength"), false),
+                    Attributes = ToInt32(TryGetDynamicProperty(field, "Attributes")),
+                    AllowMultipleValues = allowMultipleValues,
+                    IsComplex = isComplex
+                };
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public List<MultiValueFieldInfo> DetectMultiValueFields(string tableName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var tableDef = FindTableDefWithRetry(accessApp, tableName)
+                    ?? throw new InvalidOperationException($"Table not found: {tableName}");
+                var fields = TryGetDynamicProperty(tableDef, "Fields")
+                    ?? throw new InvalidOperationException("DAO Fields collection is unavailable.");
+
+                var results = new List<MultiValueFieldInfo>();
+                foreach (var field in fields)
+                {
+                    var fieldName = SafeToString(TryGetDynamicProperty(field, "Name"));
+                    if (string.IsNullOrWhiteSpace(fieldName))
+                        continue;
+
+                    var allowMultipleValues = ToNullableBool(GetDaoPropertyValue(field, "AllowMultipleValues"));
+                    var isComplex = ToNullableBool(TryGetDynamicProperty(field, "IsComplex")) ?? allowMultipleValues;
+                    if (allowMultipleValues != true && isComplex != true)
+                        continue;
+
+                    results.Add(new MultiValueFieldInfo
+                    {
+                        TableName = tableName,
+                        FieldName = fieldName,
+                        Attributes = ToInt32(TryGetDynamicProperty(field, "Attributes")),
+                        AllowMultipleValues = allowMultipleValues,
+                        IsComplex = isComplex
+                    });
+                }
+
+                return results
+                    .OrderBy(item => item.FieldName, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public List<MultiValueFieldRecordInfo> GetMultiValueFieldValues(string tableName, string fieldName, string? whereCondition = null, int maxRows = 100)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("tableName is required.", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(fieldName)) throw new ArgumentException("fieldName is required.", nameof(fieldName));
+            if (maxRows <= 0) throw new ArgumentOutOfRangeException(nameof(maxRows), "maxRows must be greater than 0.");
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+                var sql = BuildAttachmentQuery(tableName, whereCondition);
+                var recordset = InvokeDynamicMethod(currentDb, "OpenRecordset", sql)
+                    ?? throw new InvalidOperationException("Failed to open source recordset.");
+
+                var results = new List<MultiValueFieldRecordInfo>();
+                var rowIndex = 0;
+                while (!ToBool(TryGetDynamicProperty(recordset, "EOF"), true) && results.Count < maxRows)
+                {
+                    rowIndex++;
+                    var field = GetRecordsetField(recordset, fieldName)
+                        ?? throw new InvalidOperationException($"Field not found: {fieldName}");
+                    var complexValueRecordset = TryGetDynamicProperty(field, "Value");
+                    var entries = complexValueRecordset == null
+                        ? new List<Dictionary<string, object?>>()
+                        : ReadComplexFieldEntries((object)complexValueRecordset);
+
+                    results.Add(new MultiValueFieldRecordInfo
+                    {
+                        TableName = tableName,
+                        FieldName = fieldName,
+                        RowIndex = rowIndex,
+                        Values = entries.Select(GetPreferredComplexFieldValue).ToList(),
+                        Entries = entries
+                    });
+
+                    _ = InvokeDynamicMethod(recordset, "MoveNext");
+                }
+
+                return results;
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public MultiValueFieldUpdateInfo SetMultiValueFieldValues(string tableName, string fieldName, List<object?> values, string? whereCondition = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("tableName is required.", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(fieldName)) throw new ArgumentException("fieldName is required.", nameof(fieldName));
+            if (values == null) throw new ArgumentNullException(nameof(values));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+                var sql = BuildAttachmentQuery(tableName, whereCondition);
+                var recordset = InvokeDynamicMethod(currentDb, "OpenRecordset", sql, 2)
+                    ?? throw new InvalidOperationException("Failed to open source recordset.");
+
+                if (ToBool(TryGetDynamicProperty(recordset, "EOF"), true))
+                    throw new InvalidOperationException("No matching row was found for multi-value update.");
+
+                var field = GetRecordsetField(recordset, fieldName)
+                    ?? throw new InvalidOperationException($"Field not found: {fieldName}");
+                var complexValueRecordset = TryGetDynamicProperty(field, "Value")
+                    ?? throw new InvalidOperationException($"Field '{fieldName}' is not a complex/multi-value field.");
+
+                while (!ToBool(TryGetDynamicProperty(complexValueRecordset, "EOF"), true))
+                {
+                    _ = InvokeDynamicMethod(complexValueRecordset, "Delete");
+                    _ = InvokeDynamicMethod(complexValueRecordset, "MoveNext");
+                }
+
+                foreach (var value in values)
+                {
+                    _ = InvokeDynamicMethod(complexValueRecordset, "AddNew");
+                    SetComplexFieldEntryValue(complexValueRecordset, value);
+                    _ = InvokeDynamicMethod(complexValueRecordset, "Update");
+                }
+
+                return new MultiValueFieldUpdateInfo
+                {
+                    TableName = tableName,
+                    FieldName = fieldName,
+                    ValuesWritten = values.Count
+                };
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
         }
 
         public void SetFieldValidation(string tableName, string fieldName, string validationRule, string? validationText = null)
@@ -3013,6 +3232,77 @@ namespace MS.Access.MCP.Interop
             },
             requireExclusive: false,
             releaseOleDb: false);
+        }
+
+        public List<DaoDocumentPropertyInfo> GetDocumentProperties(string containerName, string documentName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(containerName)) throw new ArgumentException("containerName is required.", nameof(containerName));
+            if (string.IsNullOrWhiteSpace(documentName)) throw new ArgumentException("documentName is required.", nameof(documentName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var document = ResolveDaoDocument(accessApp, containerName, documentName);
+                var properties = TryGetDynamicProperty(document, "Properties")
+                    ?? throw new InvalidOperationException("DAO document properties collection is unavailable.");
+
+                var results = new List<DaoDocumentPropertyInfo>();
+                foreach (var property in properties)
+                {
+                    var name = SafeToString(TryGetDynamicProperty(property, "Name"));
+                    if (string.IsNullOrWhiteSpace(name))
+                        continue;
+
+                    results.Add(new DaoDocumentPropertyInfo
+                    {
+                        ContainerName = containerName,
+                        DocumentName = documentName,
+                        Name = name,
+                        TypeCode = ToInt32(TryGetDynamicProperty(property, "Type")),
+                        Value = NormalizeValue(TryGetDynamicProperty(property, "Value"))
+                    });
+                }
+
+                return results
+                    .OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public DaoDocumentPropertyInfo SetDocumentProperty(string containerName, string documentName, string propertyName, string value, string? propertyType = null, bool createIfMissing = false)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(containerName)) throw new ArgumentException("containerName is required.", nameof(containerName));
+            if (string.IsNullOrWhiteSpace(documentName)) throw new ArgumentException("documentName is required.", nameof(documentName));
+            if (string.IsNullOrWhiteSpace(propertyName)) throw new ArgumentException("propertyName is required.", nameof(propertyName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var document = ResolveDaoDocument(accessApp, containerName, documentName);
+                var existingProperty = FindDaoProperty(document, propertyName);
+                var existingValue = existingProperty != null
+                    ? TryGetDynamicProperty(existingProperty, "Value")
+                    : null;
+
+                var daoType = ParseDaoDataType(propertyType);
+                var convertedValue = ConvertPropertyValue(value, propertyType, existingValue);
+                SetDaoPropertyValue(document, propertyName, convertedValue, daoType, createIfMissing);
+
+                var updatedProperty = FindDaoProperty(document, propertyName)
+                    ?? throw new InvalidOperationException($"Property not found after update: {propertyName}");
+                return new DaoDocumentPropertyInfo
+                {
+                    ContainerName = containerName,
+                    DocumentName = documentName,
+                    Name = SafeToString(TryGetDynamicProperty(updatedProperty, "Name")) ?? propertyName,
+                    TypeCode = ToInt32(TryGetDynamicProperty(updatedProperty, "Type")),
+                    Value = NormalizeValue(TryGetDynamicProperty(updatedProperty, "Value"))
+                };
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
         }
 
         public void SetDisplayCategories(bool showCategories)
@@ -6751,6 +7041,75 @@ namespace MS.Access.MCP.Interop
             SetDynamicProperty(field, "Value", value);
         }
 
+        private static List<Dictionary<string, object?>> ReadComplexFieldEntries(dynamic complexRecordset)
+        {
+            var results = new List<Dictionary<string, object?>>();
+            while (!ToBool(TryGetDynamicProperty(complexRecordset, "EOF"), true))
+            {
+                var entry = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+                var fields = TryGetDynamicProperty(complexRecordset, "Fields");
+                if (fields != null)
+                {
+                    foreach (var field in fields)
+                    {
+                        var name = SafeToString(TryGetDynamicProperty(field, "Name"));
+                        if (string.IsNullOrWhiteSpace(name))
+                            continue;
+                        entry[name] = NormalizeValue(TryGetDynamicProperty(field, "Value"));
+                    }
+                }
+
+                results.Add(entry);
+                _ = InvokeDynamicMethod(complexRecordset, "MoveNext");
+            }
+
+            return results;
+        }
+
+        private static object? GetPreferredComplexFieldValue(Dictionary<string, object?> entry)
+        {
+            if (entry.TryGetValue("Value", out var preferred))
+                return preferred;
+
+            foreach (var pair in entry)
+            {
+                if (!string.Equals(pair.Key, "ID", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(pair.Key, "GUID", StringComparison.OrdinalIgnoreCase))
+                {
+                    return pair.Value;
+                }
+            }
+
+            return entry.Values.FirstOrDefault();
+        }
+
+        private static void SetComplexFieldEntryValue(dynamic complexRecordset, object? value)
+        {
+            var field = GetRecordsetField(complexRecordset, "Value");
+            if (field == null)
+            {
+                var fields = TryGetDynamicProperty(complexRecordset, "Fields")
+                    ?? throw new InvalidOperationException("Complex field entry fields collection is unavailable.");
+                foreach (var currentField in fields)
+                {
+                    var name = SafeToString(TryGetDynamicProperty(currentField, "Name"));
+                    if (string.Equals(name, "ID", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(name, "GUID", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    field = currentField;
+                    break;
+                }
+            }
+
+            if (field == null)
+                throw new InvalidOperationException("Unable to identify writable value field for complex data entry.");
+
+            SetDynamicProperty(field, "Value", value ?? DBNull.Value);
+        }
+
         private bool FieldExists(string tableName, string fieldName)
         {
             EnsureOleDbConnection();
@@ -6895,6 +7254,39 @@ namespace MS.Access.MCP.Interop
             var field = FindTableField(tableDef, fieldName)
                 ?? throw new InvalidOperationException($"Field not found: {tableName}.{fieldName}");
             return field;
+        }
+
+        private static dynamic ResolveDaoDocument(dynamic accessApp, string containerName, string documentName)
+        {
+            var currentDb = TryGetCurrentDb(accessApp)
+                ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+            var containers = TryGetDynamicProperty(currentDb, "Containers")
+                ?? throw new InvalidOperationException("DAO Containers collection is unavailable.");
+
+            dynamic? targetContainer = null;
+            foreach (var container in containers)
+            {
+                var currentName = SafeToString(TryGetDynamicProperty(container, "Name"));
+                if (string.Equals(currentName, containerName, StringComparison.OrdinalIgnoreCase))
+                {
+                    targetContainer = container;
+                    break;
+                }
+            }
+
+            if (targetContainer == null)
+                throw new InvalidOperationException($"Container not found: {containerName}");
+
+            var documents = TryGetDynamicProperty(targetContainer, "Documents")
+                ?? throw new InvalidOperationException($"Documents collection is unavailable for container '{containerName}'.");
+            foreach (var document in documents)
+            {
+                var currentName = SafeToString(TryGetDynamicProperty(document, "Name"));
+                if (string.Equals(currentName, documentName, StringComparison.OrdinalIgnoreCase))
+                    return document;
+            }
+
+            throw new InvalidOperationException($"Document not found: {containerName}.{documentName}");
         }
 
         private static dynamic? FindDaoProperty(dynamic owner, string propertyName)
@@ -10319,6 +10711,20 @@ namespace MS.Access.MCP.Interop
         public string? ValidationText { get; set; }
     }
 
+    public class TableValidationInfo
+    {
+        public string TableName { get; set; } = "";
+        public string? ValidationRule { get; set; }
+        public string? ValidationText { get; set; }
+    }
+
+    public class TableFieldDescriptionInfo
+    {
+        public string TableName { get; set; } = "";
+        public string FieldName { get; set; } = "";
+        public string? Description { get; set; }
+    }
+
     public class QueryPropertiesInfo
     {
         public string QueryName { get; set; } = "";
@@ -10354,6 +10760,44 @@ namespace MS.Access.MCP.Interop
         public bool? LimitToList { get; set; }
         public bool? AllowMultipleValues { get; set; }
         public int? DisplayControl { get; set; }
+    }
+
+    public class FieldAttributesInfo
+    {
+        public string TableName { get; set; } = "";
+        public string FieldName { get; set; } = "";
+        public int TypeCode { get; set; }
+        public int Size { get; set; }
+        public bool Required { get; set; }
+        public bool AllowZeroLength { get; set; }
+        public int Attributes { get; set; }
+        public bool? AllowMultipleValues { get; set; }
+        public bool? IsComplex { get; set; }
+    }
+
+    public class MultiValueFieldInfo
+    {
+        public string TableName { get; set; } = "";
+        public string FieldName { get; set; } = "";
+        public int Attributes { get; set; }
+        public bool? AllowMultipleValues { get; set; }
+        public bool? IsComplex { get; set; }
+    }
+
+    public class MultiValueFieldRecordInfo
+    {
+        public string TableName { get; set; } = "";
+        public string FieldName { get; set; } = "";
+        public int RowIndex { get; set; }
+        public List<object?> Values { get; set; } = new();
+        public List<Dictionary<string, object?>> Entries { get; set; } = new();
+    }
+
+    public class MultiValueFieldUpdateInfo
+    {
+        public string TableName { get; set; } = "";
+        public string FieldName { get; set; } = "";
+        public int ValuesWritten { get; set; }
     }
 
     public class VBAReferenceInfo
@@ -10506,6 +10950,15 @@ namespace MS.Access.MCP.Interop
         public string? Owner { get; set; }
         public string? DateCreated { get; set; }
         public string? LastUpdated { get; set; }
+    }
+
+    public class DaoDocumentPropertyInfo
+    {
+        public string ContainerName { get; set; } = "";
+        public string DocumentName { get; set; } = "";
+        public string Name { get; set; } = "";
+        public int TypeCode { get; set; }
+        public object? Value { get; set; }
     }
 
     public class FormInfo
