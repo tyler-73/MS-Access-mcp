@@ -4834,6 +4834,233 @@ namespace MS.Access.MCP.Interop
             releaseOleDb: true);
         }
 
+        public object? ExecuteVba(string expression)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(expression)) throw new ArgumentException("expression is required.", nameof(expression));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                object? value;
+                try
+                {
+                    value = InvokeDynamicMethod(accessApp, "Eval", expression.Trim());
+                }
+                catch
+                {
+                    value = accessApp.Eval(expression.Trim());
+                }
+
+                return value == null ? null : NormalizeValue(value);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public object? RunVbaProcedure(string procedureName, List<object?>? args = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(procedureName)) throw new ArgumentException("procedureName is required.", nameof(procedureName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var invocation = new List<object?> { procedureName.Trim() };
+                if (args != null && args.Count > 0)
+                    invocation.AddRange(args);
+
+                var result = InvokeDynamicMethod(accessApp, "Run", invocation.ToArray());
+                return result == null ? null : NormalizeValue(result);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void CreateModule(string moduleName, string? projectName = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(moduleName)) throw new ArgumentException("moduleName is required.", nameof(moduleName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var project = FindVbProject(accessApp, projectName)
+                    ?? throw new InvalidOperationException("No VBA project is available in the current Access database.");
+                if (FindVbComponent(project, moduleName) != null)
+                    throw new InvalidOperationException($"VBA module already exists: {moduleName}");
+
+                var component = InvokeDynamicMethod(project.VBComponents, "Add", 1)
+                    ?? throw new InvalidOperationException("Failed to create VBA module.");
+                SetDynamicProperty(component, "Name", moduleName);
+                TrySaveModule(accessApp, moduleName);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void DeleteModule(string moduleName, string? projectName = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(moduleName)) throw new ArgumentException("moduleName is required.", nameof(moduleName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var project = FindVbProject(accessApp, projectName)
+                    ?? throw new InvalidOperationException("No VBA project is available in the current Access database.");
+                var component = FindVbComponent(project, moduleName)
+                    ?? throw new InvalidOperationException($"VBA module was not found: {moduleName}");
+                _ = InvokeDynamicMethod(project.VBComponents, "Remove", component);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void RenameModule(string moduleName, string newModuleName, string? projectName = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(moduleName)) throw new ArgumentException("moduleName is required.", nameof(moduleName));
+            if (string.IsNullOrWhiteSpace(newModuleName)) throw new ArgumentException("newModuleName is required.", nameof(newModuleName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var project = FindVbProject(accessApp, projectName)
+                    ?? throw new InvalidOperationException("No VBA project is available in the current Access database.");
+                var component = FindVbComponent(project, moduleName)
+                    ?? throw new InvalidOperationException($"VBA module was not found: {moduleName}");
+                if (FindVbComponent(project, newModuleName) != null)
+                    throw new InvalidOperationException($"A VBA module already exists with name '{newModuleName}'.");
+
+                SetDynamicProperty(component, "Name", newModuleName.Trim());
+                TrySaveModule(accessApp, newModuleName.Trim());
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public CompilationErrorsInfo GetCompilationErrors()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var result = new CompilationErrorsInfo
+                {
+                    Compiled = true
+                };
+
+                try
+                {
+                    try
+                    {
+                        accessApp.DoCmd.RunCommand(125); // acCmdCompileAndSaveAllModules
+                    }
+                    catch
+                    {
+                        accessApp.RunCommand(125);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    result.Compiled = false;
+                    result.Errors.Add(new CompilationErrorInfo
+                    {
+                        Message = ex.Message
+                    });
+                }
+
+                return result;
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public List<AllProcedureInfo> ListAllProcedures(string? projectName = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var project = FindVbProject(accessApp, projectName)
+                    ?? throw new InvalidOperationException("No VBA project is available in the current Access database.");
+                var resolvedProjectName = SafeToString(TryGetDynamicProperty(project, "Name")) ?? (projectName ?? "CurrentProject");
+
+                var procedures = new List<AllProcedureInfo>();
+                foreach (var component in project.VBComponents)
+                {
+                    var moduleName = SafeToString(TryGetDynamicProperty(component, "Name"));
+                    if (string.IsNullOrWhiteSpace(moduleName))
+                        continue;
+
+                    var codeModule = TryGetDynamicProperty(component, "CodeModule");
+                    if (codeModule == null)
+                        continue;
+
+                    var lineCount = ToInt32(TryGetDynamicProperty(codeModule, "CountOfLines"));
+                    if (lineCount <= 0)
+                        continue;
+
+                    var code = SafeToString(TryGetDynamicProperty(codeModule, "Lines", 1, lineCount)) ?? string.Empty;
+                    var parsed = ParseModuleProcedures(code);
+                    foreach (var entry in parsed)
+                    {
+                        procedures.Add(new AllProcedureInfo
+                        {
+                            ProjectName = resolvedProjectName,
+                            ModuleName = moduleName,
+                            ProcedureName = entry.Name,
+                            ProcedureType = entry.ProcedureType,
+                            StartLine = entry.StartLine,
+                            LineCount = entry.LineCount
+                        });
+                    }
+                }
+
+                return procedures
+                    .OrderBy(p => p.ModuleName, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(p => p.StartLine)
+                    .ToList();
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public VbaProjectPropertiesInfo GetVbaProjectProperties(string? projectName = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var project = FindVbProject(accessApp, projectName)
+                    ?? throw new InvalidOperationException("No VBA project is available in the current Access database.");
+                return BuildVbaProjectPropertiesInfo(project);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public VbaProjectPropertiesInfo SetVbaProjectProperties(string? projectName = null, string? name = null, string? description = null, string? helpFile = null, int? helpContextId = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (name == null && description == null && helpFile == null && !helpContextId.HasValue)
+                throw new ArgumentException("At least one project property is required.");
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var project = FindVbProject(accessApp, projectName)
+                    ?? throw new InvalidOperationException("No VBA project is available in the current Access database.");
+                if (name != null)
+                    SetDynamicProperty(project, "Name", name);
+                if (description != null)
+                    SetDynamicProperty(project, "Description", description);
+                if (helpFile != null)
+                    SetDynamicProperty(project, "HelpFile", helpFile);
+                if (helpContextId.HasValue)
+                    SetDynamicProperty(project, "HelpContextID", helpContextId.Value);
+
+                return BuildVbaProjectPropertiesInfo(project);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
         public ModuleAnalysisInfo GetModuleInfo(string? projectName, string moduleName)
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
@@ -9263,6 +9490,20 @@ namespace MS.Access.MCP.Interop
             return null;
         }
 
+        private static VbaProjectPropertiesInfo BuildVbaProjectPropertiesInfo(dynamic project)
+        {
+            var protection = ToNullableInt(TryGetDynamicProperty(project, "Protection"));
+            return new VbaProjectPropertiesInfo
+            {
+                ProjectName = SafeToString(TryGetDynamicProperty(project, "Name")) ?? "",
+                Description = SafeToString(TryGetDynamicProperty(project, "Description")),
+                HelpFile = SafeToString(TryGetDynamicProperty(project, "HelpFile")),
+                HelpContextId = ToNullableInt(TryGetDynamicProperty(project, "HelpContextID")),
+                Protection = protection,
+                IsLocked = protection.HasValue && protection.Value != 0
+            };
+        }
+
         private static List<ModuleProcedureInfo> ParseModuleProcedures(string code)
         {
             if (string.IsNullOrWhiteSpace(code))
@@ -11005,6 +11246,37 @@ namespace MS.Access.MCP.Interop
         public string ProcedureType { get; set; } = "";
         public int StartLine { get; set; }
         public int LineCount { get; set; }
+    }
+
+    public class AllProcedureInfo
+    {
+        public string ProjectName { get; set; } = "";
+        public string ModuleName { get; set; } = "";
+        public string ProcedureName { get; set; } = "";
+        public string ProcedureType { get; set; } = "";
+        public int StartLine { get; set; }
+        public int LineCount { get; set; }
+    }
+
+    public class CompilationErrorInfo
+    {
+        public string Message { get; set; } = "";
+    }
+
+    public class CompilationErrorsInfo
+    {
+        public bool Compiled { get; set; }
+        public List<CompilationErrorInfo> Errors { get; set; } = new();
+    }
+
+    public class VbaProjectPropertiesInfo
+    {
+        public string ProjectName { get; set; } = "";
+        public string? Description { get; set; }
+        public string? HelpFile { get; set; }
+        public int? HelpContextId { get; set; }
+        public int? Protection { get; set; }
+        public bool IsLocked { get; set; }
     }
 
     public class ModuleFindResult

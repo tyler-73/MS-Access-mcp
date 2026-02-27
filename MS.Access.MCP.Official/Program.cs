@@ -311,6 +311,15 @@ class Program
                 new { name = "set_vba_code", description = "Set VBA code in a module", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" }, code = new { type = "string" } }, required = new string[] { "project_name", "module_name", "code" } } },
                 new { name = "add_vba_procedure", description = "Add a VBA procedure to a module", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" }, procedure_name = new { type = "string" }, code = new { type = "string" } }, required = new string[] { "project_name", "module_name", "procedure_name", "code" } } },
                 new { name = "compile_vba", description = "Compile VBA code", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "execute_vba", description = "Evaluate a VBA expression using Application.Eval. WARNING: This can execute arbitrary VBA code and should only be used with trusted input.", inputSchema = new { type = "object", properties = new { expression = new { type = "string" } }, required = new string[] { "expression" } } },
+                new { name = "run_vba_procedure", description = "Run a named VBA Sub/Function using Application.Run.", inputSchema = new { type = "object", properties = new { procedure_name = new { type = "string" }, args = new { type = "array" } }, required = new string[] { "procedure_name" } } },
+                new { name = "create_module", description = "Create a new standard VBA module.", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" } }, required = new string[] { "module_name" } } },
+                new { name = "delete_module", description = "Delete a VBA module.", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" } }, required = new string[] { "module_name" } } },
+                new { name = "rename_module", description = "Rename a VBA module.", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" }, new_module_name = new { type = "string" } }, required = new string[] { "module_name", "new_module_name" } } },
+                new { name = "get_compilation_errors", description = "Compile VBA and return any compilation errors.", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "list_all_procedures", description = "List procedures across all modules in a VBA project.", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" } } } },
+                new { name = "get_vba_project_properties", description = "Get VBA project properties.", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" } } } },
+                new { name = "set_vba_project_properties", description = "Set VBA project properties.", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, name = new { type = "string" }, description = new { type = "string" }, help_file = new { type = "string" }, help_context_id = new { type = "integer" } } } },
                 new { name = "get_module_info", description = "Get metadata for a VBA module.", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" } }, required = new string[] { "module_name" } } },
                 new { name = "list_procedures", description = "List procedures in a VBA module.", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" } }, required = new string[] { "module_name" } } },
                 new { name = "get_procedure_code", description = "Get code for a single procedure in a VBA module.", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" }, procedure_name = new { type = "string" } }, required = new string[] { "module_name", "procedure_name" } } },
@@ -555,6 +564,15 @@ class Program
             "set_vba_code" => HandleSetVBACode(accessService, toolArguments),
             "add_vba_procedure" => HandleAddVBAProcedure(accessService, toolArguments),
             "compile_vba" => HandleCompileVBA(accessService, toolArguments),
+            "execute_vba" => HandleExecuteVba(accessService, toolArguments),
+            "run_vba_procedure" => HandleRunVbaProcedure(accessService, toolArguments),
+            "create_module" => HandleCreateModule(accessService, toolArguments),
+            "delete_module" => HandleDeleteModule(accessService, toolArguments),
+            "rename_module" => HandleRenameModule(accessService, toolArguments),
+            "get_compilation_errors" => HandleGetCompilationErrors(accessService, toolArguments),
+            "list_all_procedures" => HandleListAllProcedures(accessService, toolArguments),
+            "get_vba_project_properties" => HandleGetVbaProjectProperties(accessService, toolArguments),
+            "set_vba_project_properties" => HandleSetVbaProjectProperties(accessService, toolArguments),
             "get_module_info" => HandleGetModuleInfo(accessService, toolArguments),
             "list_procedures" => HandleListProcedures(accessService, toolArguments),
             "get_procedure_code" => HandleGetProcedureCode(accessService, toolArguments),
@@ -4229,6 +4247,167 @@ class Program
         }
     }
 
+    static object HandleExecuteVba(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "expression", out var expression, out var expressionError))
+                return expressionError;
+
+            var result = accessService.ExecuteVba(expression);
+            return new { success = true, result = result };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("execute_vba", ex);
+        }
+    }
+
+    static object HandleRunVbaProcedure(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "procedure_name", out var procedureName, out var procedureNameError))
+                return procedureNameError;
+
+            if (!TryGetOptionalPrimitiveArray(arguments, "args", out var args, out var argsError))
+                return argsError;
+
+            var result = accessService.RunVbaProcedure(procedureName, args);
+            return new { success = true, result = result };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("run_vba_procedure", ex);
+        }
+    }
+
+    static object HandleCreateModule(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "module_name", out var moduleName, out var moduleNameError))
+                return moduleNameError;
+
+            _ = TryGetOptionalString(arguments, "project_name", out var projectName);
+            accessService.CreateModule(moduleName, string.IsNullOrWhiteSpace(projectName) ? null : projectName);
+            return new { success = true, module_name = moduleName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("create_module", ex);
+        }
+    }
+
+    static object HandleDeleteModule(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "module_name", out var moduleName, out var moduleNameError))
+                return moduleNameError;
+
+            _ = TryGetOptionalString(arguments, "project_name", out var projectName);
+            accessService.DeleteModule(moduleName, string.IsNullOrWhiteSpace(projectName) ? null : projectName);
+            return new { success = true, module_name = moduleName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("delete_module", ex);
+        }
+    }
+
+    static object HandleRenameModule(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "module_name", out var moduleName, out var moduleNameError))
+                return moduleNameError;
+            if (!TryGetRequiredString(arguments, "new_module_name", out var newModuleName, out var newModuleNameError))
+                return newModuleNameError;
+
+            _ = TryGetOptionalString(arguments, "project_name", out var projectName);
+            accessService.RenameModule(moduleName, newModuleName, string.IsNullOrWhiteSpace(projectName) ? null : projectName);
+            return new { success = true, module_name = moduleName, new_module_name = newModuleName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("rename_module", ex);
+        }
+    }
+
+    static object HandleGetCompilationErrors(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var compilation = accessService.GetCompilationErrors();
+            return new { success = true, compilation = compilation };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_compilation_errors", ex);
+        }
+    }
+
+    static object HandleListAllProcedures(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            _ = TryGetOptionalString(arguments, "project_name", out var projectName);
+            var procedures = accessService.ListAllProcedures(string.IsNullOrWhiteSpace(projectName) ? null : projectName);
+            return new { success = true, procedures = procedures.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("list_all_procedures", ex);
+        }
+    }
+
+    static object HandleGetVbaProjectProperties(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            _ = TryGetOptionalString(arguments, "project_name", out var projectName);
+            var properties = accessService.GetVbaProjectProperties(string.IsNullOrWhiteSpace(projectName) ? null : projectName);
+            return new { success = true, properties = properties };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_vba_project_properties", ex);
+        }
+    }
+
+    static object HandleSetVbaProjectProperties(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            _ = TryGetOptionalString(arguments, "project_name", out var projectName);
+            _ = TryGetOptionalString(arguments, "name", out var name);
+            _ = TryGetOptionalString(arguments, "description", out var description);
+            _ = TryGetOptionalString(arguments, "help_file", out var helpFile);
+            if (!TryGetOptionalInt(arguments, "help_context_id", out var helpContextId, out var helpContextIdError))
+                return helpContextIdError;
+
+            var hasName = !string.IsNullOrWhiteSpace(name);
+            var hasDescription = !string.IsNullOrWhiteSpace(description);
+            var hasHelpFile = !string.IsNullOrWhiteSpace(helpFile);
+            if (!hasName && !hasDescription && !hasHelpFile && !helpContextId.HasValue)
+                return new { success = false, error = "At least one of name, description, help_file, or help_context_id is required" };
+
+            var properties = accessService.SetVbaProjectProperties(
+                string.IsNullOrWhiteSpace(projectName) ? null : projectName,
+                hasName ? name : null,
+                hasDescription ? description : null,
+                hasHelpFile ? helpFile : null,
+                helpContextId);
+
+            return new { success = true, properties = properties };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_vba_project_properties", ex);
+        }
+    }
+
     static object HandleGetModuleInfo(AccessInteropService accessService, JsonElement arguments)
     {
         try
@@ -5763,6 +5942,59 @@ class Program
                     break;
                 default:
                     error = new { success = false, error = $"{propertyName} must be an array of primitive JSON values" };
+                    return false;
+            }
+        }
+
+        error = new { success = true };
+        return true;
+    }
+
+    static bool TryGetOptionalPrimitiveArray(JsonElement arguments, string propertyName, out List<object?> values, out object error)
+    {
+        values = new List<object?>();
+        if (!arguments.TryGetProperty(propertyName, out var element))
+        {
+            error = new { success = true };
+            return true;
+        }
+
+        if (element.ValueKind == JsonValueKind.Null || element.ValueKind == JsonValueKind.Undefined)
+        {
+            error = new { success = true };
+            return true;
+        }
+
+        if (element.ValueKind != JsonValueKind.Array)
+        {
+            error = new { success = false, error = $"{propertyName} must be an array when provided" };
+            return false;
+        }
+
+        foreach (var item in element.EnumerateArray())
+        {
+            switch (item.ValueKind)
+            {
+                case JsonValueKind.Null:
+                    values.Add(null);
+                    break;
+                case JsonValueKind.String:
+                    values.Add(item.GetString());
+                    break;
+                case JsonValueKind.True:
+                case JsonValueKind.False:
+                    values.Add(item.GetBoolean());
+                    break;
+                case JsonValueKind.Number:
+                    if (item.TryGetInt64(out var intValue))
+                        values.Add(intValue);
+                    else if (item.TryGetDouble(out var doubleValue))
+                        values.Add(doubleValue);
+                    else
+                        values.Add(item.GetRawText());
+                    break;
+                default:
+                    error = new { success = false, error = $"{propertyName} must contain only primitive JSON values" };
                     return false;
             }
         }
