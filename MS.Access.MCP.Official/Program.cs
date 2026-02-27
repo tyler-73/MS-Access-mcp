@@ -336,11 +336,19 @@ class Program
                 new { name = "delete_report_control", description = "Delete a control from a report in design view.", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" }, control_name = new { type = "string" } }, required = new string[] { "report_name", "control_name" } } },
                 new { name = "get_form_properties", description = "Get form design properties.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
                 new { name = "set_form_property", description = "Set a form design property.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" }, property_name = new { type = "string" }, value = new { type = "string" } }, required = new string[] { "form_name", "property_name", "value" } } },
+                new { name = "set_form_record_source", description = "Set form RecordSource at design time.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" }, record_source = new { type = "string" } }, required = new string[] { "form_name", "record_source" } } },
                 new { name = "get_report_properties", description = "Get report design properties.", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" } }, required = new string[] { "report_name" } } },
                 new { name = "set_report_property", description = "Set a report design property.", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" }, property_name = new { type = "string" }, value = new { type = "string" } }, required = new string[] { "report_name", "property_name", "value" } } },
+                new { name = "set_report_record_source", description = "Set report RecordSource at design time.", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" }, record_source = new { type = "string" } }, required = new string[] { "report_name", "record_source" } } },
+                new { name = "get_report_grouping", description = "Get GroupLevel configuration for a report.", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" } }, required = new string[] { "report_name" } } },
+                new { name = "set_report_grouping", description = "Add or modify report GroupLevel configuration.", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" }, expression = new { type = "string" }, index = new { type = "integer" }, sort_order = new { type = "integer" }, group_on = new { type = "integer" }, group_interval = new { type = "integer" }, group_header = new { type = "boolean" }, group_footer = new { type = "boolean" }, keep_together = new { type = "integer" } }, required = new string[] { "report_name" } } },
+                new { name = "delete_report_grouping", description = "Delete a GroupLevel from a report.", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" }, index = new { type = "integer" } }, required = new string[] { "report_name", "index" } } },
+                new { name = "get_report_sorting", description = "Get report sorting configuration.", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" } }, required = new string[] { "report_name" } } },
                 new { name = "get_tab_order", description = "Get tab order for form controls.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
                 new { name = "set_tab_order", description = "Set tab order for form controls.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" }, control_names = new { type = "array", items = new { type = "string" } } }, required = new string[] { "form_name", "control_names" } } },
                 new { name = "get_page_setup", description = "Get page setup properties for a form or report.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string", description = "form or report" }, object_name = new { type = "string" } }, required = new string[] { "object_type", "object_name" } } },
+                new { name = "set_page_setup", description = "Set page setup properties for a form or report.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string", description = "form or report" }, object_name = new { type = "string" }, top_margin = new { type = "integer" }, bottom_margin = new { type = "integer" }, left_margin = new { type = "integer" }, right_margin = new { type = "integer" }, orientation = new { type = "integer" }, paper_size = new { type = "integer" }, data_only = new { type = "boolean" } }, required = new string[] { "object_type", "object_name" } } },
+                new { name = "get_printer_info", description = "Get current printer and installed printer details.", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "export_form_to_text", description = "Export a form to text format", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" }, mode = new { type = "string", @enum = new[] { "json", "access_text" }, description = "Optional mode. Defaults to json." } }, required = new string[] { "form_name" } } },
                 new { name = "import_form_from_text", description = "Import a form from text format", inputSchema = new { type = "object", properties = new { form_data = new { type = "string" }, form_name = new { type = "string", description = "Optional form name override. Required for some access_text payloads." }, mode = new { type = "string", @enum = new[] { "json", "access_text" }, description = "Optional mode. Defaults to json." } }, required = new string[] { "form_data" } } },
                 new { name = "delete_form", description = "Delete a form from the database", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
@@ -562,11 +570,19 @@ class Program
             "delete_report_control" => HandleDeleteReportControl(accessService, toolArguments),
             "get_form_properties" => HandleGetFormProperties(accessService, toolArguments),
             "set_form_property" => HandleSetFormProperty(accessService, toolArguments),
+            "set_form_record_source" => HandleSetFormRecordSource(accessService, toolArguments),
             "get_report_properties" => HandleGetReportProperties(accessService, toolArguments),
             "set_report_property" => HandleSetReportProperty(accessService, toolArguments),
+            "set_report_record_source" => HandleSetReportRecordSource(accessService, toolArguments),
+            "get_report_grouping" => HandleGetReportGrouping(accessService, toolArguments),
+            "set_report_grouping" => HandleSetReportGrouping(accessService, toolArguments),
+            "delete_report_grouping" => HandleDeleteReportGrouping(accessService, toolArguments),
+            "get_report_sorting" => HandleGetReportSorting(accessService, toolArguments),
             "get_tab_order" => HandleGetTabOrder(accessService, toolArguments),
             "set_tab_order" => HandleSetTabOrder(accessService, toolArguments),
             "get_page_setup" => HandleGetPageSetup(accessService, toolArguments),
+            "set_page_setup" => HandleSetPageSetup(accessService, toolArguments),
+            "get_printer_info" => HandleGetPrinterInfo(accessService, toolArguments),
             "export_form_to_text" => HandleExportFormToText(accessService, toolArguments),
             "import_form_from_text" => HandleImportFormFromText(accessService, toolArguments),
             "delete_form" => HandleDeleteForm(accessService, toolArguments),
@@ -4847,6 +4863,24 @@ class Program
         }
     }
 
+    static object HandleSetFormRecordSource(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var formNameError))
+                return formNameError;
+            if (!TryGetRequiredString(arguments, "record_source", out var recordSource, out var recordSourceError))
+                return recordSourceError;
+
+            accessService.SetFormRecordSource(formName, recordSource);
+            return new { success = true, form_name = formName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_form_record_source", ex);
+        }
+    }
+
     static object HandleGetReportProperties(AccessInteropService accessService, JsonElement arguments)
     {
         try
@@ -4880,6 +4914,118 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("set_report_property", ex);
+        }
+    }
+
+    static object HandleSetReportRecordSource(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "report_name", out var reportName, out var reportNameError))
+                return reportNameError;
+            if (!TryGetRequiredString(arguments, "record_source", out var recordSource, out var recordSourceError))
+                return recordSourceError;
+
+            accessService.SetReportRecordSource(reportName, recordSource);
+            return new { success = true, report_name = reportName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_report_record_source", ex);
+        }
+    }
+
+    static object HandleGetReportGrouping(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "report_name", out var reportName, out var reportNameError))
+                return reportNameError;
+
+            var grouping = accessService.GetReportGrouping(reportName);
+            return new { success = true, grouping = grouping.ToArray() };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_report_grouping", ex);
+        }
+    }
+
+    static object HandleSetReportGrouping(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "report_name", out var reportName, out var reportNameError))
+                return reportNameError;
+
+            _ = TryGetOptionalString(arguments, "expression", out var expression);
+            if (!TryGetOptionalInt(arguments, "index", out var index, out var indexError))
+                return indexError;
+            if (!TryGetOptionalInt(arguments, "sort_order", out var sortOrder, out var sortOrderError))
+                return sortOrderError;
+            if (!TryGetOptionalInt(arguments, "group_on", out var groupOn, out var groupOnError))
+                return groupOnError;
+            if (!TryGetOptionalInt(arguments, "group_interval", out var groupInterval, out var groupIntervalError))
+                return groupIntervalError;
+            if (!TryGetOptionalBoolNullable(arguments, "group_header", out var groupHeader, out var groupHeaderError))
+                return groupHeaderError;
+            if (!TryGetOptionalBoolNullable(arguments, "group_footer", out var groupFooter, out var groupFooterError))
+                return groupFooterError;
+            if (!TryGetOptionalInt(arguments, "keep_together", out var keepTogether, out var keepTogetherError))
+                return keepTogetherError;
+
+            var grouping = accessService.SetReportGrouping(
+                reportName,
+                expression: string.IsNullOrWhiteSpace(expression) ? null : expression,
+                index: index,
+                sortOrder: sortOrder,
+                groupOn: groupOn,
+                groupInterval: groupInterval,
+                groupHeader: groupHeader,
+                groupFooter: groupFooter,
+                keepTogether: keepTogether);
+
+            return new { success = true, grouping = grouping };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_report_grouping", ex);
+        }
+    }
+
+    static object HandleDeleteReportGrouping(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "report_name", out var reportName, out var reportNameError))
+                return reportNameError;
+            if (!TryGetOptionalInt(arguments, "index", out var index, out var indexError))
+                return indexError;
+            if (!index.HasValue || index.Value < 0)
+                return new { success = false, error = "index must be an integer greater than or equal to 0" };
+
+            accessService.DeleteReportGrouping(reportName, index.Value);
+            return new { success = true, report_name = reportName, index = index.Value };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("delete_report_grouping", ex);
+        }
+    }
+
+    static object HandleGetReportSorting(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "report_name", out var reportName, out var reportNameError))
+                return reportNameError;
+
+            var sorting = accessService.GetReportSorting(reportName);
+            return new { success = true, sorting = sorting };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_report_sorting", ex);
         }
     }
 
@@ -4932,6 +5078,62 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("get_page_setup", ex);
+        }
+    }
+
+    static object HandleSetPageSetup(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "object_type", out var objectType, out var objectTypeError))
+                return objectTypeError;
+            if (!TryGetRequiredString(arguments, "object_name", out var objectName, out var objectNameError))
+                return objectNameError;
+
+            if (!TryGetOptionalInt(arguments, "top_margin", out var topMargin, out var topMarginError))
+                return topMarginError;
+            if (!TryGetOptionalInt(arguments, "bottom_margin", out var bottomMargin, out var bottomMarginError))
+                return bottomMarginError;
+            if (!TryGetOptionalInt(arguments, "left_margin", out var leftMargin, out var leftMarginError))
+                return leftMarginError;
+            if (!TryGetOptionalInt(arguments, "right_margin", out var rightMargin, out var rightMarginError))
+                return rightMarginError;
+            if (!TryGetOptionalInt(arguments, "orientation", out var orientation, out var orientationError))
+                return orientationError;
+            if (!TryGetOptionalInt(arguments, "paper_size", out var paperSize, out var paperSizeError))
+                return paperSizeError;
+            if (!TryGetOptionalBoolNullable(arguments, "data_only", out var dataOnly, out var dataOnlyError))
+                return dataOnlyError;
+
+            accessService.SetPageSetup(
+                objectType,
+                objectName,
+                topMargin,
+                bottomMargin,
+                leftMargin,
+                rightMargin,
+                orientation,
+                paperSize,
+                dataOnly);
+
+            return new { success = true };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_page_setup", ex);
+        }
+    }
+
+    static object HandleGetPrinterInfo(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var printerInfo = accessService.GetPrinterInfo();
+            return new { success = true, printer_info = printerInfo };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_printer_info", ex);
         }
     }
 

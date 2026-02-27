@@ -5531,6 +5531,12 @@ namespace MS.Access.MCP.Interop
             releaseOleDb: true);
         }
 
+        public void SetFormRecordSource(string formName, string recordSource)
+        {
+            if (string.IsNullOrWhiteSpace(recordSource)) throw new ArgumentException("recordSource is required.", nameof(recordSource));
+            SetFormProperty(formName, "RecordSource", recordSource);
+        }
+
         public ReportDesignPropertiesInfo GetReportProperties(string reportName)
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
@@ -5564,6 +5570,12 @@ namespace MS.Access.MCP.Interop
             },
             requireExclusive: true,
             releaseOleDb: true);
+        }
+
+        public void SetReportRecordSource(string reportName, string recordSource)
+        {
+            if (string.IsNullOrWhiteSpace(recordSource)) throw new ArgumentException("recordSource is required.", nameof(recordSource));
+            SetReportProperty(reportName, "RecordSource", recordSource);
         }
 
         public void SetReportProperty(string reportName, string propertyName, object value)
@@ -5728,6 +5740,281 @@ namespace MS.Access.MCP.Interop
             },
             requireExclusive: true,
             releaseOleDb: true);
+        }
+
+        public void SetPageSetup(string objectType, string objectName, int? topMargin = null, int? bottomMargin = null, int? leftMargin = null, int? rightMargin = null, int? orientation = null, int? paperSize = null, bool? dataOnly = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(objectType)) throw new ArgumentException("Object type is required.", nameof(objectType));
+            if (string.IsNullOrWhiteSpace(objectName)) throw new ArgumentException("Object name is required.", nameof(objectName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var normalizedType = NormalizeEnumToken(objectType);
+                var isReport = normalizedType == "report" || normalizedType == "acreport";
+                bool openedHere;
+                object targetObject;
+                if (isReport)
+                {
+                    targetObject = EnsureReportOpen(accessApp, objectName, true, out openedHere);
+                }
+                else if (normalizedType == "form" || normalizedType == "acform")
+                {
+                    targetObject = EnsureFormOpen(accessApp, objectName, true, out openedHere);
+                }
+                else
+                {
+                    throw new ArgumentException("objectType must be form or report.", nameof(objectType));
+                }
+
+                try
+                {
+                    var printer = TryGetDynamicProperty(targetObject, "Printer");
+                    var pageSetupTarget = printer ?? targetObject;
+
+                    if (topMargin.HasValue)
+                        SetDynamicProperty(pageSetupTarget, "TopMargin", topMargin.Value);
+                    if (bottomMargin.HasValue)
+                        SetDynamicProperty(pageSetupTarget, "BottomMargin", bottomMargin.Value);
+                    if (leftMargin.HasValue)
+                        SetDynamicProperty(pageSetupTarget, "LeftMargin", leftMargin.Value);
+                    if (rightMargin.HasValue)
+                        SetDynamicProperty(pageSetupTarget, "RightMargin", rightMargin.Value);
+                    if (orientation.HasValue)
+                        SetDynamicProperty(pageSetupTarget, "Orientation", orientation.Value);
+                    if (paperSize.HasValue)
+                        SetDynamicProperty(pageSetupTarget, "PaperSize", paperSize.Value);
+                    if (dataOnly.HasValue)
+                        SetDynamicProperty(pageSetupTarget, "DataOnly", dataOnly.Value);
+
+                    accessApp.DoCmd.Save(isReport ? 3 : 2, objectName);
+                }
+                finally
+                {
+                    if (openedHere)
+                    {
+                        if (isReport)
+                            CloseReportInternal(accessApp, objectName, saveChanges: false);
+                        else
+                            CloseFormInternal(accessApp, objectName, saveChanges: false);
+                    }
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public List<ReportGroupingInfo> GetReportGrouping(string reportName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(reportName)) throw new ArgumentException("reportName is required.", nameof(reportName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var openedHere = false;
+                var report = EnsureReportOpen(accessApp, reportName, true, out openedHere);
+                try
+                {
+                    var results = new List<ReportGroupingInfo>();
+                    for (var index = 0; index < 128; index++)
+                    {
+                        var groupLevel = TryGetReportGroupLevel(report, index);
+                        if (groupLevel == null)
+                            break;
+
+                        results.Add(BuildReportGroupingInfo(groupLevel, index));
+                    }
+
+                    return results;
+                }
+                finally
+                {
+                    if (openedHere)
+                        CloseReportInternal(accessApp, reportName, saveChanges: false);
+                }
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public ReportGroupingInfo SetReportGrouping(string reportName, string? expression = null, int? index = null, int? sortOrder = null, int? groupOn = null, int? groupInterval = null, bool? groupHeader = null, bool? groupFooter = null, int? keepTogether = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(reportName)) throw new ArgumentException("reportName is required.", nameof(reportName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var openedHere = false;
+                var report = EnsureReportOpen(accessApp, reportName, true, out openedHere);
+                try
+                {
+                    dynamic groupLevel;
+                    int effectiveIndex;
+                    if (index.HasValue)
+                    {
+                        if (index.Value < 0)
+                            throw new ArgumentOutOfRangeException(nameof(index), "index must be greater than or equal to 0.");
+                        groupLevel = TryGetReportGroupLevel(report, index.Value)
+                            ?? throw new InvalidOperationException($"Group level index {index.Value} was not found.");
+                        effectiveIndex = index.Value;
+                    }
+                    else
+                    {
+                        if (string.IsNullOrWhiteSpace(expression))
+                            throw new ArgumentException("expression is required when creating a new group level.", nameof(expression));
+
+                        var headerValue = groupHeader ?? true;
+                        var footerValue = groupFooter ?? true;
+                        groupLevel = InvokeDynamicMethod(accessApp, "CreateGroupLevel", reportName, expression, headerValue, footerValue)
+                            ?? throw new InvalidOperationException("Failed to create report group level.");
+                        effectiveIndex = ToNullableInt(TryGetDynamicProperty(groupLevel, "GroupLevel")) ??
+                            ToNullableInt(TryGetDynamicProperty(groupLevel, "Index")) ??
+                            Math.Max(0, ToInt32(TryGetDynamicProperty(TryGetDynamicProperty(report, "GroupLevels"), "Count")) - 1);
+                    }
+
+                    if (expression != null)
+                        SetDynamicProperty(groupLevel, "ControlSource", expression);
+                    if (sortOrder.HasValue)
+                        SetDynamicProperty(groupLevel, "SortOrder", sortOrder.Value);
+                    if (groupOn.HasValue)
+                        SetDynamicProperty(groupLevel, "GroupOn", groupOn.Value);
+                    if (groupInterval.HasValue)
+                        SetDynamicProperty(groupLevel, "GroupInterval", groupInterval.Value);
+                    if (groupHeader.HasValue)
+                        SetDynamicProperty(groupLevel, "GroupHeader", groupHeader.Value);
+                    if (groupFooter.HasValue)
+                        SetDynamicProperty(groupLevel, "GroupFooter", groupFooter.Value);
+                    if (keepTogether.HasValue)
+                        SetDynamicProperty(groupLevel, "KeepTogether", keepTogether.Value);
+
+                    accessApp.DoCmd.Save(3, reportName);
+                    return BuildReportGroupingInfo(groupLevel, effectiveIndex);
+                }
+                finally
+                {
+                    if (openedHere)
+                        CloseReportInternal(accessApp, reportName, saveChanges: false);
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void DeleteReportGrouping(string reportName, int index)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(reportName)) throw new ArgumentException("reportName is required.", nameof(reportName));
+            if (index < 0) throw new ArgumentOutOfRangeException(nameof(index), "index must be greater than or equal to 0.");
+
+            ExecuteComOperation(accessApp =>
+            {
+                var openedHere = false;
+                var report = EnsureReportOpen(accessApp, reportName, true, out openedHere);
+                try
+                {
+                    var groupLevel = TryGetReportGroupLevel(report, index)
+                        ?? throw new InvalidOperationException($"Group level index {index} was not found.");
+                    var deleted = false;
+                    try
+                    {
+                        _ = InvokeDynamicMethod(groupLevel, "Delete");
+                        deleted = true;
+                    }
+                    catch
+                    {
+                        // Fall through to legacy fallback.
+                    }
+
+                    if (!deleted)
+                    {
+                        var groupLevels = TryGetDynamicProperty(report, "GroupLevels");
+                        if (groupLevels != null)
+                        {
+                            _ = InvokeDynamicMethod(groupLevels, "Delete", index);
+                            deleted = true;
+                        }
+                    }
+
+                    if (!deleted)
+                        throw new InvalidOperationException($"Failed to delete group level index {index}.");
+
+                    accessApp.DoCmd.Save(3, reportName);
+                }
+                finally
+                {
+                    if (openedHere)
+                        CloseReportInternal(accessApp, reportName, saveChanges: false);
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public ReportSortingInfo GetReportSorting(string reportName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(reportName)) throw new ArgumentException("reportName is required.", nameof(reportName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var openedHere = false;
+                var report = EnsureReportOpen(accessApp, reportName, true, out openedHere);
+                try
+                {
+                    var groupingLevels = new List<ReportGroupingInfo>();
+                    for (var index = 0; index < 128; index++)
+                    {
+                        var groupLevel = TryGetReportGroupLevel(report, index);
+                        if (groupLevel == null)
+                            break;
+                        groupingLevels.Add(BuildReportGroupingInfo(groupLevel, index));
+                    }
+
+                    return new ReportSortingInfo
+                    {
+                        ReportName = reportName,
+                        OrderBy = SafeToString(TryGetDynamicProperty(report, "OrderBy")),
+                        OrderByOn = ToNullableBool(TryGetDynamicProperty(report, "OrderByOn")),
+                        GroupLevels = groupingLevels
+                    };
+                }
+                finally
+                {
+                    if (openedHere)
+                        CloseReportInternal(accessApp, reportName, saveChanges: false);
+                }
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public PrinterInfoResult GetPrinterInfo()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var result = new PrinterInfoResult();
+                var activePrinter = TryGetDynamicProperty(accessApp, "Printer");
+                if (activePrinter != null)
+                    result.ActivePrinter = BuildPrinterInfo(activePrinter);
+
+                var printers = TryGetDynamicProperty(accessApp, "Printers");
+                if (printers != null)
+                {
+                    foreach (var printer in printers)
+                    {
+                        result.Printers.Add(BuildPrinterInfo(printer));
+                    }
+                }
+
+                result.Printers = result.Printers
+                    .OrderBy(p => p.DeviceName, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                return result;
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
         }
 
         public List<VBAReferenceInfo> GetVbaReferences(string? projectName = null)
@@ -9048,6 +9335,71 @@ namespace MS.Access.MCP.Interop
             };
         }
 
+        private static dynamic? TryGetReportGroupLevel(dynamic report, int index)
+        {
+            if (index < 0)
+                return null;
+
+            try
+            {
+                var groupLevels = TryGetDynamicProperty(report, "GroupLevels");
+                if (groupLevels != null)
+                {
+                    var byItem = InvokeDynamicMethod(groupLevels, "Item", index);
+                    if (byItem != null)
+                        return byItem;
+                }
+            }
+            catch
+            {
+                // Fall through to alternate access patterns.
+            }
+
+            try
+            {
+                var byMethod = InvokeDynamicMethod(report, "GroupLevel", index);
+                if (byMethod != null)
+                    return byMethod;
+            }
+            catch
+            {
+                // Fall through to final null.
+            }
+
+            return null;
+        }
+
+        private static ReportGroupingInfo BuildReportGroupingInfo(dynamic groupLevel, int index)
+        {
+            return new ReportGroupingInfo
+            {
+                Index = index,
+                Expression = SafeToString(TryGetDynamicProperty(groupLevel, "ControlSource")) ?? "",
+                SortOrder = ToNullableInt(TryGetDynamicProperty(groupLevel, "SortOrder")),
+                GroupOn = ToNullableInt(TryGetDynamicProperty(groupLevel, "GroupOn")),
+                GroupInterval = ToNullableInt(TryGetDynamicProperty(groupLevel, "GroupInterval")),
+                GroupHeader = ToNullableBool(TryGetDynamicProperty(groupLevel, "GroupHeader")),
+                GroupFooter = ToNullableBool(TryGetDynamicProperty(groupLevel, "GroupFooter")),
+                KeepTogether = ToNullableInt(TryGetDynamicProperty(groupLevel, "KeepTogether"))
+            };
+        }
+
+        private static PrinterInfoEntry BuildPrinterInfo(dynamic printer)
+        {
+            return new PrinterInfoEntry
+            {
+                DeviceName = SafeToString(TryGetDynamicProperty(printer, "DeviceName")) ?? "",
+                DriverName = SafeToString(TryGetDynamicProperty(printer, "DriverName")),
+                Port = SafeToString(TryGetDynamicProperty(printer, "Port")),
+                Orientation = ToNullableInt(TryGetDynamicProperty(printer, "Orientation")),
+                PaperSize = ToNullableInt(TryGetDynamicProperty(printer, "PaperSize")),
+                TopMargin = ToNullableInt(TryGetDynamicProperty(printer, "TopMargin")),
+                BottomMargin = ToNullableInt(TryGetDynamicProperty(printer, "BottomMargin")),
+                LeftMargin = ToNullableInt(TryGetDynamicProperty(printer, "LeftMargin")),
+                RightMargin = ToNullableInt(TryGetDynamicProperty(printer, "RightMargin"))
+            };
+        }
+
         private static string BuildSectionName(int index, int? typeCode, bool isReport)
         {
             var effective = typeCode ?? index;
@@ -10338,6 +10690,45 @@ namespace MS.Access.MCP.Interop
         public int? Orientation { get; set; }
         public int? PaperSize { get; set; }
         public bool? DataOnly { get; set; }
+    }
+
+    public class ReportGroupingInfo
+    {
+        public int Index { get; set; }
+        public string Expression { get; set; } = "";
+        public int? SortOrder { get; set; }
+        public int? GroupOn { get; set; }
+        public int? GroupInterval { get; set; }
+        public bool? GroupHeader { get; set; }
+        public bool? GroupFooter { get; set; }
+        public int? KeepTogether { get; set; }
+    }
+
+    public class ReportSortingInfo
+    {
+        public string ReportName { get; set; } = "";
+        public string? OrderBy { get; set; }
+        public bool? OrderByOn { get; set; }
+        public List<ReportGroupingInfo> GroupLevels { get; set; } = new();
+    }
+
+    public class PrinterInfoResult
+    {
+        public PrinterInfoEntry? ActivePrinter { get; set; }
+        public List<PrinterInfoEntry> Printers { get; set; } = new();
+    }
+
+    public class PrinterInfoEntry
+    {
+        public string DeviceName { get; set; } = "";
+        public string? DriverName { get; set; }
+        public string? Port { get; set; }
+        public int? Orientation { get; set; }
+        public int? PaperSize { get; set; }
+        public int? TopMargin { get; set; }
+        public int? BottomMargin { get; set; }
+        public int? LeftMargin { get; set; }
+        public int? RightMargin { get; set; }
     }
 
     public class FormExportData
