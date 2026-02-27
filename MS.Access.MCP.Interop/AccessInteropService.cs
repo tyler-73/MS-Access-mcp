@@ -2123,6 +2123,240 @@ namespace MS.Access.MCP.Interop
             releaseOleDb: false);
         }
 
+        public void OpenTable(string tableName, string? view = null, string? dataMode = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+
+            var viewValue = ParseOpenTableView(view);
+            var dataModeValue = ParseOpenDataMode(dataMode);
+
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+                _ = InvokeDynamicMethod(doCmd, "OpenTable", tableName, viewValue, dataModeValue);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void OpenModule(string moduleName, string? procedureName = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(moduleName)) throw new ArgumentException("Module name is required.", nameof(moduleName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+                _ = InvokeDynamicMethod(
+                    doCmd,
+                    "OpenModule",
+                    moduleName,
+                    string.IsNullOrWhiteSpace(procedureName) ? Type.Missing : procedureName.Trim());
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void CopyObject(string? destinationDatabasePath = null, string? newName = null, string? sourceObjectType = null, string? sourceObjectName = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(sourceObjectName)) throw new ArgumentException("Source object name is required.", nameof(sourceObjectName));
+
+            var sourceObjectTypeValue = string.IsNullOrWhiteSpace(sourceObjectType)
+                ? Type.Missing
+                : ParseDoCmdObjectType(sourceObjectType, nameof(sourceObjectType));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+                _ = InvokeDynamicMethod(
+                    doCmd,
+                    "CopyObject",
+                    string.IsNullOrWhiteSpace(destinationDatabasePath) ? Type.Missing : destinationDatabasePath.Trim(),
+                    string.IsNullOrWhiteSpace(newName) ? Type.Missing : newName.Trim(),
+                    sourceObjectTypeValue,
+                    sourceObjectName.Trim());
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void DeleteObject(string objectName, string? objectType = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(objectName)) throw new ArgumentException("Object name is required.", nameof(objectName));
+
+            var objectTypeValue = string.IsNullOrWhiteSpace(objectType)
+                ? Type.Missing
+                : ParseDoCmdObjectType(objectType, nameof(objectType));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+                _ = InvokeDynamicMethod(doCmd, "DeleteObject", objectTypeValue, objectName.Trim());
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void RenameObject(string newName, string oldName, string? objectType = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(newName)) throw new ArgumentException("New name is required.", nameof(newName));
+            if (string.IsNullOrWhiteSpace(oldName)) throw new ArgumentException("Old name is required.", nameof(oldName));
+
+            var objectTypeValue = string.IsNullOrWhiteSpace(objectType)
+                ? Type.Missing
+                : ParseDoCmdObjectType(objectType, nameof(objectType));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+                _ = InvokeDynamicMethod(doCmd, "Rename", newName.Trim(), objectTypeValue, oldName.Trim());
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void SelectObject(string objectName, string? objectType = null, bool inDatabaseWindow = true)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(objectName)) throw new ArgumentException("Object name is required.", nameof(objectName));
+
+            var objectTypeValue = string.IsNullOrWhiteSpace(objectType)
+                ? Type.Missing
+                : ParseDoCmdObjectType(objectType, nameof(objectType));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+                _ = InvokeDynamicMethod(doCmd, "SelectObject", objectTypeValue, objectName.Trim(), inDatabaseWindow);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void SaveObject(string? objectType = null, string? objectName = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            var objectTypeValue = string.IsNullOrWhiteSpace(objectType)
+                ? Type.Missing
+                : ParseDoCmdObjectType(objectType, nameof(objectType));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+                _ = InvokeDynamicMethod(
+                    doCmd,
+                    "Save",
+                    objectTypeValue,
+                    string.IsNullOrWhiteSpace(objectName) ? Type.Missing : objectName.Trim());
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void CloseObject(string? objectType = null, string? objectName = null, string? save = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            var objectTypeValue = string.IsNullOrWhiteSpace(objectType)
+                ? Type.Missing
+                : ParseDoCmdObjectType(objectType, nameof(objectType));
+            var saveValue = ParseCloseSaveOption(save);
+
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+                _ = InvokeDynamicMethod(
+                    doCmd,
+                    "Close",
+                    objectTypeValue,
+                    string.IsNullOrWhiteSpace(objectName) ? Type.Missing : objectName.Trim(),
+                    saveValue);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public TransferDatabaseResult TransferDatabase(
+            string transferType,
+            string databaseType,
+            string databaseName,
+            string objectType,
+            string source,
+            string? destination = null,
+            bool structureOnly = false,
+            bool storeLogin = false)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(transferType)) throw new ArgumentException("Transfer type is required.", nameof(transferType));
+            if (string.IsNullOrWhiteSpace(databaseType)) throw new ArgumentException("Database type is required.", nameof(databaseType));
+            if (string.IsNullOrWhiteSpace(databaseName)) throw new ArgumentException("Database name is required.", nameof(databaseName));
+            if (string.IsNullOrWhiteSpace(objectType)) throw new ArgumentException("Object type is required.", nameof(objectType));
+            if (string.IsNullOrWhiteSpace(source)) throw new ArgumentException("Source is required.", nameof(source));
+
+            var transferTypeValue = ParseTransferType(transferType, nameof(transferType));
+            var objectTypeValue = ParseDoCmdObjectType(objectType, nameof(objectType));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+                _ = InvokeDynamicMethod(
+                    doCmd,
+                    "TransferDatabase",
+                    transferTypeValue,
+                    databaseType.Trim(),
+                    databaseName.Trim(),
+                    objectTypeValue,
+                    source.Trim(),
+                    string.IsNullOrWhiteSpace(destination) ? Type.Missing : destination.Trim(),
+                    structureOnly,
+                    storeLogin);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+
+            return new TransferDatabaseResult
+            {
+                TransferType = transferTypeValue,
+                DatabaseType = databaseType.Trim(),
+                DatabaseName = databaseName.Trim(),
+                ObjectType = objectTypeValue,
+                Source = source.Trim(),
+                Destination = string.IsNullOrWhiteSpace(destination) ? null : destination.Trim(),
+                StructureOnly = structureOnly,
+                StoreLogin = storeLogin
+            };
+        }
+
+        public void RunCommand(string command)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(command)) throw new ArgumentException("Command is required.", nameof(command));
+
+            var commandValue = ParseRunCommandValue(command);
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+                _ = InvokeDynamicMethod(doCmd, "RunCommand", commandValue);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
         public StartupPropertiesInfo GetStartupProperties()
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
@@ -6422,6 +6656,101 @@ namespace MS.Access.MCP.Interop
             };
         }
 
+        private static object ParseOpenTableView(string? view)
+        {
+            if (string.IsNullOrWhiteSpace(view))
+                return Type.Missing;
+
+            var trimmed = view.Trim();
+            if (int.TryParse(trimmed, out var numericView))
+                return numericView;
+
+            var normalized = NormalizeEnumToken(trimmed);
+            return normalized switch
+            {
+                "datasheet" or "normal" or "acviewnormal" => 0,
+                "design" or "acviewdesign" => 1,
+                "printpreview" or "preview" or "acviewpreview" => 2,
+                "pivottable" or "acviewpivottable" => 3,
+                "pivotchart" or "acviewpivotchart" => 4,
+                _ => throw new ArgumentException("view must be datasheet, design, print_preview, pivot_table, pivot_chart, or an Access enum integer value.", nameof(view))
+            };
+        }
+
+        private static object ParseOpenDataMode(string? dataMode)
+        {
+            if (string.IsNullOrWhiteSpace(dataMode))
+                return Type.Missing;
+
+            var trimmed = dataMode.Trim();
+            if (int.TryParse(trimmed, out var numericDataMode))
+                return numericDataMode;
+
+            var normalized = NormalizeEnumToken(trimmed);
+            return normalized switch
+            {
+                "add" or "acformadd" => 0,
+                "edit" or "acformedit" => 1,
+                "readonly" or "acformreadonly" => 2,
+                _ => throw new ArgumentException("data_mode must be add, edit, read_only, or an Access enum integer value.", nameof(dataMode))
+            };
+        }
+
+        private static int ParseDoCmdObjectType(string objectType, string paramName)
+        {
+            var trimmed = objectType.Trim();
+            if (int.TryParse(trimmed, out var numericObjectType))
+                return numericObjectType;
+
+            var normalized = NormalizeEnumToken(trimmed);
+            return normalized switch
+            {
+                "table" or "actable" => 0,
+                "query" or "acquery" => 1,
+                "form" or "acform" => 2,
+                "report" or "acreport" => 3,
+                "macro" or "acmacro" => 4,
+                "module" or "acmodule" => 5,
+                "serverview" or "acserverview" => 7,
+                "storedprocedure" or "acstoredprocedure" => 9,
+                "function" or "acfunction" => 10,
+                _ => throw new ArgumentException("object_type must be table, query, form, report, macro, module, server_view, stored_procedure, function, or an Access enum integer value.", paramName)
+            };
+        }
+
+        private static object ParseCloseSaveOption(string? save)
+        {
+            if (string.IsNullOrWhiteSpace(save))
+                return Type.Missing;
+
+            var trimmed = save.Trim();
+            if (int.TryParse(trimmed, out var numericSaveOption))
+                return numericSaveOption;
+
+            var normalized = NormalizeEnumToken(trimmed);
+            return normalized switch
+            {
+                "prompt" or "acsaveprompt" => 0,
+                "yes" or "true" or "acsaveyes" => 1,
+                "no" or "false" or "acsaveno" => 2,
+                _ => throw new ArgumentException("save must be prompt, yes, no, or an Access enum integer value.", nameof(save))
+            };
+        }
+
+        private static int ParseRunCommandValue(string command)
+        {
+            var trimmed = command.Trim();
+            if (int.TryParse(trimmed, out var numericCommand))
+                return numericCommand;
+
+            var normalized = NormalizeEnumToken(trimmed);
+            return normalized switch
+            {
+                "compileandsaveallmodules" or "accmdcompileandsaveallmodules" => 125,
+                _ => throw new ArgumentException("command must be an acCommand integer value (or a supported acCmd constant name).", nameof(command))
+            };
+        }
+
         private static string NormalizeEnumToken(string value)
         {
             return value
@@ -7387,6 +7716,18 @@ namespace MS.Access.MCP.Interop
         public string? TemplateFile { get; set; }
         public string? Encoding { get; set; }
         public int? OutputQuality { get; set; }
+    }
+
+    public class TransferDatabaseResult
+    {
+        public int TransferType { get; set; }
+        public string DatabaseType { get; set; } = "";
+        public string DatabaseName { get; set; } = "";
+        public int ObjectType { get; set; }
+        public string Source { get; set; } = "";
+        public string? Destination { get; set; }
+        public bool StructureOnly { get; set; }
+        public bool StoreLogin { get; set; }
     }
 
     public class DatabasePropertyInfo

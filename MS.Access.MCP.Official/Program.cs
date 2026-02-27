@@ -158,6 +158,16 @@ class Program
                 new { name = "print_out", description = "Print the active object using DoCmd.PrintOut.", inputSchema = new { type = "object", properties = new { print_range = new { type = "string" }, page_from = new { type = "integer" }, page_to = new { type = "integer" }, print_quality = new { type = "string" }, copies = new { type = "integer" }, collate_copies = new { type = "boolean" } } } },
                 new { name = "open_query", description = "Open a saved query in Access using DoCmd.OpenQuery.", inputSchema = new { type = "object", properties = new { query_name = new { type = "string" }, view = new { type = "string" }, data_mode = new { type = "string" } }, required = new string[] { "query_name" } } },
                 new { name = "run_sql", description = "Execute SQL with Access DoCmd.RunSQL.", inputSchema = new { type = "object", properties = new { sql = new { type = "string" }, use_transaction = new { type = "boolean" } }, required = new string[] { "sql" } } },
+                new { name = "open_table", description = "Open a table in Access using DoCmd.OpenTable.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, view = new { type = "string", description = "datasheet, design, print_preview, pivot_table, pivot_chart, or Access enum integer value as string" }, data_mode = new { type = "string", description = "add, edit, read_only, or Access enum integer value as string" } }, required = new string[] { "table_name" } } },
+                new { name = "open_module", description = "Open a VBA module using DoCmd.OpenModule.", inputSchema = new { type = "object", properties = new { module_name = new { type = "string" }, procedure_name = new { type = "string" } }, required = new string[] { "module_name" } } },
+                new { name = "copy_object", description = "Copy an Access object using DoCmd.CopyObject.", inputSchema = new { type = "object", properties = new { source_object_name = new { type = "string" }, source_object_type = new { type = "string", description = "table, query, form, report, macro, module, or Access enum integer value as string" }, destination_database_path = new { type = "string" }, new_name = new { type = "string" } }, required = new string[] { "source_object_name" } } },
+                new { name = "delete_object", description = "Delete an Access object using DoCmd.DeleteObject.", inputSchema = new { type = "object", properties = new { object_name = new { type = "string" }, object_type = new { type = "string", description = "table, query, form, report, macro, module, or Access enum integer value as string" } }, required = new string[] { "object_name" } } },
+                new { name = "rename_object", description = "Rename an Access object using DoCmd.Rename.", inputSchema = new { type = "object", properties = new { new_name = new { type = "string" }, object_name = new { type = "string" }, object_type = new { type = "string", description = "table, query, form, report, macro, module, or Access enum integer value as string" } }, required = new string[] { "new_name", "object_name" } } },
+                new { name = "select_object", description = "Select an Access object using DoCmd.SelectObject.", inputSchema = new { type = "object", properties = new { object_name = new { type = "string" }, object_type = new { type = "string", description = "table, query, form, report, macro, module, or Access enum integer value as string" }, in_database_window = new { type = "boolean" } }, required = new string[] { "object_name" } } },
+                new { name = "save_object", description = "Save an Access object using DoCmd.Save.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string", description = "table, query, form, report, macro, module, or Access enum integer value as string" }, object_name = new { type = "string" } } } },
+                new { name = "close_object", description = "Close an Access object using DoCmd.Close.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string", description = "table, query, form, report, macro, module, or Access enum integer value as string" }, object_name = new { type = "string" }, save = new { type = "string", description = "prompt, yes, no, or Access enum integer value as string" } } } },
+                new { name = "transfer_database", description = "Transfer database objects using DoCmd.TransferDatabase.", inputSchema = new { type = "object", properties = new { transfer_type = new { type = "string", description = "import, export, link, or Access enum integer value as string" }, database_type = new { type = "string", description = "Database type such as Microsoft Access" }, database_name = new { type = "string", description = "External database path or DSN" }, object_type = new { type = "string", description = "table, query, form, report, macro, module, or Access enum integer value as string" }, source = new { type = "string", description = "Source object name" }, destination = new { type = "string", description = "Destination object name when importing/exporting" }, structure_only = new { type = "boolean" }, store_login = new { type = "boolean" } }, required = new string[] { "transfer_type", "database_type", "database_name", "object_type", "source" } } },
+                new { name = "run_command", description = "Run an Access command using DoCmd.RunCommand.", inputSchema = new { type = "object", properties = new { command = new { type = "string", description = "acCommand integer value as string (or supported acCmd constant name)" } }, required = new string[] { "command" } } },
                 new { name = "get_database_summary_properties", description = "Get Access database summary properties (Title, Author, Subject, Keywords, Comments).", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "set_database_summary_properties", description = "Set Access database summary properties.", inputSchema = new { type = "object", properties = new { title = new { type = "string" }, author = new { type = "string" }, subject = new { type = "string" }, keywords = new { type = "string" }, comments = new { type = "string" } } } },
                 new { name = "get_database_properties", description = "List database properties, including custom properties.", inputSchema = new { type = "object", properties = new { include_system = new { type = "boolean" } } } },
@@ -316,6 +326,16 @@ class Program
             "print_out" => HandlePrintOut(accessService, toolArguments),
             "open_query" => HandleOpenQuery(accessService, toolArguments),
             "run_sql" => HandleRunSqlDocmd(accessService, toolArguments),
+            "open_table" => HandleOpenTable(accessService, toolArguments),
+            "open_module" => HandleOpenModule(accessService, toolArguments),
+            "copy_object" => HandleCopyObject(accessService, toolArguments),
+            "delete_object" => HandleDeleteObject(accessService, toolArguments),
+            "rename_object" => HandleRenameObject(accessService, toolArguments),
+            "select_object" => HandleSelectObject(accessService, toolArguments),
+            "save_object" => HandleSaveObject(accessService, toolArguments),
+            "close_object" => HandleCloseObject(accessService, toolArguments),
+            "transfer_database" => HandleTransferDatabase(accessService, toolArguments),
+            "run_command" => HandleRunCommand(accessService, toolArguments),
             "get_database_summary_properties" => HandleGetDatabaseSummaryProperties(accessService, toolArguments),
             "set_database_summary_properties" => HandleSetDatabaseSummaryProperties(accessService, toolArguments),
             "get_database_properties" => HandleGetDatabaseProperties(accessService, toolArguments),
@@ -1023,6 +1043,283 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("run_sql", ex);
+        }
+    }
+
+    static object HandleOpenTable(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+
+            _ = TryGetOptionalString(arguments, "view", out var view);
+            _ = TryGetOptionalString(arguments, "data_mode", out var dataMode);
+
+            accessService.OpenTable(
+                tableName,
+                string.IsNullOrWhiteSpace(view) ? null : view,
+                string.IsNullOrWhiteSpace(dataMode) ? null : dataMode);
+
+            return new
+            {
+                success = true,
+                table_name = tableName,
+                view = string.IsNullOrWhiteSpace(view) ? null : view,
+                data_mode = string.IsNullOrWhiteSpace(dataMode) ? null : dataMode
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("open_table", ex);
+        }
+    }
+
+    static object HandleOpenModule(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "module_name", out var moduleName, out var moduleNameError))
+                return moduleNameError;
+
+            _ = TryGetOptionalString(arguments, "procedure_name", out var procedureName);
+            accessService.OpenModule(moduleName, string.IsNullOrWhiteSpace(procedureName) ? null : procedureName);
+
+            return new
+            {
+                success = true,
+                module_name = moduleName,
+                procedure_name = string.IsNullOrWhiteSpace(procedureName) ? null : procedureName
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("open_module", ex);
+        }
+    }
+
+    static object HandleCopyObject(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "source_object_name", out var sourceObjectName, out var sourceObjectNameError))
+                return sourceObjectNameError;
+
+            _ = TryGetOptionalString(arguments, "source_object_type", out var sourceObjectType);
+            _ = TryGetOptionalString(arguments, "destination_database_path", out var destinationDatabasePath);
+            _ = TryGetOptionalString(arguments, "new_name", out var newName);
+
+            accessService.CopyObject(
+                string.IsNullOrWhiteSpace(destinationDatabasePath) ? null : destinationDatabasePath,
+                string.IsNullOrWhiteSpace(newName) ? null : newName,
+                string.IsNullOrWhiteSpace(sourceObjectType) ? null : sourceObjectType,
+                sourceObjectName);
+
+            return new
+            {
+                success = true,
+                source_object_name = sourceObjectName,
+                source_object_type = string.IsNullOrWhiteSpace(sourceObjectType) ? null : sourceObjectType,
+                destination_database_path = string.IsNullOrWhiteSpace(destinationDatabasePath) ? null : destinationDatabasePath,
+                new_name = string.IsNullOrWhiteSpace(newName) ? null : newName
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("copy_object", ex);
+        }
+    }
+
+    static object HandleDeleteObject(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "object_name", out var objectName, out var objectNameError))
+                return objectNameError;
+
+            _ = TryGetOptionalString(arguments, "object_type", out var objectType);
+            accessService.DeleteObject(objectName, string.IsNullOrWhiteSpace(objectType) ? null : objectType);
+
+            return new
+            {
+                success = true,
+                object_name = objectName,
+                object_type = string.IsNullOrWhiteSpace(objectType) ? null : objectType
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("delete_object", ex);
+        }
+    }
+
+    static object HandleRenameObject(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "new_name", out var newName, out var newNameError))
+                return newNameError;
+            if (!TryGetRequiredString(arguments, "object_name", out var objectName, out var objectNameError))
+                return objectNameError;
+
+            _ = TryGetOptionalString(arguments, "object_type", out var objectType);
+            accessService.RenameObject(newName, objectName, string.IsNullOrWhiteSpace(objectType) ? null : objectType);
+
+            return new
+            {
+                success = true,
+                new_name = newName,
+                object_name = objectName,
+                object_type = string.IsNullOrWhiteSpace(objectType) ? null : objectType
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("rename_object", ex);
+        }
+    }
+
+    static object HandleSelectObject(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "object_name", out var objectName, out var objectNameError))
+                return objectNameError;
+
+            _ = TryGetOptionalString(arguments, "object_type", out var objectType);
+            var inDatabaseWindow = GetOptionalBool(arguments, "in_database_window", true);
+
+            accessService.SelectObject(
+                objectName,
+                string.IsNullOrWhiteSpace(objectType) ? null : objectType,
+                inDatabaseWindow);
+
+            return new
+            {
+                success = true,
+                object_name = objectName,
+                object_type = string.IsNullOrWhiteSpace(objectType) ? null : objectType,
+                in_database_window = inDatabaseWindow
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("select_object", ex);
+        }
+    }
+
+    static object HandleSaveObject(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            _ = TryGetOptionalString(arguments, "object_type", out var objectType);
+            _ = TryGetOptionalString(arguments, "object_name", out var objectName);
+
+            accessService.SaveObject(
+                string.IsNullOrWhiteSpace(objectType) ? null : objectType,
+                string.IsNullOrWhiteSpace(objectName) ? null : objectName);
+
+            return new
+            {
+                success = true,
+                object_type = string.IsNullOrWhiteSpace(objectType) ? null : objectType,
+                object_name = string.IsNullOrWhiteSpace(objectName) ? null : objectName
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("save_object", ex);
+        }
+    }
+
+    static object HandleCloseObject(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            _ = TryGetOptionalString(arguments, "object_type", out var objectType);
+            _ = TryGetOptionalString(arguments, "object_name", out var objectName);
+            _ = TryGetOptionalString(arguments, "save", out var save);
+
+            accessService.CloseObject(
+                string.IsNullOrWhiteSpace(objectType) ? null : objectType,
+                string.IsNullOrWhiteSpace(objectName) ? null : objectName,
+                string.IsNullOrWhiteSpace(save) ? null : save);
+
+            return new
+            {
+                success = true,
+                object_type = string.IsNullOrWhiteSpace(objectType) ? null : objectType,
+                object_name = string.IsNullOrWhiteSpace(objectName) ? null : objectName,
+                save = string.IsNullOrWhiteSpace(save) ? null : save
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("close_object", ex);
+        }
+    }
+
+    static object HandleTransferDatabase(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "transfer_type", out var transferType, out var transferTypeError))
+                return transferTypeError;
+            if (!TryGetRequiredString(arguments, "database_type", out var databaseType, out var databaseTypeError))
+                return databaseTypeError;
+            if (!TryGetRequiredString(arguments, "database_name", out var databaseName, out var databaseNameError))
+                return databaseNameError;
+            if (!TryGetRequiredString(arguments, "object_type", out var objectType, out var objectTypeError))
+                return objectTypeError;
+            if (!TryGetRequiredString(arguments, "source", out var source, out var sourceError))
+                return sourceError;
+
+            _ = TryGetOptionalString(arguments, "destination", out var destination);
+            var structureOnly = GetOptionalBool(arguments, "structure_only", false);
+            var storeLogin = GetOptionalBool(arguments, "store_login", false);
+
+            var result = accessService.TransferDatabase(
+                transferType,
+                databaseType,
+                databaseName,
+                objectType,
+                source,
+                string.IsNullOrWhiteSpace(destination) ? null : destination,
+                structureOnly,
+                storeLogin);
+
+            return new
+            {
+                success = true,
+                transfer_type = result.TransferType,
+                database_type = result.DatabaseType,
+                database_name = result.DatabaseName,
+                object_type = result.ObjectType,
+                source = result.Source,
+                destination = result.Destination,
+                structure_only = result.StructureOnly,
+                store_login = result.StoreLogin
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("transfer_database", ex);
+        }
+    }
+
+    static object HandleRunCommand(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "command", out var command, out var commandError))
+                return commandError;
+
+            accessService.RunCommand(command);
+            return new { success = true, command };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("run_command", ex);
         }
     }
 
