@@ -406,7 +406,19 @@ class Program
                 new { name = "get_current_object", description = "Get the name and type of the currently selected/active database object (Application.CurrentObjectName and CurrentObjectType).", inputSchema = new { type = "object", properties = new { }, required = new string[] { } } },
                 new { name = "get_current_user", description = "Get the current user name (Application.CurrentUser).", inputSchema = new { type = "object", properties = new { }, required = new string[] { } } },
                 new { name = "set_access_visible", description = "Show or hide the Access application window (Application.Visible).", inputSchema = new { type = "object", properties = new { visible = new { type = "boolean", description = "True to show, false to hide the Access window" } }, required = new string[] { "visible" } } },
-                new { name = "get_access_hwnd", description = "Get the window handle (hWnd) of the Access application window (Application.hWndAccessApp).", inputSchema = new { type = "object", properties = new { }, required = new string[] { } } }
+                new { name = "get_access_hwnd", description = "Get the window handle (hWnd) of the Access application window (Application.hWndAccessApp).", inputSchema = new { type = "object", properties = new { }, required = new string[] { } } },
+                // Priority 19: Form Runtime Methods
+                new { name = "form_recalc", description = "Recalculate all calculated controls on an open form (Form.Recalc).", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the open form" } }, required = new string[] { "form_name" } } },
+                new { name = "form_refresh", description = "Refresh data from the underlying recordset for an open form (Form.Refresh).", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the open form" } }, required = new string[] { "form_name" } } },
+                new { name = "form_requery", description = "Requery the form's record source to reflect new/changed data (Form.Requery).", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the open form" } }, required = new string[] { "form_name" } } },
+                new { name = "form_undo", description = "Undo changes to the current record on an open form (Form.Undo).", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the open form" } }, required = new string[] { "form_name" } } },
+                new { name = "form_set_focus", description = "Set focus to an open form (Form.SetFocus).", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the open form" } }, required = new string[] { "form_name" } } },
+                new { name = "get_form_dirty", description = "Check if the current record on an open form has been modified (Form.Dirty).", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the open form" } }, required = new string[] { "form_name" } } },
+                new { name = "get_form_new_record", description = "Check if the form is on a new unsaved record (Form.NewRecord).", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the open form" } }, required = new string[] { "form_name" } } },
+                new { name = "get_form_bookmark", description = "Get the current bookmark position of an open form (Form.Bookmark). Returns a Base64-encoded bookmark string.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the open form" }, bookmark = new { type = "string", description = "Optional Base64-encoded bookmark to set. If omitted, returns current bookmark." } }, required = new string[] { "form_name" } } },
+                new { name = "get_form_view", description = "Get the current view mode of an open form (Form.CurrentView). Returns 0=Design, 1=Form, 2=Datasheet.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the open form" } }, required = new string[] { "form_name" } } },
+                new { name = "get_form_open_args", description = "Get the OpenArgs value passed when the form was opened (Form.OpenArgs).", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the open form" } }, required = new string[] { "form_name" } } },
+                new { name = "set_form_painting", description = "Suspend or resume form painting for batch updates (Form.Painting). WARNING: If set to false and not restored to true, the form UI will appear frozen.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the open form" }, painting = new { type = "boolean", description = "True to enable painting (normal), false to suspend painting for batch updates" } }, required = new string[] { "form_name", "painting" } } }
             }
         };
     }
@@ -693,6 +705,18 @@ class Program
             "get_current_user" => HandleGetCurrentUser(accessService, toolArguments),
             "set_access_visible" => HandleSetAccessVisible(accessService, toolArguments),
             "get_access_hwnd" => HandleGetAccessHwnd(accessService, toolArguments),
+            // Priority 19: Form Runtime Methods
+            "form_recalc" => HandleFormRecalc(accessService, toolArguments),
+            "form_refresh" => HandleFormRefresh(accessService, toolArguments),
+            "form_requery" => HandleFormRequery(accessService, toolArguments),
+            "form_undo" => HandleFormUndo(accessService, toolArguments),
+            "form_set_focus" => HandleFormSetFocus(accessService, toolArguments),
+            "get_form_dirty" => HandleGetFormDirty(accessService, toolArguments),
+            "get_form_new_record" => HandleGetFormNewRecord(accessService, toolArguments),
+            "get_form_bookmark" => HandleGetFormBookmark(accessService, toolArguments),
+            "get_form_view" => HandleGetFormView(accessService, toolArguments),
+            "get_form_open_args" => HandleGetFormOpenArgs(accessService, toolArguments),
+            "set_form_painting" => HandleSetFormPainting(accessService, toolArguments),
             _ => new { success = false, error = $"Unknown tool: {toolName}" }
         };
     }
@@ -6244,6 +6268,185 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("get_access_hwnd", ex);
+        }
+    }
+
+    // ===== Priority 19: Form Runtime Methods =====
+
+    static object HandleFormRecalc(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var formError))
+                return formError;
+            accessService.FormRecalc(formName);
+            return new { success = true, message = $"Recalculated form '{formName}'", form_name = formName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("form_recalc", ex);
+        }
+    }
+
+    static object HandleFormRefresh(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var formError))
+                return formError;
+            accessService.FormRefresh(formName);
+            return new { success = true, message = $"Refreshed form '{formName}'", form_name = formName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("form_refresh", ex);
+        }
+    }
+
+    static object HandleFormRequery(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var formError))
+                return formError;
+            accessService.FormRequery(formName);
+            return new { success = true, message = $"Requeried form '{formName}'", form_name = formName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("form_requery", ex);
+        }
+    }
+
+    static object HandleFormUndo(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var formError))
+                return formError;
+            accessService.FormUndo(formName);
+            return new { success = true, message = $"Undid changes on form '{formName}'", form_name = formName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("form_undo", ex);
+        }
+    }
+
+    static object HandleFormSetFocus(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var formError))
+                return formError;
+            accessService.FormSetFocus(formName);
+            return new { success = true, message = $"Set focus to form '{formName}'", form_name = formName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("form_set_focus", ex);
+        }
+    }
+
+    static object HandleGetFormDirty(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var formError))
+                return formError;
+            var dirty = accessService.GetFormDirty(formName);
+            return new { success = true, form_name = formName, dirty };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_form_dirty", ex);
+        }
+    }
+
+    static object HandleGetFormNewRecord(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var formError))
+                return formError;
+            var newRecord = accessService.GetFormNewRecord(formName);
+            return new { success = true, form_name = formName, new_record = newRecord };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_form_new_record", ex);
+        }
+    }
+
+    static object HandleGetFormBookmark(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var formError))
+                return formError;
+            _ = TryGetOptionalString(arguments, "bookmark", out var bookmark);
+
+            if (!string.IsNullOrWhiteSpace(bookmark))
+            {
+                accessService.SetFormBookmark(formName, bookmark);
+                return new { success = true, message = $"Bookmark set on form '{formName}'", form_name = formName };
+            }
+            else
+            {
+                var result = accessService.GetFormBookmark(formName);
+                return new { success = true, form_name = formName, bookmark = result };
+            }
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_form_bookmark", ex);
+        }
+    }
+
+    static object HandleGetFormView(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var formError))
+                return formError;
+            var view = accessService.GetFormView(formName);
+            var viewName = view switch { 0 => "Design", 1 => "Form", 2 => "Datasheet", _ => $"Unknown({view})" };
+            return new { success = true, form_name = formName, current_view = view, view_name = viewName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_form_view", ex);
+        }
+    }
+
+    static object HandleGetFormOpenArgs(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var formError))
+                return formError;
+            var openArgs = accessService.GetFormOpenArgs(formName);
+            return new { success = true, form_name = formName, open_args = openArgs };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_form_open_args", ex);
+        }
+    }
+
+    static object HandleSetFormPainting(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var formError))
+                return formError;
+            var painting = GetOptionalBool(arguments, "painting", true);
+            accessService.SetFormPainting(formName, painting);
+            return new { success = true, message = $"Form '{formName}' painting set to {painting}", form_name = formName, painting };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_form_painting", ex);
         }
     }
 

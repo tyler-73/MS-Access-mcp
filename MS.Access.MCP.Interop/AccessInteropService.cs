@@ -7414,6 +7414,183 @@ namespace MS.Access.MCP.Interop
 
         #endregion
 
+        #region 10. Form Runtime Methods
+
+        public void FormRecalc(string formName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(formName)) throw new ArgumentException("Form name is required", nameof(formName));
+
+            ExecuteComOperation(app =>
+            {
+                var forms = TryGetDynamicProperty(app, "Forms");
+                var form = TryGetDynamicProperty(forms, "Item", formName);
+                InvokeDynamicMethod(form, "Recalc");
+            }, requireExclusive: false, releaseOleDb: false);
+        }
+
+        public void FormRefresh(string formName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(formName)) throw new ArgumentException("Form name is required", nameof(formName));
+
+            ExecuteComOperation(app =>
+            {
+                var forms = TryGetDynamicProperty(app, "Forms");
+                var form = TryGetDynamicProperty(forms, "Item", formName);
+                InvokeDynamicMethod(form, "Refresh");
+            }, requireExclusive: false, releaseOleDb: false);
+        }
+
+        public void FormRequery(string formName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(formName)) throw new ArgumentException("Form name is required", nameof(formName));
+
+            ExecuteComOperation(app =>
+            {
+                var forms = TryGetDynamicProperty(app, "Forms");
+                var form = TryGetDynamicProperty(forms, "Item", formName);
+                InvokeDynamicMethod(form, "Requery");
+            }, requireExclusive: false, releaseOleDb: false);
+        }
+
+        public void FormUndo(string formName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(formName)) throw new ArgumentException("Form name is required", nameof(formName));
+
+            ExecuteComOperation(app =>
+            {
+                var forms = TryGetDynamicProperty(app, "Forms");
+                var form = TryGetDynamicProperty(forms, "Item", formName);
+                InvokeDynamicMethod(form, "Undo");
+            }, requireExclusive: false, releaseOleDb: false);
+        }
+
+        public void FormSetFocus(string formName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(formName)) throw new ArgumentException("Form name is required", nameof(formName));
+
+            ExecuteComOperation(app =>
+            {
+                var forms = TryGetDynamicProperty(app, "Forms");
+                var form = TryGetDynamicProperty(forms, "Item", formName);
+                InvokeDynamicMethod(form, "SetFocus");
+            }, requireExclusive: false, releaseOleDb: false);
+        }
+
+        public bool GetFormDirty(string formName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(formName)) throw new ArgumentException("Form name is required", nameof(formName));
+
+            bool result = false;
+            ExecuteComOperation(app =>
+            {
+                var forms = TryGetDynamicProperty(app, "Forms");
+                var form = TryGetDynamicProperty(forms, "Item", formName);
+                result = Convert.ToBoolean(TryGetDynamicProperty(form, "Dirty"));
+            }, requireExclusive: false, releaseOleDb: false);
+            return result;
+        }
+
+        public bool GetFormNewRecord(string formName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(formName)) throw new ArgumentException("Form name is required", nameof(formName));
+
+            bool result = false;
+            ExecuteComOperation(app =>
+            {
+                var forms = TryGetDynamicProperty(app, "Forms");
+                var form = TryGetDynamicProperty(forms, "Item", formName);
+                result = Convert.ToBoolean(TryGetDynamicProperty(form, "NewRecord"));
+            }, requireExclusive: false, releaseOleDb: false);
+            return result;
+        }
+
+        public string GetFormBookmark(string formName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(formName)) throw new ArgumentException("Form name is required", nameof(formName));
+
+            string result = "";
+            ExecuteComOperation(app =>
+            {
+                var forms = TryGetDynamicProperty(app, "Forms");
+                var form = TryGetDynamicProperty(forms, "Item", formName);
+                var bookmark = TryGetDynamicProperty(form, "Bookmark");
+                if (bookmark is byte[] bytes)
+                    result = Convert.ToBase64String(bytes);
+                else if (bookmark != null)
+                    result = bookmark.ToString() ?? "";
+            }, requireExclusive: false, releaseOleDb: false);
+            return result;
+        }
+
+        public void SetFormBookmark(string formName, string base64Bookmark)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(formName)) throw new ArgumentException("Form name is required", nameof(formName));
+            if (string.IsNullOrWhiteSpace(base64Bookmark)) throw new ArgumentException("Bookmark is required", nameof(base64Bookmark));
+
+            ExecuteComOperation(app =>
+            {
+                var forms = TryGetDynamicProperty(app, "Forms");
+                var form = TryGetDynamicProperty(forms, "Item", formName);
+                var bytes = Convert.FromBase64String(base64Bookmark);
+                SetDynamicProperty(form, "Bookmark", bytes);
+            }, requireExclusive: false, releaseOleDb: false);
+        }
+
+        public int GetFormView(string formName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(formName)) throw new ArgumentException("Form name is required", nameof(formName));
+
+            int result = 0;
+            ExecuteComOperation(app =>
+            {
+                var forms = TryGetDynamicProperty(app, "Forms");
+                var form = TryGetDynamicProperty(forms, "Item", formName);
+                result = Convert.ToInt32(TryGetDynamicProperty(form, "CurrentView"));
+            }, requireExclusive: false, releaseOleDb: false);
+            return result;
+        }
+
+        public string? GetFormOpenArgs(string formName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(formName)) throw new ArgumentException("Form name is required", nameof(formName));
+
+            string? result = null;
+            ExecuteComOperation(app =>
+            {
+                var forms = TryGetDynamicProperty(app, "Forms");
+                var form = TryGetDynamicProperty(forms, "Item", formName);
+                var openArgs = TryGetDynamicProperty(form, "OpenArgs");
+                result = openArgs?.ToString();
+            }, requireExclusive: false, releaseOleDb: false);
+            return result;
+        }
+
+        public void SetFormPainting(string formName, bool painting)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(formName)) throw new ArgumentException("Form name is required", nameof(formName));
+
+            ExecuteComOperation(app =>
+            {
+                var forms = TryGetDynamicProperty(app, "Forms");
+                var form = TryGetDynamicProperty(forms, "Item", formName);
+                SetDynamicProperty(form, "Painting", painting);
+            }, requireExclusive: false, releaseOleDb: false);
+        }
+
+        #endregion
+
         #region Helper Methods
 
         private List<FieldInfo> GetTableFields(string tableName)
