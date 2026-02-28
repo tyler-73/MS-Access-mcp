@@ -22,3 +22,6 @@ artifacts/
 # Access transient lock files
 *.laccdb
 *.ldb
+
+# Test diagnostics output (screenshots, dialog event logs)
+tests/_diagnostics/

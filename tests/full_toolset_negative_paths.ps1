@@ -3,10 +3,29 @@ param(
     [Alias("ServerExePath")]
     [string]$ServerExe = "$PSScriptRoot\..\mcp-server-official-x64\MS.Access.MCP.Official.exe",
     [string]$DatabasePath = $(if ($env:ACCESS_DATABASE_PATH) { $env:ACCESS_DATABASE_PATH } else { "$env:USERPROFILE\Documents\MyDatabase.accdb" }),
-    [switch]$NoCleanup
+    [switch]$NoCleanup,
+    [int]$BatchTimeoutSeconds = 120,
+    [switch]$NoDialogWatcher
 )
 
 $ErrorActionPreference = "Stop"
+
+# ── Dialog watcher and timeout-aware batch support ─────────────────────────────
+$script:DialogWatcherAvailable = $false
+$script:DialogWatcherState = $null
+$script:DiagnosticsDir = $null
+$script:TimeoutCount = 0
+$script:TimeoutSections = @{}
+$script:BatchTimeoutSeconds = $BatchTimeoutSeconds
+
+$dialogWatcherPath = Join-Path $PSScriptRoot "_dialog_watcher.ps1"
+if (-not $PSScriptRoot) {
+    $dialogWatcherPath = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "_dialog_watcher.ps1"
+}
+if (Test-Path $dialogWatcherPath) {
+    . $dialogWatcherPath
+    $script:DialogWatcherAvailable = $true
+}
 
 # Resolve $ServerExe when $PSScriptRoot was empty (MSYS bash / git-bash invocations)
 if (-not (Test-Path $ServerExe -ErrorAction SilentlyContinue)) {
@@ -135,101 +154,135 @@ function Invoke-McpBatch {
         [string]$ClientVersion = "1.0"
     )
 
-    $jsonLines = New-Object 'System.Collections.Generic.List[string]'
-    $jsonLines.Add((@{
-        jsonrpc = "2.0"
-        id = 1
-        method = "initialize"
-        params = @{
-            protocolVersion = "2024-11-05"
-            capabilities = @{}
-            clientInfo = @{
-                name = $ClientName
-                version = $ClientVersion
+    $msAccessBeforeInvoke = Get-ProcessIdsByName -Name "MSACCESS"
+    try {
+        if ($script:DialogWatcherAvailable) {
+            $responses = Invoke-McpBatchWithTimeout -ExePath $ExePath -Calls $Calls `
+                -ClientName $ClientName -ClientVersion $ClientVersion `
+                -TimeoutSeconds $script:BatchTimeoutSeconds `
+                -SectionName $ClientName `
+                -ScreenshotDir $script:DiagnosticsDir
+            if ($responses._timeout) {
+                $script:TimeoutCount++
+                $script:TimeoutSections[$ClientName] = $true
+                Write-Host ("SECTION_TIMEOUT: {0} after {1}s" -f $ClientName, $script:BatchTimeoutSeconds)
+                Stop-StaleProcesses -DbPath $DatabasePath
             }
+            return $responses
         }
-    } | ConvertTo-Json -Depth 40 -Compress))
 
-    foreach ($call in $Calls) {
+        # Legacy fallback
+        $jsonLines = New-Object 'System.Collections.Generic.List[string]'
         $jsonLines.Add((@{
             jsonrpc = "2.0"
-            id = $call.Id
-            method = "tools/call"
+            id = 1
+            method = "initialize"
             params = @{
-                name = $call.Name
-                arguments = $call.Arguments
+                protocolVersion = "2024-11-05"
+                capabilities = @{}
+                clientInfo = @{
+                    name = $ClientName
+                    version = $ClientVersion
+                }
             }
-        } | ConvertTo-Json -Depth 50 -Compress))
-    }
+        } | ConvertTo-Json -Depth 40 -Compress))
 
-    $msAccessBeforeInvoke = Get-ProcessIdsByName -Name "MSACCESS"
-    $rawLines = @((($jsonLines -join "`n") | & $ExePath))
-    Register-NewMsAccessPids -BeforeIds $msAccessBeforeInvoke
-    $responses = @{}
-    foreach ($line in $rawLines) {
-        if ([string]::IsNullOrWhiteSpace($line)) {
-            continue
+        foreach ($call in $Calls) {
+            $jsonLines.Add((@{
+                jsonrpc = "2.0"
+                id = $call.Id
+                method = "tools/call"
+                params = @{
+                    name = $call.Name
+                    arguments = $call.Arguments
+                }
+            } | ConvertTo-Json -Depth 50 -Compress))
         }
 
-        try {
-            $parsed = $line | ConvertFrom-Json
-            if ($null -ne $parsed.id) {
-                $responses[[int]$parsed.id] = $parsed
+        $rawLines = @((($jsonLines -join "`n") | & $ExePath))
+
+        $responses = @{}
+        foreach ($line in $rawLines) {
+            if ([string]::IsNullOrWhiteSpace($line)) {
+                continue
+            }
+
+            try {
+                $parsed = $line | ConvertFrom-Json
+                if ($null -ne $parsed.id) {
+                    $responses[[int]$parsed.id] = $parsed
+                }
+            }
+            catch {
+                Write-Host "WARN: Could not parse response line: $line"
             }
         }
-        catch {
-            Write-Host "WARN: Could not parse response line: $line"
-        }
-    }
 
-    return $responses
+        return $responses
+    }
+    finally {
+        Register-NewMsAccessPids -BeforeIds $msAccessBeforeInvoke
+    }
 }
 
 function Get-McpToolsList {
     param([string]$ExePath)
 
-    $jsonLines = New-Object 'System.Collections.Generic.List[string]'
-    $jsonLines.Add((@{
-        jsonrpc = "2.0"
-        id = 1
-        method = "initialize"
-        params = @{
-            protocolVersion = "2024-11-05"
-            capabilities = @{}
-            clientInfo = @{
-                name = "negative-regression-tools-list"
-                version = "1.0"
-            }
-        }
-    } | ConvertTo-Json -Depth 40 -Compress))
-
-    $jsonLines.Add((@{
-        jsonrpc = "2.0"
-        id = 2
-        method = "tools/list"
-        params = @{}
-    } | ConvertTo-Json -Depth 40 -Compress))
-
     $msAccessBeforeInvoke = Get-ProcessIdsByName -Name "MSACCESS"
-    $rawLines = @((($jsonLines -join "`n") | & $ExePath))
-    Register-NewMsAccessPids -BeforeIds $msAccessBeforeInvoke
-    foreach ($line in $rawLines) {
-        if ([string]::IsNullOrWhiteSpace($line)) {
-            continue
+    try {
+        if ($script:DialogWatcherAvailable) {
+            return (Get-McpToolsListWithTimeout -ExePath $ExePath `
+                -ClientName "negative-regression-tools-list" -ClientVersion "1.0" `
+                -TimeoutSeconds 60 `
+                -ScreenshotDir $script:DiagnosticsDir)
         }
 
-        try {
-            $parsed = $line | ConvertFrom-Json
-            if ($parsed.id -eq 2 -and $parsed.result -and $parsed.result.tools) {
-                return @($parsed.result.tools)
+        # Legacy fallback
+        $jsonLines = New-Object 'System.Collections.Generic.List[string]'
+        $jsonLines.Add((@{
+            jsonrpc = "2.0"
+            id = 1
+            method = "initialize"
+            params = @{
+                protocolVersion = "2024-11-05"
+                capabilities = @{}
+                clientInfo = @{
+                    name = "negative-regression-tools-list"
+                    version = "1.0"
+                }
+            }
+        } | ConvertTo-Json -Depth 40 -Compress))
+
+        $jsonLines.Add((@{
+            jsonrpc = "2.0"
+            id = 2
+            method = "tools/list"
+            params = @{}
+        } | ConvertTo-Json -Depth 40 -Compress))
+
+        $rawLines = @((($jsonLines -join "`n") | & $ExePath))
+
+        foreach ($line in $rawLines) {
+            if ([string]::IsNullOrWhiteSpace($line)) {
+                continue
+            }
+
+            try {
+                $parsed = $line | ConvertFrom-Json
+                if ($parsed.id -eq 2 -and $parsed.result -and $parsed.result.tools) {
+                    return @($parsed.result.tools)
+                }
+            }
+            catch {
+                Write-Host "WARN: Could not parse tools/list response line: $line"
             }
         }
-        catch {
-            Write-Host "WARN: Could not parse tools/list response line: $line"
-        }
-    }
 
-    return @()
+        return @()
+    }
+    finally {
+        Register-NewMsAccessPids -BeforeIds $msAccessBeforeInvoke
+    }
 }
 
 function Resolve-ToolName {
@@ -417,6 +470,21 @@ if (-not (Test-Path -LiteralPath $DatabasePath)) {
 $regressionLock = Acquire-RegressionLock
 Write-Host ("Regression lock acquired: {0}" -f $regressionLock.Path)
 
+# ── Diagnostics directory and dialog watcher setup ────────────────────────────
+$runTimestamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmss") + "Z"
+$script:DiagnosticsDir = Join-Path (Join-Path $PSScriptRoot "_diagnostics") ("neg_run_" + $runTimestamp)
+if (-not $PSScriptRoot) {
+    $script:DiagnosticsDir = Join-Path (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "_diagnostics") ("neg_run_" + $runTimestamp)
+}
+if (-not (Test-Path $script:DiagnosticsDir)) {
+    New-Item -ItemType Directory -Path $script:DiagnosticsDir -Force | Out-Null
+}
+
+if ($script:DialogWatcherAvailable -and (-not $NoDialogWatcher)) {
+    $script:DialogWatcherState = Start-DialogWatcher -DiagnosticsPath $script:DiagnosticsDir -AutoDismiss
+    Write-Host ("Dialog watcher started: diagnostics={0}" -f $script:DiagnosticsDir)
+}
+
 try {
     if (-not $NoCleanup) {
         Write-Host "Pre-run cleanup: clearing stale Access/MCP processes and locks."
@@ -427,6 +495,7 @@ try {
     }
 }
 catch {
+    if ($null -ne $script:DialogWatcherState) { Stop-DialogWatcher -WatcherState $script:DialogWatcherState }
     Release-RegressionLock -LockState $regressionLock
     throw
 }
@@ -578,6 +647,23 @@ try {
 }
 finally {
     Write-Host "Final cleanup: clearing stale Access/MCP processes and locks."
+
+    # Stop dialog watcher and write diagnostics summary
+    if ($null -ne $script:DialogWatcherState) {
+        Stop-DialogWatcher -WatcherState $script:DialogWatcherState
+        if (-not [string]::IsNullOrWhiteSpace($script:DiagnosticsDir)) {
+            Write-DialogWatcherSummary -JsonlPath $script:DialogWatcherState.JsonlPath
+            Write-DiagnosticsSummary -DiagnosticsPath $script:DiagnosticsDir `
+                -JsonlPath $script:DialogWatcherState.JsonlPath `
+                -TimeoutCount $script:TimeoutCount `
+                -TimeoutSections $script:TimeoutSections
+        }
+    }
+
+    if ($script:TimeoutCount -gt 0) {
+        Write-Host ("TIMEOUT_SECTIONS={0} ({1})" -f $script:TimeoutCount, (($script:TimeoutSections.Keys | Sort-Object) -join ", "))
+    }
+
     Cleanup-AccessArtifacts -DbPath $DatabasePath
     Release-RegressionLock -LockState $regressionLock
 }

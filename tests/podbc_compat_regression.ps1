@@ -1,10 +1,26 @@
 param(
     [Alias("ServerExePath")]
     [string]$ServerExe = "$PSScriptRoot\..\mcp-server-official-x64\MS.Access.MCP.Official.exe",
-    [string]$DatabasePath = $(if ($env:ACCESS_DATABASE_PATH) { $env:ACCESS_DATABASE_PATH } else { "$env:USERPROFILE\Documents\MyDatabase.accdb" })
+    [string]$DatabasePath = $(if ($env:ACCESS_DATABASE_PATH) { $env:ACCESS_DATABASE_PATH } else { "$env:USERPROFILE\Documents\MyDatabase.accdb" }),
+    [int]$BatchTimeoutSeconds = 120,
+    [switch]$NoDialogWatcher
 )
 
 $ErrorActionPreference = "Stop"
+
+# ── Dialog watcher and timeout-aware batch support ─────────────────────────────
+$script:DialogWatcherAvailable = $false
+$script:DialogWatcherState = $null
+$script:DiagnosticsDir = $null
+
+$dialogWatcherPath = Join-Path $PSScriptRoot "_dialog_watcher.ps1"
+if (-not $PSScriptRoot) {
+    $dialogWatcherPath = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "_dialog_watcher.ps1"
+}
+if (Test-Path $dialogWatcherPath) {
+    . $dialogWatcherPath
+    $script:DialogWatcherAvailable = $true
+}
 
 # Resolve $ServerExe when $PSScriptRoot was empty (MSYS bash / git-bash invocations)
 if (-not (Test-Path $ServerExe -ErrorAction SilentlyContinue)) {
@@ -138,9 +154,102 @@ function New-ToolCallRequest {
 function Invoke-McpRequests {
     param(
         [string]$ExePath,
-        [object[]]$Requests
+        [object[]]$Requests,
+        [string]$SectionName = "podbc"
     )
 
+    if ($script:DialogWatcherAvailable) {
+        $jsonLines = New-Object 'System.Collections.Generic.List[string]'
+        foreach ($request in $Requests) {
+            $jsonLines.Add(($request | ConvertTo-Json -Depth 60 -Compress))
+        }
+
+        $inputPayload = $jsonLines -join "`n"
+
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $ExePath
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardInput = $true
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.CreateNoWindow = $true
+
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $psi
+
+        $stdoutBuilder = New-Object System.Text.StringBuilder
+        $stderrBuilder = New-Object System.Text.StringBuilder
+
+        $stdoutEvent = Register-ObjectEvent -InputObject $process -EventName OutputDataReceived -Action {
+            if ($null -ne $EventArgs.Data) { [void]$Event.MessageData.AppendLine($EventArgs.Data) }
+        } -MessageData $stdoutBuilder
+
+        $stderrEvent = Register-ObjectEvent -InputObject $process -EventName ErrorDataReceived -Action {
+            if ($null -ne $EventArgs.Data) { [void]$Event.MessageData.AppendLine($EventArgs.Data) }
+        } -MessageData $stderrBuilder
+
+        try {
+            $process.Start() | Out-Null
+            $process.BeginOutputReadLine()
+            $process.BeginErrorReadLine()
+
+            $process.StandardInput.Write($inputPayload)
+            $process.StandardInput.Close()
+
+            $exited = $process.WaitForExit($BatchTimeoutSeconds * 1000)
+
+            if (-not $exited) {
+                Write-Host ("BATCH_TIMEOUT: section='{0}' after {1}s" -f $SectionName, $BatchTimeoutSeconds)
+
+                if (-not [string]::IsNullOrWhiteSpace($script:DiagnosticsDir)) {
+                    $tsName = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmss") + "Z"
+                    $timeoutScreenshot = Join-Path $script:DiagnosticsDir ("timeout_{0}_{1}.png" -f ($SectionName -replace '[^a-zA-Z0-9_-]', '_'), $tsName)
+                    Invoke-ScreenshotCapture -OutputPath $timeoutScreenshot | Out-Null
+                }
+
+                try { $process.Kill(); $process.WaitForExit(5000) | Out-Null } catch {}
+
+                return [PSCustomObject]@{
+                    Responses = @{ _timeout = $true; _section = $SectionName }
+                    ExitCode = -1
+                    NonJsonLines = 0
+                    TimedOut = $true
+                }
+            }
+
+            $process.WaitForExit()
+        }
+        finally {
+            Unregister-Event -SourceIdentifier $stdoutEvent.Name -ErrorAction SilentlyContinue
+            Unregister-Event -SourceIdentifier $stderrEvent.Name -ErrorAction SilentlyContinue
+            Remove-Job -Name $stdoutEvent.Name -Force -ErrorAction SilentlyContinue
+            Remove-Job -Name $stderrEvent.Name -Force -ErrorAction SilentlyContinue
+        }
+
+        $processExitCode = $process.ExitCode
+        $rawOutput = $stdoutBuilder.ToString()
+        $rawLines = $rawOutput -split "`r?`n"
+
+        $responses = @{}
+        $nonJsonLines = 0
+        foreach ($line in $rawLines) {
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            try {
+                $parsed = $line | ConvertFrom-Json -ErrorAction Stop
+                if ($null -ne $parsed.id) { $responses[[int]$parsed.id] = $parsed }
+            }
+            catch { $nonJsonLines++ }
+        }
+
+        return [PSCustomObject]@{
+            Responses = $responses
+            ExitCode = $processExitCode
+            NonJsonLines = $nonJsonLines
+            TimedOut = $false
+        }
+    }
+
+    # Legacy fallback
     $jsonLines = New-Object 'System.Collections.Generic.List[string]'
     foreach ($request in $Requests) {
         $jsonLines.Add(($request | ConvertTo-Json -Depth 60 -Compress))
@@ -179,6 +288,7 @@ function Invoke-McpRequests {
         Responses = $responses
         ExitCode = $exitCode
         NonJsonLines = $nonJsonLines
+        TimedOut = $false
     }
 }
 
@@ -218,6 +328,21 @@ function Assert-TextContains {
     }
 }
 
+# ── Diagnostics directory and dialog watcher setup ────────────────────────────
+$runTimestamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmss") + "Z"
+$script:DiagnosticsDir = Join-Path (Join-Path $PSScriptRoot "_diagnostics") ("podbc_run_" + $runTimestamp)
+if (-not $PSScriptRoot) {
+    $script:DiagnosticsDir = Join-Path (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "_diagnostics") ("podbc_run_" + $runTimestamp)
+}
+if (-not (Test-Path $script:DiagnosticsDir)) {
+    New-Item -ItemType Directory -Path $script:DiagnosticsDir -Force | Out-Null
+}
+
+if ($script:DialogWatcherAvailable -and (-not $NoDialogWatcher)) {
+    $script:DialogWatcherState = Start-DialogWatcher -DiagnosticsPath $script:DiagnosticsDir -AutoDismiss
+    Write-Host ("Dialog watcher started: diagnostics={0}" -f $script:DiagnosticsDir)
+}
+
 Write-StepMarker -Step "PRECHECK" -State "BEGIN"
 
 if (-not (Test-Path -LiteralPath $ServerExe)) {
@@ -234,7 +359,11 @@ Write-StepMarker -Step "TOOLS_LIST" -State "BEGIN"
 $toolsListRun = Invoke-McpRequests -ExePath $ServerExe -Requests @(
     (New-InitializeRequest -Id 1 -ClientName "podbc-compat-tools-list"),
     (New-ToolsListRequest -Id 2)
-)
+) -SectionName "podbc-compat-tools-list"
+
+if ($toolsListRun.TimedOut) {
+    Fail-Test -Step "TOOLS_LIST" -Reason ("batch timed out after {0}s" -f $BatchTimeoutSeconds) -ExitCode 95
+}
 
 if ($toolsListRun.ExitCode -ne 0) {
     Fail-Test -Step "TOOLS_LIST" -Reason ("server exited non-zero: " + $toolsListRun.ExitCode) -ExitCode 4
@@ -305,7 +434,11 @@ $flowRequests = @(
 )
 
 Write-StepMarker -Step "FLOW" -State "BEGIN"
-$flowRun = Invoke-McpRequests -ExePath $ServerExe -Requests $flowRequests
+$flowRun = Invoke-McpRequests -ExePath $ServerExe -Requests $flowRequests -SectionName "podbc-compat-flow"
+
+if ($flowRun.TimedOut) {
+    Fail-Test -Step "FLOW" -Reason ("batch timed out after {0}s" -f $BatchTimeoutSeconds) -ExitCode 95
+}
 
 if ($flowRun.ExitCode -ne 0) {
     Write-StepMarker -Step "FLOW" -State "WARN" -Detail ("non_zero_exit=" + $flowRun.ExitCode)
@@ -382,6 +515,16 @@ Write-StepMarker -Step "CLEANUP_DISCONNECT" -State "PASS"
 Write-StepMarker -Step "CLEANUP_CLOSE" -State "BEGIN"
 $null = Get-ResponseOrFail -Responses $flowRun.Responses -Id 920 -Step "CLEANUP_CLOSE"
 Write-StepMarker -Step "CLEANUP_CLOSE" -State "PASS"
+
+# Stop dialog watcher and write diagnostics summary
+if ($null -ne $script:DialogWatcherState) {
+    Stop-DialogWatcher -WatcherState $script:DialogWatcherState
+    if (-not [string]::IsNullOrWhiteSpace($script:DiagnosticsDir)) {
+        Write-DialogWatcherSummary -JsonlPath $script:DialogWatcherState.JsonlPath
+        Write-DiagnosticsSummary -DiagnosticsPath $script:DiagnosticsDir `
+            -JsonlPath $script:DialogWatcherState.JsonlPath
+    }
+}
 
 Write-Host "PODBC_COMPAT_PASS=1"
 exit 0
