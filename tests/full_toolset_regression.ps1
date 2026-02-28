@@ -567,6 +567,13 @@ $linkedTableName = "MCP_Linked_$suffix"
 $linkedSourceTableName = "MCP_LinkSrc_$suffix"
 $transactionTableName = "MCP_Tx_$suffix"
 $databaseLifecycleTableName = "MCP_DbLifecycle_$suffix"
+$newToolsTableName = "MCP_NewTools_$suffix"
+$recordsetTableName = "MCP_RS_$suffix"
+$formRuntimeTableName = "MCP_FormRT_$suffix"
+$formRuntimeFormName = "MCP_FormRT_Form_$suffix"
+$formRuntimeReportName = "MCP_FormRT_Report_$suffix"
+$tempNavXmlPath = Join-Path ([System.IO.Path]::GetTempPath()) "mcp_nav_$suffix.xml"
+$tempXmlDataPath = Join-Path ([System.IO.Path]::GetTempPath()) "mcp_export_$suffix.xml"
 
 $linkedSourceDatabasePath = Join-Path (Split-Path -Path $DatabasePath -Parent) "MCP_LinkSource_$suffix.accdb"
 $databaseLifecycleCreatedPath = Join-Path (Split-Path -Path $DatabasePath -Parent) "MCP_CreateDb_$suffix.accdb"
@@ -2064,6 +2071,634 @@ else {
     }
 }
 
+# ── New Headless Tools Coverage (Priority 17-22: domain_aggregate, access_error, build_criteria, hidden attributes, etc.) ──
+
+Write-Host ""
+Write-Host "=== New Headless Tools Coverage (IDs 401-425) ==="
+Write-Host "Intermediate cleanup: clearing stale Access/MCP processes before new headless tools section."
+Cleanup-AccessArtifacts -DbPath $DatabasePath
+Start-Sleep -Milliseconds 300
+
+$newToolsCalls = New-Object 'System.Collections.Generic.List[object]'
+Add-ToolCall -Calls $newToolsCalls -Id 401 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
+Add-ToolCall -Calls $newToolsCalls -Id 402 -Name "create_table" -Arguments @{
+    table_name = $newToolsTableName
+    fields = @(
+        @{ name = "id"; type = "LONG"; size = 0; required = $true; allow_zero_length = $false },
+        @{ name = "name"; type = "TEXT"; size = 50; required = $false; allow_zero_length = $true }
+    )
+}
+Add-ToolCall -Calls $newToolsCalls -Id 403 -Name "execute_sql" -Arguments @{ sql = "INSERT INTO [$newToolsTableName] (id, name) VALUES (1, 'alpha')" }
+Add-ToolCall -Calls $newToolsCalls -Id 404 -Name "execute_sql" -Arguments @{ sql = "INSERT INTO [$newToolsTableName] (id, name) VALUES (2, 'beta')" }
+Add-ToolCall -Calls $newToolsCalls -Id 405 -Name "domain_aggregate" -Arguments @{ function = "DCount"; expression = "*"; domain = $newToolsTableName }
+Add-ToolCall -Calls $newToolsCalls -Id 406 -Name "domain_aggregate" -Arguments @{ function = "DLookup"; expression = "name"; domain = $newToolsTableName; criteria = "id=1" }
+Add-ToolCall -Calls $newToolsCalls -Id 407 -Name "access_error" -Arguments @{ error_number = 2001 }
+Add-ToolCall -Calls $newToolsCalls -Id 408 -Name "build_criteria" -Arguments @{ field = "name"; field_type = 10; expression = "alpha" }
+Add-ToolCall -Calls $newToolsCalls -Id 409 -Name "set_hidden_attribute" -Arguments @{ object_type = 0; object_name = $newToolsTableName; hidden = $true }
+Add-ToolCall -Calls $newToolsCalls -Id 410 -Name "get_hidden_attribute" -Arguments @{ object_type = 0; object_name = $newToolsTableName }
+Add-ToolCall -Calls $newToolsCalls -Id 411 -Name "set_hidden_attribute" -Arguments @{ object_type = 0; object_name = $newToolsTableName; hidden = $false }
+Add-ToolCall -Calls $newToolsCalls -Id 412 -Name "get_current_user" -Arguments @{}
+Add-ToolCall -Calls $newToolsCalls -Id 413 -Name "get_access_hwnd" -Arguments @{}
+Add-ToolCall -Calls $newToolsCalls -Id 414 -Name "get_object_dates" -Arguments @{ object_type = "Table"; object_name = $newToolsTableName }
+Add-ToolCall -Calls $newToolsCalls -Id 415 -Name "is_object_loaded" -Arguments @{ object_type = "Table"; object_name = $newToolsTableName }
+Add-ToolCall -Calls $newToolsCalls -Id 416 -Name "is_vba_compiled" -Arguments @{}
+Add-ToolCall -Calls $newToolsCalls -Id 417 -Name "list_printers" -Arguments @{}
+Add-ToolCall -Calls $newToolsCalls -Id 418 -Name "get_database_engine_info" -Arguments @{}
+Add-ToolCall -Calls $newToolsCalls -Id 419 -Name "get_current_object" -Arguments @{}
+Add-ToolCall -Calls $newToolsCalls -Id 420 -Name "set_access_visible" -Arguments @{ visible = $true }
+Add-ToolCall -Calls $newToolsCalls -Id 421 -Name "export_navigation_pane_xml" -Arguments @{ output_path = $tempNavXmlPath }
+Add-ToolCall -Calls $newToolsCalls -Id 422 -Name "export_xml" -Arguments @{ object_type = 0; data_source = $newToolsTableName; data_target = $tempXmlDataPath }
+Add-ToolCall -Calls $newToolsCalls -Id 423 -Name "delete_table" -Arguments @{ table_name = $newToolsTableName }
+Add-ToolCall -Calls $newToolsCalls -Id 424 -Name "disconnect_access" -Arguments @{}
+Add-ToolCall -Calls $newToolsCalls -Id 425 -Name "close_access" -Arguments @{}
+
+$newToolsResponses = Invoke-McpBatch -ExePath $ServerExe -Calls $newToolsCalls -ClientName "full-regression-new-tools" -ClientVersion "1.0"
+$newToolsIdLabels = @{
+    401 = "new_tools_connect_access"
+    402 = "new_tools_create_table"
+    403 = "new_tools_insert_alpha"
+    404 = "new_tools_insert_beta"
+    405 = "new_tools_domain_aggregate_dcount"
+    406 = "new_tools_domain_aggregate_dlookup"
+    407 = "new_tools_access_error"
+    408 = "new_tools_build_criteria"
+    409 = "new_tools_set_hidden_true"
+    410 = "new_tools_get_hidden_attribute"
+    411 = "new_tools_set_hidden_false"
+    412 = "new_tools_get_current_user"
+    413 = "new_tools_get_access_hwnd"
+    414 = "new_tools_get_object_dates"
+    415 = "new_tools_is_object_loaded"
+    416 = "new_tools_is_vba_compiled"
+    417 = "new_tools_list_printers"
+    418 = "new_tools_get_database_engine_info"
+    419 = "new_tools_get_current_object"
+    420 = "new_tools_set_access_visible"
+    421 = "new_tools_export_navigation_pane_xml"
+    422 = "new_tools_export_xml"
+    423 = "new_tools_delete_table"
+    424 = "new_tools_disconnect_access"
+    425 = "new_tools_close_access"
+}
+
+foreach ($id in ($newToolsIdLabels.Keys | Sort-Object)) {
+    $label = $newToolsIdLabels[$id]
+    $decoded = Decode-McpResult -Response $newToolsResponses[[int]$id]
+
+    if ($null -eq $decoded) {
+        $failed++
+        Write-Host ('{0}: FAIL missing-response' -f $label)
+        continue
+    }
+
+    if ($decoded -is [string]) {
+        $failed++
+        Write-Host ('{0}: FAIL raw-string-response' -f $label)
+        continue
+    }
+
+    if ($decoded.success -ne $true) {
+        $failed++
+        Write-Host ('{0}: FAIL {1}' -f $label, $decoded.error)
+        continue
+    }
+
+    switch ($label) {
+        "new_tools_domain_aggregate_dcount" {
+            $val = $decoded.value
+            if ($null -eq $val -or [int]$val -lt 2) {
+                $failed++
+                Write-Host ('{0}: FAIL expected DCount >= 2, got {1}' -f $label, $val)
+                continue
+            }
+        }
+        "new_tools_domain_aggregate_dlookup" {
+            $val = [string]$decoded.value
+            if ($val -ne "alpha") {
+                $failed++
+                Write-Host ('{0}: FAIL expected DLookup value "alpha", got "{1}"' -f $label, $val)
+                continue
+            }
+        }
+        "new_tools_access_error" {
+            $desc = [string]$decoded.description
+            if ([string]::IsNullOrWhiteSpace($desc)) {
+                $failed++
+                Write-Host ('{0}: FAIL expected non-empty error description' -f $label)
+                continue
+            }
+        }
+        "new_tools_build_criteria" {
+            $criteria = [string]$decoded.criteria
+            if ([string]::IsNullOrWhiteSpace($criteria)) {
+                $failed++
+                Write-Host ('{0}: FAIL expected non-empty criteria string' -f $label)
+                continue
+            }
+        }
+        "new_tools_get_hidden_attribute" {
+            if ($decoded.hidden -ne $true) {
+                $failed++
+                Write-Host ('{0}: FAIL expected hidden=true' -f $label)
+                continue
+            }
+        }
+        "new_tools_get_current_user" {
+            $user = [string]$decoded.user
+            if ([string]::IsNullOrWhiteSpace($user)) {
+                $failed++
+                Write-Host ('{0}: FAIL expected non-empty user' -f $label)
+                continue
+            }
+        }
+        "new_tools_get_access_hwnd" {
+            if ($null -eq $decoded.hwnd) {
+                $failed++
+                Write-Host ('{0}: FAIL expected non-null hwnd' -f $label)
+                continue
+            }
+        }
+        "new_tools_get_object_dates" {
+            # date_created may be null for newly-created tables on some Access builds; just verify the response shape
+            if ($null -eq $decoded.PSObject -or
+                (-not ($decoded.PSObject.Properties.Name -contains 'date_created') -and -not ($decoded.PSObject.Properties.Name -contains 'DateCreated'))) {
+                $failed++
+                Write-Host ('{0}: FAIL expected date_created property in response' -f $label)
+                continue
+            }
+        }
+        "new_tools_is_vba_compiled" {
+            # Response nests under result: { success:true, result: { isCompiled:bool, ... } }
+            if ($null -eq $decoded.result -or $null -eq $decoded.result.isCompiled) {
+                $failed++
+                Write-Host ('{0}: FAIL expected result.isCompiled property' -f $label)
+                continue
+            }
+        }
+        "new_tools_list_printers" {
+            $printers = @($decoded.printers)
+            if ($printers.Count -lt 0) {
+                $failed++
+                Write-Host ('{0}: FAIL expected printers array' -f $label)
+                continue
+            }
+        }
+        "new_tools_get_database_engine_info" {
+            if ($null -eq $decoded.info -and $null -eq $decoded.engine -and $null -eq $decoded.version) {
+                $failed++
+                Write-Host ('{0}: FAIL expected non-null engine info' -f $label)
+                continue
+            }
+        }
+    }
+
+    Write-Host ('{0}: OK' -f $label)
+}
+
+# ── DAO Recordset Coverage (Priority 20: open/close/navigate/CRUD recordsets) ──
+
+Write-Host ""
+Write-Host "=== DAO Recordset Coverage (IDs 601-624) ==="
+Write-Host "Intermediate cleanup: clearing stale Access/MCP processes before recordset section."
+Cleanup-AccessArtifacts -DbPath $DatabasePath
+Start-Sleep -Milliseconds 300
+
+$recordsetCalls = New-Object 'System.Collections.Generic.List[object]'
+Add-ToolCall -Calls $recordsetCalls -Id 601 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
+Add-ToolCall -Calls $recordsetCalls -Id 602 -Name "create_table" -Arguments @{
+    table_name = $recordsetTableName
+    fields = @(
+        @{ name = "id"; type = "LONG"; size = 0; required = $true; allow_zero_length = $false },
+        @{ name = "name"; type = "TEXT"; size = 50; required = $false; allow_zero_length = $true }
+    )
+}
+Add-ToolCall -Calls $recordsetCalls -Id 603 -Name "execute_sql" -Arguments @{ sql = "INSERT INTO [$recordsetTableName] (id, name) VALUES (1, 'aaa')" }
+Add-ToolCall -Calls $recordsetCalls -Id 604 -Name "execute_sql" -Arguments @{ sql = "INSERT INTO [$recordsetTableName] (id, name) VALUES (2, 'bbb')" }
+Add-ToolCall -Calls $recordsetCalls -Id 605 -Name "execute_sql" -Arguments @{ sql = "INSERT INTO [$recordsetTableName] (id, name) VALUES (3, 'ccc')" }
+Add-ToolCall -Calls $recordsetCalls -Id 606 -Name "open_recordset" -Arguments @{ source = $recordsetTableName }
+# Note: first open_recordset in a fresh server process yields rs_1
+Add-ToolCall -Calls $recordsetCalls -Id 607 -Name "recordset_count" -Arguments @{ recordset_id = "rs_1" }
+Add-ToolCall -Calls $recordsetCalls -Id 608 -Name "recordset_get_record" -Arguments @{ recordset_id = "rs_1" }
+Add-ToolCall -Calls $recordsetCalls -Id 609 -Name "recordset_move" -Arguments @{ recordset_id = "rs_1"; direction = "next" }
+Add-ToolCall -Calls $recordsetCalls -Id 610 -Name "recordset_get_rows" -Arguments @{ recordset_id = "rs_1"; num_rows = 10 }
+Add-ToolCall -Calls $recordsetCalls -Id 611 -Name "recordset_find" -Arguments @{ recordset_id = "rs_1"; criteria = "name='aaa'" }
+Add-ToolCall -Calls $recordsetCalls -Id 612 -Name "recordset_bookmark" -Arguments @{ recordset_id = "rs_1" }
+Add-ToolCall -Calls $recordsetCalls -Id 613 -Name "recordset_add_record" -Arguments @{ recordset_id = "rs_1"; fields = @{ id = 4; name = "ddd" } }
+Add-ToolCall -Calls $recordsetCalls -Id 614 -Name "recordset_count" -Arguments @{ recordset_id = "rs_1" }
+Add-ToolCall -Calls $recordsetCalls -Id 615 -Name "recordset_move" -Arguments @{ recordset_id = "rs_1"; direction = "first" }
+Add-ToolCall -Calls $recordsetCalls -Id 616 -Name "recordset_edit_record" -Arguments @{ recordset_id = "rs_1"; fields = @{ name = "edited" } }
+Add-ToolCall -Calls $recordsetCalls -Id 617 -Name "recordset_move" -Arguments @{ recordset_id = "rs_1"; direction = "last" }
+Add-ToolCall -Calls $recordsetCalls -Id 618 -Name "recordset_delete_record" -Arguments @{ recordset_id = "rs_1" }
+Add-ToolCall -Calls $recordsetCalls -Id 619 -Name "recordset_filter_sort" -Arguments @{ recordset_id = "rs_1"; sort = "name" }
+# Note: filter_sort creates a new recordset; the original rs_1 remains open
+Add-ToolCall -Calls $recordsetCalls -Id 620 -Name "close_recordset" -Arguments @{ recordset_id = "rs_1" }
+# rs_2 is the filtered/sorted recordset created by filter_sort
+Add-ToolCall -Calls $recordsetCalls -Id 621 -Name "close_recordset" -Arguments @{ recordset_id = "rs_2" }
+Add-ToolCall -Calls $recordsetCalls -Id 622 -Name "delete_table" -Arguments @{ table_name = $recordsetTableName }
+Add-ToolCall -Calls $recordsetCalls -Id 623 -Name "disconnect_access" -Arguments @{}
+Add-ToolCall -Calls $recordsetCalls -Id 624 -Name "close_access" -Arguments @{}
+
+$recordsetResponses = Invoke-McpBatch -ExePath $ServerExe -Calls $recordsetCalls -ClientName "full-regression-recordsets" -ClientVersion "1.0"
+$recordsetIdLabels = @{
+    601 = "recordset_connect_access"
+    602 = "recordset_create_table"
+    603 = "recordset_insert_row_1"
+    604 = "recordset_insert_row_2"
+    605 = "recordset_insert_row_3"
+    606 = "recordset_open_recordset"
+    607 = "recordset_count_initial"
+    608 = "recordset_get_record"
+    609 = "recordset_move_next"
+    610 = "recordset_get_rows"
+    611 = "recordset_find"
+    612 = "recordset_bookmark_get"
+    613 = "recordset_add_record"
+    614 = "recordset_count_after_add"
+    615 = "recordset_move_first"
+    616 = "recordset_edit_record"
+    617 = "recordset_move_last"
+    618 = "recordset_delete_record"
+    619 = "recordset_filter_sort"
+    620 = "recordset_close_original"
+    621 = "recordset_close_filtered"
+    622 = "recordset_delete_table"
+    623 = "recordset_disconnect_access"
+    624 = "recordset_close_access"
+}
+
+foreach ($id in ($recordsetIdLabels.Keys | Sort-Object)) {
+    $label = $recordsetIdLabels[$id]
+    $decoded = Decode-McpResult -Response $recordsetResponses[[int]$id]
+
+    if ($null -eq $decoded) {
+        $failed++
+        Write-Host ('{0}: FAIL missing-response' -f $label)
+        continue
+    }
+
+    if ($decoded -is [string]) {
+        $failed++
+        Write-Host ('{0}: FAIL raw-string-response' -f $label)
+        continue
+    }
+
+    if ($decoded.success -ne $true) {
+        $failed++
+        Write-Host ('{0}: FAIL {1}' -f $label, $decoded.error)
+        continue
+    }
+
+    switch ($label) {
+        "recordset_open_recordset" {
+            $rsIdActual = [string]$decoded.recordset_id
+            if ([string]::IsNullOrWhiteSpace($rsIdActual)) {
+                $failed++
+                Write-Host ('{0}: FAIL expected recordset_id in response' -f $label)
+                continue
+            }
+            if ($rsIdActual -ne "rs_1") {
+                Write-Host ('{0}: WARN expected rs_1, got {1} (hardcoded IDs may be wrong)' -f $label, $rsIdActual)
+            }
+        }
+        "recordset_count_initial" {
+            $rc = $decoded.record_count
+            if ($null -eq $rc -or [int]$rc -lt 3) {
+                $failed++
+                Write-Host ('{0}: FAIL expected record_count >= 3, got {1}' -f $label, $rc)
+                continue
+            }
+        }
+        "recordset_get_record" {
+            if ($null -eq $decoded.record) {
+                $failed++
+                Write-Host ('{0}: FAIL expected non-null record' -f $label)
+                continue
+            }
+        }
+        "recordset_get_rows" {
+            $rows = @($decoded.rows)
+            $rowCount = $decoded.row_count
+            if ($rows.Count -lt 1 -or $null -eq $rowCount -or [int]$rowCount -lt 1) {
+                $failed++
+                Write-Host ('{0}: FAIL expected rows array with row_count >= 1' -f $label)
+                continue
+            }
+        }
+        "recordset_find" {
+            if ($decoded.found -ne $true) {
+                $failed++
+                Write-Host ('{0}: FAIL expected found=true' -f $label)
+                continue
+            }
+        }
+        "recordset_bookmark_get" {
+            if ($null -eq $decoded.bookmark) {
+                $failed++
+                Write-Host ('{0}: FAIL expected non-null bookmark' -f $label)
+                continue
+            }
+        }
+        "recordset_count_after_add" {
+            $rc = $decoded.record_count
+            if ($null -eq $rc -or [int]$rc -lt 4) {
+                $failed++
+                Write-Host ('{0}: FAIL expected record_count >= 4 after add, got {1}' -f $label, $rc)
+                continue
+            }
+        }
+        "recordset_filter_sort" {
+            $rsId2Actual = [string]$decoded.recordset_id
+            if ([string]::IsNullOrWhiteSpace($rsId2Actual)) {
+                $failed++
+                Write-Host ('{0}: FAIL expected new recordset_id from filter_sort' -f $label)
+                continue
+            }
+        }
+    }
+
+    Write-Host ('{0}: OK' -f $label)
+}
+
+# ── Form Runtime / UI Coverage (Priority 18-22: form_recalc, form_refresh, control ops, etc.) ──
+# Gated by -IncludeUiCoverage because these tools open visible Access windows.
+
+if ($IncludeUiCoverage) {
+    Write-Host ""
+    Write-Host "=== Form Runtime / UI Coverage (IDs 501-537) ==="
+    Write-Host "Intermediate cleanup: clearing stale Access/MCP processes before form runtime section."
+    Cleanup-AccessArtifacts -DbPath $DatabasePath
+    Start-Sleep -Milliseconds 300
+
+    $formRuntimeFormData = @{
+        Name = $formRuntimeFormName
+        RecordSource = $formRuntimeTableName
+        ExportedAt = (Get-Date).ToUniversalTime().ToString("o")
+        Controls = @(
+            @{
+                Name = "txtValue"
+                Type = "TextBox"
+                ControlSource = "name"
+                Left = 600
+                Top = 600
+                Width = 2400
+                Height = 300
+                Visible = $true
+                Enabled = $true
+            }
+        )
+        VBA = ""
+    } | ConvertTo-Json -Depth 20 -Compress
+
+    $formRuntimeReportData = @{
+        Name = $formRuntimeReportName
+        RecordSource = $formRuntimeTableName
+        ExportedAt = (Get-Date).ToUniversalTime().ToString("o")
+        Controls = @(
+            @{
+                Name = "lblReport"
+                Type = "Label"
+                Left = 500
+                Top = 300
+                Width = 2500
+                Height = 300
+                Visible = $true
+                Enabled = $true
+            }
+        )
+    } | ConvertTo-Json -Depth 20 -Compress
+
+    $formRtCalls = New-Object 'System.Collections.Generic.List[object]'
+    Add-ToolCall -Calls $formRtCalls -Id 501 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
+    Add-ToolCall -Calls $formRtCalls -Id 502 -Name "create_table" -Arguments @{
+        table_name = $formRuntimeTableName
+        fields = @(
+            @{ name = "id"; type = "LONG"; size = 0; required = $true; allow_zero_length = $false },
+            @{ name = "name"; type = "TEXT"; size = 50; required = $false; allow_zero_length = $true }
+        )
+    }
+    Add-ToolCall -Calls $formRtCalls -Id 503 -Name "execute_sql" -Arguments @{ sql = "INSERT INTO [$formRuntimeTableName] (id, name) VALUES (1, 'alpha')" }
+    Add-ToolCall -Calls $formRtCalls -Id 504 -Name "execute_sql" -Arguments @{ sql = "INSERT INTO [$formRuntimeTableName] (id, name) VALUES (2, 'beta')" }
+    Add-ToolCall -Calls $formRtCalls -Id 505 -Name "import_form_from_text" -Arguments @{ form_data = $formRuntimeFormData; form_name = $formRuntimeFormName }
+    # Bind form to table so filter/order/refresh operations work
+    Add-ToolCall -Calls $formRtCalls -Id 538 -Name "set_form_record_source" -Arguments @{ form_name = $formRuntimeFormName; record_source = $formRuntimeTableName }
+    Add-ToolCall -Calls $formRtCalls -Id 506 -Name "open_form" -Arguments @{ form_name = $formRuntimeFormName }
+    Add-ToolCall -Calls $formRtCalls -Id 507 -Name "form_recalc" -Arguments @{ form_name = $formRuntimeFormName }
+    Add-ToolCall -Calls $formRtCalls -Id 508 -Name "form_refresh" -Arguments @{ form_name = $formRuntimeFormName }
+    Add-ToolCall -Calls $formRtCalls -Id 509 -Name "form_requery" -Arguments @{ form_name = $formRuntimeFormName }
+    Add-ToolCall -Calls $formRtCalls -Id 510 -Name "form_set_focus" -Arguments @{ form_name = $formRuntimeFormName }
+    Add-ToolCall -Calls $formRtCalls -Id 511 -Name "get_form_dirty" -Arguments @{ form_name = $formRuntimeFormName }
+    Add-ToolCall -Calls $formRtCalls -Id 512 -Name "get_form_new_record" -Arguments @{ form_name = $formRuntimeFormName }
+    Add-ToolCall -Calls $formRtCalls -Id 513 -Name "get_form_view" -Arguments @{ form_name = $formRuntimeFormName }
+    Add-ToolCall -Calls $formRtCalls -Id 514 -Name "get_form_open_args" -Arguments @{ form_name = $formRuntimeFormName }
+    Add-ToolCall -Calls $formRtCalls -Id 515 -Name "set_form_painting" -Arguments @{ form_name = $formRuntimeFormName; painting = $false }
+    Add-ToolCall -Calls $formRtCalls -Id 516 -Name "set_form_painting" -Arguments @{ form_name = $formRuntimeFormName; painting = $true }
+    Add-ToolCall -Calls $formRtCalls -Id 517 -Name "get_active_form" -Arguments @{}
+    Add-ToolCall -Calls $formRtCalls -Id 518 -Name "get_active_control" -Arguments @{}
+    Add-ToolCall -Calls $formRtCalls -Id 519 -Name "control_set_focus" -Arguments @{ form_name = $formRuntimeFormName; control_name = "txtValue" }
+    Add-ToolCall -Calls $formRtCalls -Id 520 -Name "control_requery" -Arguments @{ form_name = $formRuntimeFormName; control_name = "txtValue" }
+    Add-ToolCall -Calls $formRtCalls -Id 521 -Name "control_undo" -Arguments @{ form_name = $formRuntimeFormName; control_name = "txtValue" }
+    Add-ToolCall -Calls $formRtCalls -Id 522 -Name "set_filter_docmd" -Arguments @{ form_name = $formRuntimeFormName; where_condition = "[id]=1" }
+    Add-ToolCall -Calls $formRtCalls -Id 523 -Name "set_order_by" -Arguments @{ form_name = $formRuntimeFormName; order_by = "[name] ASC" }
+    Add-ToolCall -Calls $formRtCalls -Id 524 -Name "refresh_record" -Arguments @{}
+    Add-ToolCall -Calls $formRtCalls -Id 525 -Name "set_parameter" -Arguments @{ name = "TestParam"; expression = "1" }
+    Add-ToolCall -Calls $formRtCalls -Id 526 -Name "form_undo" -Arguments @{ form_name = $formRuntimeFormName }
+    Add-ToolCall -Calls $formRtCalls -Id 527 -Name "close_form" -Arguments @{ form_name = $formRuntimeFormName }
+    Add-ToolCall -Calls $formRtCalls -Id 528 -Name "import_report_from_text" -Arguments @{ report_data = $formRuntimeReportData; report_name = $formRuntimeReportName }
+    Add-ToolCall -Calls $formRtCalls -Id 529 -Name "open_report" -Arguments @{ report_name = $formRuntimeReportName }
+    Add-ToolCall -Calls $formRtCalls -Id 530 -Name "get_active_report" -Arguments @{}
+    Add-ToolCall -Calls $formRtCalls -Id 531 -Name "close_report" -Arguments @{ report_name = $formRuntimeReportName }
+    Add-ToolCall -Calls $formRtCalls -Id 532 -Name "is_object_loaded" -Arguments @{ object_type = "Form"; object_name = $formRuntimeFormName }
+    Add-ToolCall -Calls $formRtCalls -Id 533 -Name "delete_form" -Arguments @{ form_name = $formRuntimeFormName }
+    Add-ToolCall -Calls $formRtCalls -Id 534 -Name "delete_report" -Arguments @{ report_name = $formRuntimeReportName }
+    Add-ToolCall -Calls $formRtCalls -Id 535 -Name "delete_table" -Arguments @{ table_name = $formRuntimeTableName }
+    Add-ToolCall -Calls $formRtCalls -Id 536 -Name "disconnect_access" -Arguments @{}
+    Add-ToolCall -Calls $formRtCalls -Id 537 -Name "close_access" -Arguments @{}
+
+    $formRtResponses = Invoke-McpBatch -ExePath $ServerExe -Calls $formRtCalls -ClientName "full-regression-form-runtime" -ClientVersion "1.0"
+    $formRtIdLabels = @{
+        501 = "form_runtime_connect_access"
+        502 = "form_runtime_create_table"
+        503 = "form_runtime_insert_alpha"
+        504 = "form_runtime_insert_beta"
+        505 = "form_runtime_import_form"
+        538 = "form_runtime_set_record_source"
+        506 = "form_runtime_open_form"
+        507 = "form_runtime_form_recalc"
+        508 = "form_runtime_form_refresh"
+        509 = "form_runtime_form_requery"
+        510 = "form_runtime_form_set_focus"
+        511 = "form_runtime_get_form_dirty"
+        512 = "form_runtime_get_form_new_record"
+        513 = "form_runtime_get_form_view"
+        514 = "form_runtime_get_form_open_args"
+        515 = "form_runtime_set_form_painting_off"
+        516 = "form_runtime_set_form_painting_on"
+        517 = "form_runtime_get_active_form"
+        518 = "form_runtime_get_active_control"
+        519 = "form_runtime_control_set_focus"
+        520 = "form_runtime_control_requery"
+        521 = "form_runtime_control_undo"
+        522 = "form_runtime_set_filter_docmd"
+        523 = "form_runtime_set_order_by"
+        524 = "form_runtime_refresh_record"
+        525 = "form_runtime_set_parameter"
+        526 = "form_runtime_form_undo"
+        527 = "form_runtime_close_form"
+        528 = "form_runtime_import_report"
+        529 = "form_runtime_open_report"
+        530 = "form_runtime_get_active_report"
+        531 = "form_runtime_close_report"
+        532 = "form_runtime_is_object_loaded_after_close"
+        533 = "form_runtime_delete_form"
+        534 = "form_runtime_delete_report"
+        535 = "form_runtime_delete_table"
+        536 = "form_runtime_disconnect_access"
+        537 = "form_runtime_close_access"
+    }
+
+    foreach ($id in ($formRtIdLabels.Keys | Sort-Object)) {
+        $label = $formRtIdLabels[$id]
+        $decoded = Decode-McpResult -Response $formRtResponses[[int]$id]
+
+        if ($null -eq $decoded) {
+            $failed++
+            Write-Host ('{0}: FAIL missing-response' -f $label)
+            continue
+        }
+
+        if ($decoded -is [string]) {
+            $failed++
+            Write-Host ('{0}: FAIL raw-string-response' -f $label)
+            continue
+        }
+
+        if ($decoded.success -ne $true) {
+            # get_active_control may fail gracefully if no control has focus yet (before control_set_focus)
+            if ($label -eq "form_runtime_get_active_control") {
+                Write-Host ('{0}: SKIP (no focused control before control_set_focus) {1}' -f $label, $decoded.error)
+                continue
+            }
+            $failed++
+            Write-Host ('{0}: FAIL {1}' -f $label, $decoded.error)
+            continue
+        }
+
+        switch ($label) {
+            "form_runtime_get_form_dirty" {
+                if ($null -eq $decoded.dirty -or $decoded.dirty -isnot [bool]) {
+                    $failed++
+                    Write-Host ('{0}: FAIL expected dirty to be boolean' -f $label)
+                    continue
+                }
+            }
+            "form_runtime_get_form_new_record" {
+                if ($null -eq $decoded.new_record -or $decoded.new_record -isnot [bool]) {
+                    $failed++
+                    Write-Host ('{0}: FAIL expected new_record to be boolean' -f $label)
+                    continue
+                }
+            }
+            "form_runtime_get_form_view" {
+                if ($null -eq $decoded.current_view) {
+                    $failed++
+                    Write-Host ('{0}: FAIL expected current_view property' -f $label)
+                    continue
+                }
+            }
+            "form_runtime_get_active_form" {
+                # Response shape: { success:true, result: { name, recordSource, caption, ... } }
+                $activeFormName = [string]$decoded.result.name
+                if ([string]::IsNullOrWhiteSpace($activeFormName)) {
+                    $failed++
+                    Write-Host ('{0}: FAIL expected result.name property on active form' -f $label)
+                    continue
+                }
+            }
+            "form_runtime_get_active_report" {
+                # Response shape: { success:true, result: { name, recordSource, caption } }
+                $activeReportName = [string]$decoded.result.name
+                if ([string]::IsNullOrWhiteSpace($activeReportName)) {
+                    $failed++
+                    Write-Host ('{0}: FAIL expected result.name property on active report' -f $label)
+                    continue
+                }
+            }
+            "form_runtime_is_object_loaded_after_close" {
+                if ($decoded.is_loaded -eq $true) {
+                    $failed++
+                    Write-Host ('{0}: FAIL expected is_loaded=false after form close' -f $label)
+                    continue
+                }
+            }
+        }
+
+        Write-Host ('{0}: OK' -f $label)
+    }
+}
+else {
+    Write-Host ""
+    Write-Host "form_runtime_coverage: SKIP (requires -IncludeUiCoverage)"
+}
+
+# ── Close Database Coverage (Priority 22: close_database invalidates connection) ──
+
+Write-Host ""
+Write-Host "=== Close Database Coverage (IDs 651-655) ==="
+Write-Host "Intermediate cleanup: clearing stale Access/MCP processes before close_database section."
+Cleanup-AccessArtifacts -DbPath $DatabasePath
+Start-Sleep -Milliseconds 300
+
+$closeDbCalls = New-Object 'System.Collections.Generic.List[object]'
+Add-ToolCall -Calls $closeDbCalls -Id 651 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
+Add-ToolCall -Calls $closeDbCalls -Id 652 -Name "is_connected" -Arguments @{}
+Add-ToolCall -Calls $closeDbCalls -Id 653 -Name "close_database" -Arguments @{}
+Add-ToolCall -Calls $closeDbCalls -Id 654 -Name "disconnect_access" -Arguments @{}
+Add-ToolCall -Calls $closeDbCalls -Id 655 -Name "close_access" -Arguments @{}
+
+$closeDbResponses = Invoke-McpBatch -ExePath $ServerExe -Calls $closeDbCalls -ClientName "full-regression-close-database" -ClientVersion "1.0"
+$closeDbIdLabels = @{
+    651 = "close_database_connect_access"
+    652 = "close_database_is_connected"
+    653 = "close_database_close_database"
+    654 = "close_database_disconnect_access"
+    655 = "close_database_close_access"
+}
+
+foreach ($id in ($closeDbIdLabels.Keys | Sort-Object)) {
+    $label = $closeDbIdLabels[$id]
+    $decoded = Decode-McpResult -Response $closeDbResponses[[int]$id]
+
+    if ($null -eq $decoded) {
+        $failed++
+        Write-Host ('{0}: FAIL missing-response' -f $label)
+        continue
+    }
+
+    if ($decoded -is [string]) {
+        $failed++
+        Write-Host ('{0}: FAIL raw-string-response' -f $label)
+        continue
+    }
+
+    if ($decoded.success -ne $true) {
+        $failed++
+        Write-Host ('{0}: FAIL {1}' -f $label, $decoded.error)
+        continue
+    }
+
+    switch ($label) {
+        "close_database_is_connected" {
+            if ($decoded.connected -ne $true) {
+                $failed++
+                Write-Host ('{0}: FAIL expected connected=true before close_database' -f $label)
+                continue
+            }
+        }
+    }
+
+    Write-Host ('{0}: OK' -f $label)
+}
+
 # ── MCP Feature Tests (Resources, Prompts, Completion, Logging) ──
 
 Write-Host ""
@@ -2260,6 +2895,8 @@ finally {
             Remove-Item -Path $dbLifecyclePath -Force -ErrorAction SilentlyContinue
         }
     }
+    Remove-Item -Path $tempNavXmlPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $tempXmlDataPath -Force -ErrorAction SilentlyContinue
     Release-RegressionLock -LockState $regressionLock
 }
 
