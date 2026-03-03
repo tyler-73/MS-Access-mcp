@@ -486,7 +486,16 @@ class Program
                 new { name = "listbox_get_items", description = "Get items, item count, and column count from a combo box or list box.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the open form" }, control_name = new { type = "string", description = "Name of the combo/list box" }, max_items = new { type = "integer", description = "Maximum number of items to return (default 100)" } }, required = new string[] { "form_name", "control_name" } } },
                 new { name = "get_object_dates", description = "Get DateCreated and DateModified for any database object (AccessObject).", inputSchema = new { type = "object", properties = new { object_type = new { type = "string", @enum = new[] { "Table", "Query", "Form", "Report", "Macro", "Module" }, description = "Type of the database object" }, object_name = new { type = "string", description = "Name of the database object" } }, required = new string[] { "object_type", "object_name" } } },
                 new { name = "is_object_loaded", description = "Check if a specific database object is currently open (AccessObject.IsLoaded).", inputSchema = new { type = "object", properties = new { object_type = new { type = "string", @enum = new[] { "Table", "Query", "Form", "Report", "Macro", "Module" }, description = "Type of the database object" }, object_name = new { type = "string", description = "Name of the database object" } }, required = new string[] { "object_type", "object_name" } } },
-                new { name = "is_vba_compiled", description = "Check if VBA code is compiled and check for broken references (Application.IsCompiled + References).", inputSchema = new { type = "object", properties = new { }, required = new string[] { } } }
+                new { name = "is_vba_compiled", description = "Check if VBA code is compiled and check for broken references (Application.IsCompiled + References).", inputSchema = new { type = "object", properties = new { }, required = new string[] { } } },
+                // Priority 23: Autonomy Gap Tools
+                new { name = "list_odbc_data_sources", description = "List all ODBC Data Source Names (DSNs) configured on the system (both User and System DSNs).", inputSchema = new { type = "object", properties = new { }, required = new string[] { } } },
+                new { name = "create_odbc_linked_table", description = "Create a linked table to an external ODBC data source (SQL Server, PostgreSQL, MySQL, etc.) using a DSN or connection string.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string", description = "Name for the linked table in Access" }, connection_string = new { type = "string", description = "ODBC connection string (e.g. 'ODBC;DSN=MyDSN;' or 'ODBC;DRIVER={SQL Server};SERVER=...;DATABASE=...;')" }, source_table_name = new { type = "string", description = "Name of the table in the external data source" }, overwrite = new { type = "boolean", description = "If true, delete existing table with same name first (default false)" } }, required = new string[] { "table_name", "connection_string", "source_table_name" } } },
+                new { name = "execute_sql_timed", description = "Execute a SQL statement and return results with execution timing (milliseconds). Useful for performance analysis.", inputSchema = new { type = "object", properties = new { sql = new { type = "string", description = "SQL statement to execute" }, max_rows = new { type = "integer", description = "Maximum rows to return (default 1000)" } }, required = new string[] { "sql" } } },
+                new { name = "get_database_statistics", description = "Get comprehensive database statistics: file size, object counts, total records, and last compact date.", inputSchema = new { type = "object", properties = new { }, required = new string[] { } } },
+                new { name = "export_schema_snapshot", description = "Export complete database schema as a JSON snapshot for version control or diffing. Includes tables, fields, indexes, relationships, queries, and optionally VBA code and small table data.", inputSchema = new { type = "object", properties = new { include_vba = new { type = "boolean", description = "Include VBA module code in snapshot (default false)" }, include_data = new { type = "boolean", description = "Include data from small lookup tables (default false)" }, max_data_rows = new { type = "integer", description = "Max rows per table when include_data is true (default 100)" } }, required = new string[] { } } },
+                new { name = "export_all_vba", description = "Export all VBA modules (standard, class, form, report) as a single JSON bundle. Useful for version control and code review.", inputSchema = new { type = "object", properties = new { }, required = new string[] { } } },
+                new { name = "check_referential_integrity", description = "Find orphaned foreign key records that violate referential integrity. Checks all relationships or a specific table.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string", description = "Optional: check only relationships involving this table. Omit to check all." } }, required = new string[] { } } },
+                new { name = "find_duplicate_records", description = "Find duplicate records in a table based on specified fields.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string", description = "Name of the table to check" }, field_names = new { type = "array", items = new { type = "string" }, description = "Fields to check for uniqueness" }, max_groups = new { type = "integer", description = "Maximum duplicate groups to return (default 50)" } }, required = new string[] { "table_name", "field_names" } } }
             }
         };
     }
@@ -820,6 +829,15 @@ class Program
             "get_object_dates" => HandleGetObjectDates(accessService, toolArguments),
             "is_object_loaded" => HandleIsObjectLoaded(accessService, toolArguments),
             "is_vba_compiled" => HandleIsVbaCompiled(accessService, toolArguments),
+            // Priority 23: Autonomy Gap Tools
+            "list_odbc_data_sources" => HandleListOdbcDataSources(accessService, toolArguments),
+            "create_odbc_linked_table" => HandleCreateOdbcLinkedTable(accessService, toolArguments),
+            "execute_sql_timed" => HandleExecuteSqlTimed(accessService, toolArguments),
+            "get_database_statistics" => HandleGetDatabaseStatistics(accessService, toolArguments),
+            "export_schema_snapshot" => HandleExportSchemaSnapshot(accessService, toolArguments),
+            "export_all_vba" => HandleExportAllVba(accessService, toolArguments),
+            "check_referential_integrity" => HandleCheckReferentialIntegrity(accessService, toolArguments),
+            "find_duplicate_records" => HandleFindDuplicateRecords(accessService, toolArguments),
             _ => new { success = false, error = $"Unknown tool: {toolName}" }
         };
     }
@@ -7142,6 +7160,141 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("is_vba_compiled", ex);
+        }
+    }
+
+    // ── Priority 23: Autonomy Gap Tools ──────────────────────────────────────────
+
+    static object HandleListOdbcDataSources(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var result = accessService.ListOdbcDataSources();
+            return new { success = true, data_sources = result, count = result.Count };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("list_odbc_data_sources", ex);
+        }
+    }
+
+    static object HandleCreateOdbcLinkedTable(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var err1)) return err1;
+            if (!TryGetRequiredString(arguments, "connection_string", out var connectionString, out var err2)) return err2;
+            if (!TryGetRequiredString(arguments, "source_table_name", out var sourceTableName, out var err3)) return err3;
+            var overwrite = arguments.TryGetProperty("overwrite", out var ow) && ow.ValueKind == JsonValueKind.True;
+
+            var result = accessService.CreateOdbcLinkedTable(tableName, connectionString, sourceTableName, overwrite);
+            return new { success = true, result };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("create_odbc_linked_table", ex);
+        }
+    }
+
+    static object HandleExecuteSqlTimed(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "sql", out var sql, out var err)) return err;
+            var maxRows = arguments.TryGetProperty("max_rows", out var mr) && mr.TryGetInt32(out var mrv) ? mrv : 1000;
+
+            var result = accessService.ExecuteSqlTimed(sql, maxRows);
+            return new { success = true, result };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("execute_sql_timed", ex);
+        }
+    }
+
+    static object HandleGetDatabaseStatistics(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var result = accessService.GetDatabaseStatistics();
+            return new { success = true, result };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_database_statistics", ex);
+        }
+    }
+
+    static object HandleExportSchemaSnapshot(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var includeVba = arguments.TryGetProperty("include_vba", out var iv) && iv.ValueKind == JsonValueKind.True;
+            var includeData = arguments.TryGetProperty("include_data", out var id) && id.ValueKind == JsonValueKind.True;
+            var maxDataRows = arguments.TryGetProperty("max_data_rows", out var mdr) && mdr.TryGetInt32(out var mdrv) ? mdrv : 100;
+
+            var result = accessService.ExportSchemaSnapshot(includeVba, includeData, maxDataRows);
+            return new { success = true, result };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("export_schema_snapshot", ex);
+        }
+    }
+
+    static object HandleExportAllVba(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var result = accessService.ExportAllVba();
+            return new { success = true, modules = result, count = result.Count };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("export_all_vba", ex);
+        }
+    }
+
+    static object HandleCheckReferentialIntegrity(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            _ = TryGetOptionalString(arguments, "table_name", out var tableName);
+            var result = accessService.CheckReferentialIntegrity(string.IsNullOrWhiteSpace(tableName) ? null : tableName);
+            return new { success = true, violations = result, violation_count = result.Count, is_clean = result.Count == 0 };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("check_referential_integrity", ex);
+        }
+    }
+
+    static object HandleFindDuplicateRecords(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var err)) return err;
+
+            var fieldNames = new List<string>();
+            if (arguments.TryGetProperty("field_names", out var fnArr) && fnArr.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in fnArr.EnumerateArray())
+                {
+                    if (item.ValueKind == JsonValueKind.String)
+                        fieldNames.Add(item.GetString() ?? "");
+                }
+            }
+            if (fieldNames.Count == 0)
+                return new { success = false, error = "field_names must contain at least one field name" };
+
+            var maxGroups = arguments.TryGetProperty("max_groups", out var mg) && mg.TryGetInt32(out var mgv) ? mgv : 50;
+
+            var result = accessService.FindDuplicateRecords(tableName, fieldNames, maxGroups);
+            return new { success = true, result };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("find_duplicate_records", ex);
         }
     }
 

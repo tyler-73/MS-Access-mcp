@@ -5623,6 +5623,133 @@ else {
     Write-Host "unknown_method_error: FAIL expected error code -32601"
 }
 
+# ── Autonomy Gap Tools (Priority 23: ODBC, diagnostics, schema, data quality) ──
+
+Write-Host ""
+Write-Host "=== Autonomy Gap Tools (IDs 1001-1012) ==="
+Write-Host "Intermediate cleanup: clearing stale Access/MCP processes before autonomy gap section."
+Cleanup-AccessArtifacts -DbPath $DatabasePath
+
+$gapCalls = New-Object 'System.Collections.Generic.List[object]'
+Add-ToolCall -Calls $gapCalls -Id 1001 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
+# ODBC
+Add-ToolCall -Calls $gapCalls -Id 1002 -Name "list_odbc_data_sources" -Arguments @{}
+# Diagnostics
+Add-ToolCall -Calls $gapCalls -Id 1003 -Name "execute_sql_timed" -Arguments @{ sql = "SELECT 1+1 AS result"; max_rows = 10 }
+Add-ToolCall -Calls $gapCalls -Id 1004 -Name "get_database_statistics" -Arguments @{}
+# Schema / VBA export
+Add-ToolCall -Calls $gapCalls -Id 1005 -Name "export_schema_snapshot" -Arguments @{ include_vba = $false; include_data = $false }
+Add-ToolCall -Calls $gapCalls -Id 1006 -Name "export_all_vba" -Arguments @{}
+# Data quality
+Add-ToolCall -Calls $gapCalls -Id 1007 -Name "check_referential_integrity" -Arguments @{}
+# find_duplicate_records needs a table with data - use the Contacts or Employees table if exists, otherwise test with a temp table
+Add-ToolCall -Calls $gapCalls -Id 1008 -Name "create_table" -Arguments @{
+    table_name = "mcp_dup_test"
+    fields = @(
+        @{ name = "id"; type = "LONG"; size = 0; required = $true; allow_zero_length = $false }
+        @{ name = "city"; type = "TEXT"; size = 50; required = $false; allow_zero_length = $true }
+    )
+}
+Add-ToolCall -Calls $gapCalls -Id 1009 -Name "execute_sql" -Arguments @{ sql = "INSERT INTO [mcp_dup_test] (id, city) VALUES (1, 'Boston')" }
+Add-ToolCall -Calls $gapCalls -Id 1010 -Name "execute_sql" -Arguments @{ sql = "INSERT INTO [mcp_dup_test] (id, city) VALUES (2, 'Boston')" }
+Add-ToolCall -Calls $gapCalls -Id 1011 -Name "find_duplicate_records" -Arguments @{ table_name = "mcp_dup_test"; field_names = @("city") }
+Add-ToolCall -Calls $gapCalls -Id 1012 -Name "delete_table" -Arguments @{ table_name = "mcp_dup_test" }
+
+$gapResponses = Invoke-McpBatch -ExePath $ServerExe -Calls $gapCalls -ClientName "full-regression-autonomy-gap" -ClientVersion "1.0"
+$gapIdLabels = @{
+    1001 = "gap_connect_access"
+    1002 = "gap_list_odbc_data_sources"
+    1003 = "gap_execute_sql_timed"
+    1004 = "gap_get_database_statistics"
+    1005 = "gap_export_schema_snapshot"
+    1006 = "gap_export_all_vba"
+    1007 = "gap_check_referential_integrity"
+    1008 = "gap_create_dup_test_table"
+    1009 = "gap_insert_dup_1"
+    1010 = "gap_insert_dup_2"
+    1011 = "gap_find_duplicate_records"
+    1012 = "gap_delete_dup_test_table"
+}
+
+foreach ($id in ($gapIdLabels.Keys | Sort-Object)) {
+    $label = $gapIdLabels[$id]
+    $decoded = Decode-McpResult -Response $gapResponses[[int]$id]
+
+    if ($null -eq $decoded) {
+        $failed++
+        Write-Host ('{0}: FAIL missing-response' -f $label)
+        continue
+    }
+
+    if ($decoded -is [string]) {
+        $failed++
+        Write-Host ('{0}: FAIL raw-string-response' -f $label)
+        continue
+    }
+
+    if ($decoded.success -ne $true) {
+        $failed++
+        Write-Host ('{0}: FAIL {1}' -f $label, $decoded.error)
+        continue
+    }
+
+    switch ($label) {
+        "gap_list_odbc_data_sources" {
+            # Should return a list (may be empty if no DSNs configured)
+            if ($null -eq $decoded.data_sources) {
+                $failed++
+                Write-Host ('{0}: FAIL expected data_sources array' -f $label)
+                continue
+            }
+        }
+        "gap_execute_sql_timed" {
+            if ($null -eq $decoded.result -or $null -eq $decoded.result.executionTimeMs) {
+                $failed++
+                Write-Host ('{0}: FAIL expected result.executionTimeMs' -f $label)
+                continue
+            }
+        }
+        "gap_get_database_statistics" {
+            if ($null -eq $decoded.result -or $null -eq $decoded.result.fileSizeBytes) {
+                $failed++
+                Write-Host ('{0}: FAIL expected result.fileSizeBytes' -f $label)
+                continue
+            }
+        }
+        "gap_export_schema_snapshot" {
+            if ($null -eq $decoded.result -or $null -eq $decoded.result.tables) {
+                $failed++
+                Write-Host ('{0}: FAIL expected result.tables' -f $label)
+                continue
+            }
+        }
+        "gap_export_all_vba" {
+            # modules array may be empty if DB has no VBA
+            if ($null -eq $decoded.modules) {
+                $failed++
+                Write-Host ('{0}: FAIL expected modules array' -f $label)
+                continue
+            }
+        }
+        "gap_check_referential_integrity" {
+            if ($null -eq $decoded.violations) {
+                $failed++
+                Write-Host ('{0}: FAIL expected violations array' -f $label)
+                continue
+            }
+        }
+        "gap_find_duplicate_records" {
+            if ($null -eq $decoded.result -or $decoded.result.duplicateGroupCount -lt 1) {
+                $failed++
+                Write-Host ('{0}: FAIL expected at least 1 duplicate group (Boston), got {1}' -f $label, $decoded.result.duplicateGroupCount)
+                continue
+            }
+        }
+    }
+
+    Write-Host ('{0}: OK' -f $label)
+}
+
 Write-Host "=== End MCP Feature Tests ==="
 Write-Host ""
 

@@ -12866,7 +12866,483 @@ namespace MS.Access.MCP.Interop
                 _disposed = true;
             }
         }
-    }
+
+    #region Autonomy Gap Tools
+
+        // ── Tool: list_odbc_data_sources ────────────────────────────────────────
+        public List<OdbcDataSourceInfo> ListOdbcDataSources()
+        {
+            var results = new List<OdbcDataSourceInfo>();
+            var paths = new[]
+            {
+                (Registry.LocalMachine, "System"),
+                (Registry.CurrentUser, "User")
+            };
+
+            foreach (var (hive, scope) in paths)
+            {
+                try
+                {
+                    using var dsKey = hive.OpenSubKey(@"SOFTWARE\ODBC\ODBC.INI\ODBC Data Sources");
+                    if (dsKey == null) continue;
+                    foreach (var dsnName in dsKey.GetValueNames())
+                    {
+                        var driver = dsKey.GetValue(dsnName)?.ToString() ?? "";
+                        string? server = null;
+                        string? database = null;
+                        string? description = null;
+
+                        try
+                        {
+                            using var detailKey = hive.OpenSubKey($@"SOFTWARE\ODBC\ODBC.INI\{dsnName}");
+                            if (detailKey != null)
+                            {
+                                server = detailKey.GetValue("Server")?.ToString();
+                                database = detailKey.GetValue("Database")?.ToString()
+                                    ?? detailKey.GetValue("DBQ")?.ToString();
+                                description = detailKey.GetValue("Description")?.ToString();
+                            }
+                        }
+                        catch { }
+
+                        if (!results.Any(r => r.DsnName == dsnName && r.Scope == scope))
+                        {
+                            results.Add(new OdbcDataSourceInfo
+                            {
+                                DsnName = dsnName,
+                                Driver = driver,
+                                Scope = scope,
+                                Server = server,
+                                Database = database,
+                                Description = description
+                            });
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            return results;
+        }
+
+        // ── Tool: create_odbc_linked_table ──────────────────────────────────────
+        public LinkedTableInfo CreateOdbcLinkedTable(string tableName, string connectionString,
+            string sourceTableName, bool overwrite = false)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("tableName is required.", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(connectionString)) throw new ArgumentException("connectionString is required.", nameof(connectionString));
+            if (string.IsNullOrWhiteSpace(sourceTableName)) throw new ArgumentException("sourceTableName is required.", nameof(sourceTableName));
+
+            // Normalize connection string: ensure it starts with "ODBC;"
+            var connectStr = connectionString.Trim();
+            if (!connectStr.StartsWith("ODBC;", StringComparison.OrdinalIgnoreCase))
+                connectStr = "ODBC;" + connectStr;
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+                var tableDefs = TryGetDynamicProperty(currentDb, "TableDefs")
+                    ?? throw new InvalidOperationException("DAO TableDefs collection is unavailable.");
+
+                if (overwrite)
+                {
+                    try
+                    {
+                        InvokeDynamicMethod(tableDefs, "Delete", tableName);
+                        InvokeDynamicMethod(tableDefs, "Refresh");
+                    }
+                    catch { }
+                }
+
+                var tdf = InvokeDynamicMethod(currentDb, "CreateTableDef", tableName)
+                    ?? throw new InvalidOperationException("Failed to create TableDef.");
+                SetDynamicProperty(tdf, "Connect", connectStr);
+                SetDynamicProperty(tdf, "SourceTableName", sourceTableName);
+                InvokeDynamicMethod(tableDefs, "Append", tdf);
+                InvokeDynamicMethod(tableDefs, "Refresh");
+
+                // Read back the created link
+                var created = InvokeDynamicMethod(tableDefs, "Item", tableName);
+                return new LinkedTableInfo
+                {
+                    Name = tableName,
+                    SourceTableName = sourceTableName,
+                    ConnectString = SafeToString(TryGetDynamicProperty(created, "Connect")),
+                    SourceDatabasePath = connectStr,
+                    Attributes = ToInt32(TryGetDynamicProperty(created, "Attributes"))
+                };
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        // ── Tool: execute_sql_timed ─────────────────────────────────────────────
+        public TimedSqlResult ExecuteSqlTimed(string sql, int maxRows = 200)
+        {
+            var sw = Stopwatch.StartNew();
+            var result = ExecuteSql(sql, maxRows);
+            sw.Stop();
+
+            return new TimedSqlResult
+            {
+                IsQuery = result.IsQuery,
+                Columns = result.Columns,
+                Rows = result.Rows,
+                RowCount = result.RowCount,
+                Truncated = result.Truncated,
+                RowsAffected = result.RowsAffected,
+                ExecutionTimeMs = sw.ElapsedMilliseconds
+            };
+        }
+
+        // ── Tool: get_database_statistics ───────────────────────────────────────
+        public DatabaseStatistics GetDatabaseStatistics()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            var stats = new DatabaseStatistics();
+
+            // File size
+            if (!string.IsNullOrEmpty(_currentDatabasePath) && File.Exists(_currentDatabasePath))
+            {
+                var fi = new FileInfo(_currentDatabasePath);
+                stats.FileSizeBytes = fi.Length;
+                stats.FileSizeMB = Math.Round(fi.Length / (1024.0 * 1024.0), 2);
+                stats.LastModified = fi.LastWriteTimeUtc.ToString("o");
+            }
+
+            // Object counts via existing methods
+            try { stats.TableCount = GetTables().Count; } catch { }
+            try { stats.QueryCount = GetQueries().Count; } catch { }
+            try { stats.RelationshipCount = GetRelationships().Count; } catch { }
+
+            // Forms, reports, macros, modules via COM
+            try
+            {
+                ExecuteComOperation<object?>(accessApp =>
+                {
+                    try { stats.FormCount = (int)accessApp.CurrentProject.AllForms.Count; } catch { }
+                    try { stats.ReportCount = (int)accessApp.CurrentProject.AllReports.Count; } catch { }
+                    try { stats.MacroCount = (int)accessApp.CurrentProject.AllMacros.Count; } catch { }
+                    try { stats.ModuleCount = (int)accessApp.CurrentProject.AllModules.Count; } catch { }
+                    return null;
+                }, requireExclusive: false, releaseOleDb: false);
+            }
+            catch { }
+
+            // Total records across all tables
+            try
+            {
+                var tables = GetTables();
+                stats.TotalRecords = tables.Sum(t => t.RecordCount);
+            }
+            catch { }
+
+            // Index count
+            try
+            {
+                EnsureOleDbConnection();
+                using var cmd = CreateCommand("SELECT COUNT(*) FROM MSysObjects WHERE Type=22");
+                var countObj = cmd.ExecuteScalar();
+                if (countObj != null && countObj != DBNull.Value)
+                    stats.IndexCount = Convert.ToInt32(countObj);
+            }
+            catch { }
+
+            return stats;
+        }
+
+        // ── Tool: export_schema_snapshot ─────────────────────────────────────────
+        public SchemaSnapshot ExportSchemaSnapshot(bool includeVba = true, bool includeData = false, int maxDataRows = 50)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            var snapshot = new SchemaSnapshot
+            {
+                DatabasePath = _currentDatabasePath ?? "",
+                ExportedAt = DateTime.UtcNow.ToString("o")
+            };
+
+            // Tables with full field details
+            try
+            {
+                var tables = GetTables();
+                foreach (var table in tables)
+                {
+                    var tableDef = new SchemaTableDef
+                    {
+                        Name = table.Name,
+                        RecordCount = table.RecordCount,
+                        Fields = table.Fields.Select(f => new SchemaFieldDef
+                        {
+                            Name = f.Name,
+                            Type = f.Type,
+                            Size = f.Size,
+                            Required = f.Required,
+                            AllowZeroLength = f.AllowZeroLength
+                        }).ToList()
+                    };
+
+                    try { tableDef.Indexes = GetIndexes(table.Name); } catch { }
+
+                    if (includeData && table.RecordCount > 0 && table.RecordCount <= maxDataRows)
+                    {
+                        try
+                        {
+                            var data = ExecuteSql($"SELECT * FROM [{table.Name}]", maxDataRows);
+                            tableDef.SampleData = data.Rows;
+                        }
+                        catch { }
+                    }
+
+                    snapshot.Tables.Add(tableDef);
+                }
+            }
+            catch { }
+
+            // Relationships
+            try { snapshot.Relationships = GetRelationships(); } catch { }
+
+            // Queries
+            try
+            {
+                var queries = GetQueries();
+                snapshot.Queries = queries.Select(q => new SchemaQueryDef
+                {
+                    Name = q.Name,
+                    Type = q.Type,
+                    Sql = q.SQL
+                }).ToList();
+            }
+            catch { }
+
+            // VBA modules
+            if (includeVba)
+            {
+                try { snapshot.VbaModules = ExportAllVba(); } catch { }
+            }
+
+            // Forms and reports (names + record sources)
+            try
+            {
+                ExecuteComOperation<object?>(accessApp =>
+                {
+                    try
+                    {
+                        foreach (var form in accessApp.CurrentProject.AllForms)
+                        {
+                            snapshot.Forms.Add(new SchemaObjectRef
+                            {
+                                Name = (string)form.Name,
+                                IsLoaded = (bool)form.IsLoaded
+                            });
+                        }
+                    }
+                    catch { }
+
+                    try
+                    {
+                        foreach (var report in accessApp.CurrentProject.AllReports)
+                        {
+                            snapshot.Reports.Add(new SchemaObjectRef
+                            {
+                                Name = (string)report.Name,
+                                IsLoaded = (bool)report.IsLoaded
+                            });
+                        }
+                    }
+                    catch { }
+
+                    return null;
+                }, requireExclusive: false, releaseOleDb: false);
+            }
+            catch { }
+
+            return snapshot;
+        }
+
+        // ── Tool: export_all_vba ────────────────────────────────────────────────
+        public List<VbaModuleExport> ExportAllVba()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var results = new List<VbaModuleExport>();
+                var vbe = AccessVbeWithRetry(accessApp);
+                var projects = TryGetDynamicProperty(vbe, "VBProjects");
+                if (projects == null) return results;
+
+                foreach (var project in projects)
+                {
+                    var projectName = SafeToString(TryGetDynamicProperty(project, "Name"));
+                    var components = TryGetDynamicProperty(project, "VBComponents");
+                    if (components == null) continue;
+
+                    foreach (var component in components)
+                    {
+                        var compName = SafeToString(TryGetDynamicProperty(component, "Name"));
+                        var compType = ToInt32(TryGetDynamicProperty(component, "Type"));
+                        var codeModule = TryGetDynamicProperty(component, "CodeModule");
+                        var lineCount = codeModule != null ? ToInt32(TryGetDynamicProperty(codeModule, "CountOfLines")) : 0;
+                        var code = "";
+
+                        if (codeModule != null && lineCount > 0)
+                        {
+                            try
+                            {
+                                code = SafeToString(InvokeDynamicMethod(codeModule, "Lines", 1, lineCount));
+                            }
+                            catch { }
+                        }
+
+                        var typeString = compType switch
+                        {
+                            1 => "StandardModule",
+                            2 => "ClassModule",
+                            3 => "MSForm",
+                            100 => "Document",
+                            _ => $"Unknown({compType})"
+                        };
+
+                        results.Add(new VbaModuleExport
+                        {
+                            ProjectName = projectName,
+                            ModuleName = compName,
+                            ModuleType = typeString,
+                            LineCount = lineCount,
+                            Code = code
+                        });
+                    }
+                }
+
+                return results;
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        // ── Tool: check_referential_integrity ───────────────────────────────────
+        public List<IntegrityViolation> CheckReferentialIntegrity(string? tableName = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            var violations = new List<IntegrityViolation>();
+            var relationships = GetRelationships();
+
+            foreach (var rel in relationships)
+            {
+                // Filter to specific table if requested
+                if (!string.IsNullOrEmpty(tableName) &&
+                    !rel.ForeignTable.Equals(tableName, StringComparison.OrdinalIgnoreCase) &&
+                    !rel.Table.Equals(tableName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                try
+                {
+                    var sql = $"SELECT COUNT(*) FROM [{rel.ForeignTable}] LEFT JOIN [{rel.Table}] " +
+                              $"ON [{rel.ForeignTable}].[{rel.ForeignField}] = [{rel.Table}].[{rel.Field}] " +
+                              $"WHERE [{rel.Table}].[{rel.Field}] IS NULL " +
+                              $"AND [{rel.ForeignTable}].[{rel.ForeignField}] IS NOT NULL";
+
+                    EnsureOleDbConnection();
+                    using var cmd = CreateCommand(sql);
+                    var count = Convert.ToInt32(cmd.ExecuteScalar() ?? 0);
+
+                    if (count > 0)
+                    {
+                        // Get sample orphaned values
+                        var sampleSql = $"SELECT DISTINCT TOP 5 [{rel.ForeignTable}].[{rel.ForeignField}] " +
+                                        $"FROM [{rel.ForeignTable}] LEFT JOIN [{rel.Table}] " +
+                                        $"ON [{rel.ForeignTable}].[{rel.ForeignField}] = [{rel.Table}].[{rel.Field}] " +
+                                        $"WHERE [{rel.Table}].[{rel.Field}] IS NULL " +
+                                        $"AND [{rel.ForeignTable}].[{rel.ForeignField}] IS NOT NULL";
+
+                        var samples = new List<string>();
+                        try
+                        {
+                            using var sampleCmd = CreateCommand(sampleSql);
+                            using var reader = sampleCmd.ExecuteReader();
+                            while (reader.Read() && samples.Count < 5)
+                            {
+                                samples.Add(reader.IsDBNull(0) ? "(null)" : reader.GetValue(0).ToString() ?? "");
+                            }
+                        }
+                        catch { }
+
+                        violations.Add(new IntegrityViolation
+                        {
+                            RelationshipName = rel.Name,
+                            ChildTable = rel.ForeignTable,
+                            ChildField = rel.ForeignField,
+                            ParentTable = rel.Table,
+                            ParentField = rel.Field,
+                            OrphanedRecordCount = count,
+                            SampleOrphanedValues = samples
+                        });
+                    }
+                }
+                catch { }
+            }
+
+            return violations;
+        }
+
+        // ── Tool: find_duplicate_records ────────────────────────────────────────
+        public DuplicateCheckResult FindDuplicateRecords(string tableName, List<string> fieldNames, int maxGroups = 50)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("tableName is required.", nameof(tableName));
+            if (fieldNames == null || fieldNames.Count == 0) throw new ArgumentException("At least one field name is required.", nameof(fieldNames));
+
+            var escapedFields = fieldNames.Select(f => $"[{f}]").ToList();
+            var fieldList = string.Join(", ", escapedFields);
+
+            var sql = $"SELECT {fieldList}, COUNT(*) AS DuplicateCount " +
+                      $"FROM [{tableName}] " +
+                      $"GROUP BY {fieldList} " +
+                      $"HAVING COUNT(*) > 1 " +
+                      $"ORDER BY COUNT(*) DESC";
+
+            EnsureOleDbConnection();
+            using var cmd = CreateCommand(sql);
+            using var reader = cmd.ExecuteReader();
+
+            var groups = new List<DuplicateGroup>();
+            var totalDuplicates = 0;
+
+            while (reader.Read() && groups.Count < maxGroups)
+            {
+                var values = new Dictionary<string, object?>();
+                for (var i = 0; i < fieldNames.Count; i++)
+                {
+                    values[fieldNames[i]] = reader.IsDBNull(i) ? null : NormalizeValue(reader.GetValue(i));
+                }
+                var count = Convert.ToInt32(reader["DuplicateCount"]);
+                totalDuplicates += count;
+
+                groups.Add(new DuplicateGroup
+                {
+                    Values = values,
+                    Count = count
+                });
+            }
+
+            return new DuplicateCheckResult
+            {
+                TableName = tableName,
+                CheckedFields = fieldNames,
+                DuplicateGroupCount = groups.Count,
+                TotalDuplicateRows = totalDuplicates,
+                Groups = groups
+            };
+        }
+
+    #endregion
+
+    } // end class AccessInteropService
 
     #region Data Models
 
@@ -13611,6 +14087,124 @@ namespace MS.Access.MCP.Interop
     {
         public string? DateCreated { get; set; }
         public string? DateModified { get; set; }
+    }
+
+    // ── Autonomy Gap Tool Result Types ──────────────────────────────────────
+
+    public class OdbcDataSourceInfo
+    {
+        public string DsnName { get; set; } = "";
+        public string Driver { get; set; } = "";
+        public string Scope { get; set; } = "";
+        public string? Server { get; set; }
+        public string? Database { get; set; }
+        public string? Description { get; set; }
+    }
+
+    public class TimedSqlResult
+    {
+        public bool IsQuery { get; set; }
+        public List<string> Columns { get; set; } = new();
+        public List<Dictionary<string, object?>> Rows { get; set; } = new();
+        public int RowCount { get; set; }
+        public bool Truncated { get; set; }
+        public int RowsAffected { get; set; } = -1;
+        public long ExecutionTimeMs { get; set; }
+    }
+
+    public class DatabaseStatistics
+    {
+        public long FileSizeBytes { get; set; }
+        public double FileSizeMB { get; set; }
+        public string? LastModified { get; set; }
+        public int TableCount { get; set; }
+        public int QueryCount { get; set; }
+        public int FormCount { get; set; }
+        public int ReportCount { get; set; }
+        public int MacroCount { get; set; }
+        public int ModuleCount { get; set; }
+        public int RelationshipCount { get; set; }
+        public int IndexCount { get; set; }
+        public long TotalRecords { get; set; }
+    }
+
+    public class SchemaSnapshot
+    {
+        public string DatabasePath { get; set; } = "";
+        public string ExportedAt { get; set; } = "";
+        public List<SchemaTableDef> Tables { get; set; } = new();
+        public List<RelationshipInfo> Relationships { get; set; } = new();
+        public List<SchemaQueryDef> Queries { get; set; } = new();
+        public List<VbaModuleExport> VbaModules { get; set; } = new();
+        public List<SchemaObjectRef> Forms { get; set; } = new();
+        public List<SchemaObjectRef> Reports { get; set; } = new();
+    }
+
+    public class SchemaTableDef
+    {
+        public string Name { get; set; } = "";
+        public string? Description { get; set; }
+        public long RecordCount { get; set; }
+        public List<SchemaFieldDef> Fields { get; set; } = new();
+        public List<IndexInfo>? Indexes { get; set; }
+        public List<Dictionary<string, object?>>? SampleData { get; set; }
+    }
+
+    public class SchemaFieldDef
+    {
+        public string Name { get; set; } = "";
+        public string Type { get; set; } = "";
+        public int Size { get; set; }
+        public bool Required { get; set; }
+        public bool AllowZeroLength { get; set; }
+    }
+
+    public class SchemaQueryDef
+    {
+        public string Name { get; set; } = "";
+        public string Type { get; set; } = "";
+        public string Sql { get; set; } = "";
+    }
+
+    public class SchemaObjectRef
+    {
+        public string Name { get; set; } = "";
+        public bool IsLoaded { get; set; }
+    }
+
+    public class VbaModuleExport
+    {
+        public string ProjectName { get; set; } = "";
+        public string ModuleName { get; set; } = "";
+        public string ModuleType { get; set; } = "";
+        public int LineCount { get; set; }
+        public string Code { get; set; } = "";
+    }
+
+    public class IntegrityViolation
+    {
+        public string RelationshipName { get; set; } = "";
+        public string ChildTable { get; set; } = "";
+        public string ChildField { get; set; } = "";
+        public string ParentTable { get; set; } = "";
+        public string ParentField { get; set; } = "";
+        public int OrphanedRecordCount { get; set; }
+        public List<string> SampleOrphanedValues { get; set; } = new();
+    }
+
+    public class DuplicateCheckResult
+    {
+        public string TableName { get; set; } = "";
+        public List<string> CheckedFields { get; set; } = new();
+        public int DuplicateGroupCount { get; set; }
+        public int TotalDuplicateRows { get; set; }
+        public List<DuplicateGroup> Groups { get; set; } = new();
+    }
+
+    public class DuplicateGroup
+    {
+        public Dictionary<string, object?> Values { get; set; } = new();
+        public int Count { get; set; }
     }
 
     #endregion
