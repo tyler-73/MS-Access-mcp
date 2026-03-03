@@ -2,7 +2,9 @@ using System.Data;
 using System.Data.Common;
 using System.Data.OleDb;
 using System.Data.Odbc;
+using System.Diagnostics;
 using Microsoft.VisualBasic.CompilerServices;
+using Microsoft.Win32;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -29,6 +31,7 @@ namespace MS.Access.MCP.Interop
         private DataProviderKind _preferredDataProvider = DataProviderKind.OleDb;
         private DateTimeOffset? _transactionStartedAtUtc;
         private bool _disposed = false;
+        private static bool _vbeAccessEnsured = false;
         private const int DaoRelationAttributeDontEnforce = 2;
         private const int DaoRelationAttributeUpdateCascade = 256;
         private const int DaoRelationAttributeDeleteCascade = 4096;
@@ -1823,10 +1826,23 @@ namespace MS.Access.MCP.Interop
                 if (ToBool(TryGetDynamicProperty(recordset, "EOF"), true))
                     throw new InvalidOperationException("No matching row was found for multi-value update.");
 
+                // Parent recordset must be in Edit mode before modifying child multi-value recordset
+                _ = InvokeDynamicMethod(recordset, "Edit");
+
                 var field = GetRecordsetField(recordset, fieldName)
                     ?? throw new InvalidOperationException($"Field not found: {fieldName}");
-                var complexValueRecordset = TryGetDynamicProperty(field, "Value")
-                    ?? throw new InvalidOperationException($"Field '{fieldName}' is not a complex/multi-value field.");
+                var complexValueRecordset = TryGetDynamicProperty(field, "Value");
+
+                // For NULL multi-value fields, COM interop returns DBNull instead of an
+                // empty child Recordset2. This is a known limitation — the field must have
+                // at least one value before set_multi_value_field_values can modify it.
+                if (complexValueRecordset == null || complexValueRecordset is DBNull)
+                {
+                    throw new InvalidOperationException(
+                        $"Multi-value field '{fieldName}' is NULL. " +
+                        "COM interop cannot access the child recordset for NULL complex fields. " +
+                        "Insert at least one value via VBA (rs.Fields(\"" + fieldName + "\").Value.AddNew) first.");
+                }
 
                 while (!ToBool(TryGetDynamicProperty(complexValueRecordset, "EOF"), true))
                 {
@@ -1840,6 +1856,9 @@ namespace MS.Access.MCP.Interop
                     SetComplexFieldEntryValue(complexValueRecordset, value);
                     _ = InvokeDynamicMethod(complexValueRecordset, "Update");
                 }
+
+                // Commit parent recordset changes
+                _ = InvokeDynamicMethod(recordset, "Update");
 
                 return new MultiValueFieldUpdateInfo
                 {
@@ -4260,30 +4279,37 @@ namespace MS.Access.MCP.Interop
                 var recordset = InvokeDynamicMethod(currentDb, "OpenRecordset", sql)
                     ?? throw new InvalidOperationException("Failed to open attachment source recordset.");
 
-                var files = new List<AttachmentFileInfo>();
-                while (!ToBool(TryGetDynamicProperty(recordset, "EOF"), true))
+                try
                 {
-                    var attachmentRecordset = TryGetAttachmentRecordset(recordset, fieldName);
-                    if (attachmentRecordset != null)
+                    var files = new List<AttachmentFileInfo>();
+                    while (!ToBool(TryGetDynamicProperty(recordset, "EOF"), true))
                     {
-                        while (!ToBool(TryGetDynamicProperty(attachmentRecordset, "EOF"), true))
+                        var attachmentRecordset = TryGetAttachmentRecordset(recordset, fieldName);
+                        if (attachmentRecordset != null)
                         {
-                            files.Add(new AttachmentFileInfo
+                            while (!ToBool(TryGetDynamicProperty(attachmentRecordset, "EOF"), true))
                             {
-                                FileName = SafeToString(GetRecordsetFieldValue(attachmentRecordset, "FileName")) ?? "",
-                                FileType = SafeToString(GetRecordsetFieldValue(attachmentRecordset, "FileType")),
-                                FileSize = ToNullableInt(GetRecordsetFieldValue(attachmentRecordset, "FileData")) is int sizeFromData && sizeFromData > 0
-                                    ? sizeFromData
-                                    : ToNullableInt(GetRecordsetFieldValue(attachmentRecordset, "FileSize"))
-                            });
-                            _ = InvokeDynamicMethod(attachmentRecordset, "MoveNext");
+                                files.Add(new AttachmentFileInfo
+                                {
+                                    FileName = SafeToString(GetRecordsetFieldValue(attachmentRecordset, "FileName")) ?? "",
+                                    FileType = SafeToString(GetRecordsetFieldValue(attachmentRecordset, "FileType")),
+                                    FileSize = ToNullableInt(GetRecordsetFieldValue(attachmentRecordset, "FileData")) is int sizeFromData && sizeFromData > 0
+                                        ? sizeFromData
+                                        : ToNullableInt(GetRecordsetFieldValue(attachmentRecordset, "FileSize"))
+                                });
+                                _ = InvokeDynamicMethod(attachmentRecordset, "MoveNext");
+                            }
                         }
+
+                        _ = InvokeDynamicMethod(recordset, "MoveNext");
                     }
 
-                    _ = InvokeDynamicMethod(recordset, "MoveNext");
+                    return files;
                 }
-
-                return files;
+                finally
+                {
+                    try { InvokeDynamicMethod(recordset, "Close"); } catch { }
+                }
             },
             requireExclusive: false,
             releaseOleDb: false);
@@ -4305,16 +4331,32 @@ namespace MS.Access.MCP.Interop
                 var recordset = InvokeDynamicMethod(currentDb, "OpenRecordset", sql, 2)
                     ?? throw new InvalidOperationException("Failed to open attachment source recordset.");
 
-                if (ToBool(TryGetDynamicProperty(recordset, "EOF"), true))
-                    throw new InvalidOperationException("No matching row was found for attachment update.");
+                try
+                {
+                    if (ToBool(TryGetDynamicProperty(recordset, "EOF"), true))
+                        throw new InvalidOperationException("No matching row was found for attachment update.");
 
-                var attachmentRecordset = TryGetAttachmentRecordset(recordset, fieldName)
-                    ?? throw new InvalidOperationException($"Attachment field not found or not accessible: {fieldName}");
+                    // Parent recordset must be in Edit mode before modifying child attachment recordset
+                    _ = InvokeDynamicMethod(recordset, "Edit");
 
-                _ = InvokeDynamicMethod(attachmentRecordset, "AddNew");
-                SetRecordsetFieldValue(attachmentRecordset, "FileData", File.ReadAllBytes(filePath));
-                SetRecordsetFieldValue(attachmentRecordset, "FileName", Path.GetFileName(filePath));
-                _ = InvokeDynamicMethod(attachmentRecordset, "Update");
+                    var attachmentRecordset = TryGetAttachmentRecordset(recordset, fieldName)
+                        ?? throw new InvalidOperationException($"Attachment field not found or not accessible: {fieldName}");
+
+                    // Use LoadFromFile on the FileData field — DAO attachment fields
+                    // require this method rather than direct Value assignment.
+                    _ = InvokeDynamicMethod(attachmentRecordset, "AddNew");
+                    var fileDataField = GetRecordsetField(attachmentRecordset, "FileData")
+                        ?? throw new InvalidOperationException("FileData field not found in attachment recordset.");
+                    InvokeDynamicMethod(fileDataField, "LoadFromFile", filePath);
+                    _ = InvokeDynamicMethod(attachmentRecordset, "Update");
+
+                    // Commit parent recordset changes
+                    _ = InvokeDynamicMethod(recordset, "Update");
+                }
+                finally
+                {
+                    try { InvokeDynamicMethod(recordset, "Close"); } catch { }
+                }
             },
             requireExclusive: true,
             releaseOleDb: true);
@@ -4335,28 +4377,41 @@ namespace MS.Access.MCP.Interop
                 var recordset = InvokeDynamicMethod(currentDb, "OpenRecordset", sql, 2)
                     ?? throw new InvalidOperationException("Failed to open attachment source recordset.");
 
-                if (ToBool(TryGetDynamicProperty(recordset, "EOF"), true))
-                    throw new InvalidOperationException("No matching row was found for attachment update.");
-
-                var attachmentRecordset = TryGetAttachmentRecordset(recordset, fieldName)
-                    ?? throw new InvalidOperationException($"Attachment field not found or not accessible: {fieldName}");
-
-                var removed = false;
-                while (!ToBool(TryGetDynamicProperty(attachmentRecordset, "EOF"), true))
+                try
                 {
-                    var currentFileName = SafeToString(GetRecordsetFieldValue(attachmentRecordset, "FileName"));
-                    if (string.Equals(currentFileName, fileName, StringComparison.OrdinalIgnoreCase))
+                    if (ToBool(TryGetDynamicProperty(recordset, "EOF"), true))
+                        throw new InvalidOperationException("No matching row was found for attachment update.");
+
+                    // Parent recordset must be in Edit mode before modifying child attachment recordset
+                    _ = InvokeDynamicMethod(recordset, "Edit");
+
+                    var attachmentRecordset = TryGetAttachmentRecordset(recordset, fieldName)
+                        ?? throw new InvalidOperationException($"Attachment field not found or not accessible: {fieldName}");
+
+                    var removed = false;
+                    while (!ToBool(TryGetDynamicProperty(attachmentRecordset, "EOF"), true))
                     {
-                        _ = InvokeDynamicMethod(attachmentRecordset, "Delete");
-                        removed = true;
-                        break;
+                        var currentFileName = SafeToString(GetRecordsetFieldValue(attachmentRecordset, "FileName"));
+                        if (string.Equals(currentFileName, fileName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            _ = InvokeDynamicMethod(attachmentRecordset, "Delete");
+                            removed = true;
+                            break;
+                        }
+
+                        _ = InvokeDynamicMethod(attachmentRecordset, "MoveNext");
                     }
 
-                    _ = InvokeDynamicMethod(attachmentRecordset, "MoveNext");
-                }
+                    if (!removed)
+                        throw new InvalidOperationException($"Attachment file not found: {fileName}");
 
-                if (!removed)
-                    throw new InvalidOperationException($"Attachment file not found: {fileName}");
+                    // Commit parent recordset changes
+                    _ = InvokeDynamicMethod(recordset, "Update");
+                }
+                finally
+                {
+                    try { InvokeDynamicMethod(recordset, "Close"); } catch { }
+                }
             },
             requireExclusive: true,
             releaseOleDb: true);
@@ -4377,49 +4432,56 @@ namespace MS.Access.MCP.Interop
                 var recordset = InvokeDynamicMethod(currentDb, "OpenRecordset", sql)
                     ?? throw new InvalidOperationException("Failed to open attachment source recordset.");
 
-                while (!ToBool(TryGetDynamicProperty(recordset, "EOF"), true))
+                try
                 {
-                    var attachmentRecordset = TryGetAttachmentRecordset(recordset, fieldName);
-                    if (attachmentRecordset != null)
+                    while (!ToBool(TryGetDynamicProperty(recordset, "EOF"), true))
                     {
-                        while (!ToBool(TryGetDynamicProperty(attachmentRecordset, "EOF"), true))
+                        var attachmentRecordset = TryGetAttachmentRecordset(recordset, fieldName);
+                        if (attachmentRecordset != null)
                         {
-                            var currentFileName = SafeToString(GetRecordsetFieldValue(attachmentRecordset, "FileName")) ?? string.Empty;
-                            if (string.IsNullOrWhiteSpace(fileName) || string.Equals(currentFileName, fileName, StringComparison.OrdinalIgnoreCase))
+                            while (!ToBool(TryGetDynamicProperty(attachmentRecordset, "EOF"), true))
                             {
-                                var fileData = GetRecordsetFieldValue(attachmentRecordset, "FileData");
-                                var bytes = ConvertAttachmentFieldToBytes(fileData);
-                                if (bytes == null || bytes.Length == 0)
-                                    throw new InvalidOperationException($"Attachment '{currentFileName}' has no file data.");
-
-                                var fullPath = Path.GetFullPath(filePath);
-                                var directory = Path.GetDirectoryName(fullPath);
-                                if (!string.IsNullOrWhiteSpace(directory))
-                                    Directory.CreateDirectory(directory);
-
-                                File.WriteAllBytes(fullPath, bytes);
-
-                                return new AttachmentSaveResult
+                                var currentFileName = SafeToString(GetRecordsetFieldValue(attachmentRecordset, "FileName")) ?? string.Empty;
+                                if (string.IsNullOrWhiteSpace(fileName) || string.Equals(currentFileName, fileName, StringComparison.OrdinalIgnoreCase))
                                 {
-                                    TableName = tableName,
-                                    FieldName = fieldName,
-                                    FileName = string.IsNullOrWhiteSpace(currentFileName) ? Path.GetFileName(fullPath) : currentFileName,
-                                    FilePath = fullPath,
-                                    FileSize = bytes.Length
-                                };
-                            }
+                                    var fileData = GetRecordsetFieldValue(attachmentRecordset, "FileData");
+                                    var bytes = ConvertAttachmentFieldToBytes(fileData);
+                                    if (bytes == null || bytes.Length == 0)
+                                        throw new InvalidOperationException($"Attachment '{currentFileName}' has no file data.");
 
-                            _ = InvokeDynamicMethod(attachmentRecordset, "MoveNext");
+                                    var fullPath = Path.GetFullPath(filePath);
+                                    var directory = Path.GetDirectoryName(fullPath);
+                                    if (!string.IsNullOrWhiteSpace(directory))
+                                        Directory.CreateDirectory(directory);
+
+                                    File.WriteAllBytes(fullPath, bytes);
+
+                                    return new AttachmentSaveResult
+                                    {
+                                        TableName = tableName,
+                                        FieldName = fieldName,
+                                        FileName = string.IsNullOrWhiteSpace(currentFileName) ? Path.GetFileName(fullPath) : currentFileName,
+                                        FilePath = fullPath,
+                                        FileSize = bytes.Length
+                                    };
+                                }
+
+                                _ = InvokeDynamicMethod(attachmentRecordset, "MoveNext");
+                            }
                         }
+
+                        _ = InvokeDynamicMethod(recordset, "MoveNext");
                     }
 
-                    _ = InvokeDynamicMethod(recordset, "MoveNext");
+                    if (!string.IsNullOrWhiteSpace(fileName))
+                        throw new InvalidOperationException($"Attachment file not found: {fileName}");
+
+                    throw new InvalidOperationException("No attachment file was available to save.");
                 }
-
-                if (!string.IsNullOrWhiteSpace(fileName))
-                    throw new InvalidOperationException($"Attachment file not found: {fileName}");
-
-                throw new InvalidOperationException("No attachment file was available to save.");
+                finally
+                {
+                    try { InvokeDynamicMethod(recordset, "Close"); } catch { }
+                }
             },
             requireExclusive: false,
             releaseOleDb: false);
@@ -4439,52 +4501,59 @@ namespace MS.Access.MCP.Interop
                 var recordset = InvokeDynamicMethod(currentDb, "OpenRecordset", sql)
                     ?? throw new InvalidOperationException("Failed to open attachment source recordset.");
 
-                var results = new List<AttachmentMetadataInfo>();
-                while (!ToBool(TryGetDynamicProperty(recordset, "EOF"), true))
+                try
                 {
-                    var attachmentRecordset = TryGetAttachmentRecordset(recordset, fieldName);
-                    if (attachmentRecordset != null)
+                    var results = new List<AttachmentMetadataInfo>();
+                    while (!ToBool(TryGetDynamicProperty(recordset, "EOF"), true))
                     {
-                        while (!ToBool(TryGetDynamicProperty(attachmentRecordset, "EOF"), true))
+                        var attachmentRecordset = TryGetAttachmentRecordset(recordset, fieldName);
+                        if (attachmentRecordset != null)
                         {
-                            var item = new AttachmentMetadataInfo
+                            while (!ToBool(TryGetDynamicProperty(attachmentRecordset, "EOF"), true))
                             {
-                                FileName = SafeToString(GetRecordsetFieldValue(attachmentRecordset, "FileName")) ?? "",
-                                FileType = SafeToString(GetRecordsetFieldValue(attachmentRecordset, "FileType")),
-                                FileUrl = SafeToString(GetRecordsetFieldValue(attachmentRecordset, "FileURL")),
-                                FileSize = ToNullableInt(GetRecordsetFieldValue(attachmentRecordset, "FileSize")),
-                                Fields = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                            };
-
-                            var fields = TryGetDynamicProperty(attachmentRecordset, "Fields");
-                            if (fields != null)
-                            {
-                                foreach (var field in fields)
+                                var item = new AttachmentMetadataInfo
                                 {
-                                    var currentName = SafeToString(TryGetDynamicProperty(field, "Name"));
-                                    if (string.IsNullOrWhiteSpace(currentName))
-                                        continue;
+                                    FileName = SafeToString(GetRecordsetFieldValue(attachmentRecordset, "FileName")) ?? "",
+                                    FileType = SafeToString(GetRecordsetFieldValue(attachmentRecordset, "FileType")),
+                                    FileUrl = SafeToString(GetRecordsetFieldValue(attachmentRecordset, "FileURL")),
+                                    FileSize = ToNullableInt(GetRecordsetFieldValue(attachmentRecordset, "FileSize")),
+                                    Fields = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+                                };
 
-                                    item.Fields[currentName] = NormalizeValue(TryGetDynamicProperty(field, "Value"));
+                                var fields = TryGetDynamicProperty(attachmentRecordset, "Fields");
+                                if (fields != null)
+                                {
+                                    foreach (var field in fields)
+                                    {
+                                        var currentName = SafeToString(TryGetDynamicProperty(field, "Name"));
+                                        if (string.IsNullOrWhiteSpace(currentName))
+                                            continue;
+
+                                        item.Fields[currentName] = NormalizeValue(TryGetDynamicProperty(field, "Value"));
+                                    }
                                 }
-                            }
 
-                            if (!item.FileSize.HasValue && item.Fields.TryGetValue("FileData", out var dataValue))
-                            {
-                                var bytes = ConvertAttachmentFieldToBytes(dataValue);
-                                if (bytes != null)
-                                    item.FileSize = bytes.Length;
-                            }
+                                if (!item.FileSize.HasValue && item.Fields.TryGetValue("FileData", out var dataValue))
+                                {
+                                    var bytes = ConvertAttachmentFieldToBytes(dataValue);
+                                    if (bytes != null)
+                                        item.FileSize = bytes.Length;
+                                }
 
-                            results.Add(item);
-                            _ = InvokeDynamicMethod(attachmentRecordset, "MoveNext");
+                                results.Add(item);
+                                _ = InvokeDynamicMethod(attachmentRecordset, "MoveNext");
+                            }
                         }
+
+                        _ = InvokeDynamicMethod(recordset, "MoveNext");
                     }
 
-                    _ = InvokeDynamicMethod(recordset, "MoveNext");
+                    return results;
                 }
-
-                return results;
+                finally
+                {
+                    try { InvokeDynamicMethod(recordset, "Close"); } catch { }
+                }
             },
             requireExclusive: false,
             releaseOleDb: false);
@@ -4943,7 +5012,9 @@ namespace MS.Access.MCP.Interop
             try
             {
                 var accessApp = EnsureAccessApplication(openCurrentDatabase: true);
-                foreach (var project in accessApp.VBE.VBProjects)
+                EnsureVbeAccessEnabled();
+                var vbeForProjects = AccessVbeWithRetry(accessApp);
+                foreach (var project in vbeForProjects.VBProjects)
                 {
                     var modules = new List<VBAModuleInfo>();
                     foreach (var component in project.VBComponents)
@@ -5045,7 +5116,7 @@ namespace MS.Access.MCP.Interop
 
                 TrySaveModule(accessApp, moduleName);
             },
-            requireExclusive: true,
+            requireExclusive: false,
             releaseOleDb: true);
         }
 
@@ -5073,7 +5144,7 @@ namespace MS.Access.MCP.Interop
                 InvokeDynamicMethod(codeModule, "AddFromString", normalized);
                 TrySaveModule(accessApp, moduleName);
             },
-            requireExclusive: true,
+            requireExclusive: false,
             releaseOleDb: true);
         }
 
@@ -5155,7 +5226,7 @@ namespace MS.Access.MCP.Interop
                 SetDynamicProperty(component, "Name", moduleName);
                 TrySaveModule(accessApp, moduleName);
             },
-            requireExclusive: true,
+            requireExclusive: false,
             releaseOleDb: true);
         }
 
@@ -5172,7 +5243,7 @@ namespace MS.Access.MCP.Interop
                     ?? throw new InvalidOperationException($"VBA module was not found: {moduleName}");
                 _ = InvokeDynamicMethod(project.VBComponents, "Remove", component);
             },
-            requireExclusive: true,
+            requireExclusive: false,
             releaseOleDb: true);
         }
 
@@ -5194,7 +5265,7 @@ namespace MS.Access.MCP.Interop
                 SetDynamicProperty(component, "Name", newModuleName.Trim());
                 TrySaveModule(accessApp, newModuleName.Trim());
             },
-            requireExclusive: true,
+            requireExclusive: false,
             releaseOleDb: true);
         }
 
@@ -5302,7 +5373,13 @@ namespace MS.Access.MCP.Interop
         public VbaProjectPropertiesInfo SetVbaProjectProperties(string? projectName = null, string? name = null, string? description = null, string? helpFile = null, int? helpContextId = null)
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
-            if (name == null && description == null && helpFile == null && !helpContextId.HasValue)
+            // Check HasValue outside the dynamic lambda — inside Func<dynamic,T> the C# compiler
+            // resolves int?.HasValue via the DLR, which sees the boxed int and fails with
+            // "'int' does not contain a definition for 'HasValue'".
+            var hasHelpContextId = helpContextId.HasValue;
+            var helpContextValue = hasHelpContextId ? helpContextId.Value : 0;
+
+            if (name == null && description == null && helpFile == null && !hasHelpContextId)
                 throw new ArgumentException("At least one project property is required.");
 
             return ExecuteComOperation(accessApp =>
@@ -5315,8 +5392,8 @@ namespace MS.Access.MCP.Interop
                     SetDynamicProperty(project, "Description", description);
                 if (helpFile != null)
                     SetDynamicProperty(project, "HelpFile", helpFile);
-                if (helpContextId.HasValue)
-                    SetDynamicProperty(project, "HelpContextID", helpContextId.Value);
+                if (hasHelpContextId)
+                    SetDynamicProperty(project, "HelpContextID", helpContextValue);
 
                 return BuildVbaProjectPropertiesInfo(project);
             },
@@ -5457,7 +5534,7 @@ namespace MS.Access.MCP.Interop
                 _ = InvokeDynamicMethod(codeModule, "InsertLines", lineNumber, NormalizeLineEndings(code));
                 TrySaveModule(accessApp, moduleName);
             },
-            requireExclusive: true,
+            requireExclusive: false,
             releaseOleDb: true);
         }
 
@@ -5478,7 +5555,7 @@ namespace MS.Access.MCP.Interop
                 _ = InvokeDynamicMethod(codeModule, "DeleteLines", startLine, lineCount);
                 TrySaveModule(accessApp, moduleName);
             },
-            requireExclusive: true,
+            requireExclusive: false,
             releaseOleDb: true);
         }
 
@@ -5499,7 +5576,7 @@ namespace MS.Access.MCP.Interop
                 _ = InvokeDynamicMethod(codeModule, "ReplaceLine", lineNumber, NormalizeLineEndings(code));
                 TrySaveModule(accessApp, moduleName);
             },
-            requireExclusive: true,
+            requireExclusive: false,
             releaseOleDb: true);
         }
 
@@ -8165,7 +8242,8 @@ namespace MS.Access.MCP.Interop
                 var brokenRefs = new List<string>();
                 try
                 {
-                    var vbe = TryGetDynamicProperty(app, "VBE");
+                    EnsureVbeAccessEnabled();
+                    var vbe = AccessVbeWithRetry(app);
                     var activeVBProject = TryGetDynamicProperty(vbe, "ActiveVBProject");
                     var references = TryGetDynamicProperty(activeVBProject, "References");
                     foreach (var r in references)
@@ -8446,19 +8524,15 @@ namespace MS.Access.MCP.Interop
             if (ruleIndex <= 0)
                 return false;
 
-            try
-            {
-                _ = InvokeDynamicMethod(formatConditions, "Delete", ruleIndex);
-                return true;
-            }
-            catch
-            {
-                // Try zero-based index fallback.
-            }
+            // FormatConditions collection doesn't have Delete(index).
+            // Get the individual FormatCondition object, then call Delete() on it.
+            var condition = GetFormatConditionByIndex(formatConditions, ruleIndex);
+            if (condition == null)
+                return false;
 
             try
             {
-                _ = InvokeDynamicMethod(formatConditions, "Delete", ruleIndex - 1);
+                _ = InvokeDynamicMethod(condition, "Delete");
                 return true;
             }
             catch
@@ -10179,6 +10253,34 @@ namespace MS.Access.MCP.Interop
             }
             catch (Exception ex) when (IsRecoverableOleDbLockError(ex) && TryReleaseExclusiveAccessLock())
             {
+                // Access had the database open exclusively; we just closed it via
+                // TryReleaseExclusiveAccessLock. Give the ACE engine a moment to
+                // recognize the released lock, then retry.
+                Console.Error.WriteLine($"[OLEDB] Released exclusive lock, retrying OleDb: {ex.Message}");
+                OleDbConnection.ReleaseObjectPool();
+                Thread.Sleep(500);
+                try
+                {
+                    OpenOleDbConnection(databasePath);
+                    return;
+                }
+                catch (Exception retryEx) when (IsRecoverableOleDbLockError(retryEx))
+                {
+                    // Second attempt with a longer delay
+                    Console.Error.WriteLine($"[OLEDB] First retry failed after exclusive release, waiting longer: {retryEx.Message}");
+                    Thread.Sleep(1500);
+                    OpenOleDbConnection(databasePath);
+                    return;
+                }
+            }
+            catch (Exception ex) when (IsRecoverableOleDbLockError(ex))
+            {
+                // Access may have just been killed (ResetAccessApplication) or is still
+                // releasing its lock on the database file. Clear ACE connection pool
+                // cached state and retry after a delay.
+                Console.Error.WriteLine($"[OLEDB] Lock error after exclusive release failed, retrying: {ex.Message}");
+                OleDbConnection.ReleaseObjectPool();
+                Thread.Sleep(1000);
                 OpenOleDbConnection(databasePath);
                 return;
             }
@@ -10304,43 +10406,149 @@ namespace MS.Access.MCP.Interop
 
         private T ExecuteComOperation<T>(Func<dynamic, T> operation, bool requireExclusive, bool releaseOleDb)
         {
-            if (!releaseOleDb)
+            // Run a background dialog dismisser for the ENTIRE COM operation lifecycle,
+            // including OleDb release/restore. This is critical because
+            // TryReleaseExclusiveAccessLock (called during OleDb restore) can trigger
+            // "Save As" dialogs via CloseCurrentDatabase.
+            var dismissStop = new ManualResetEventSlim(false);
+            var dismissThread = new Thread(() =>
             {
-                return ExecuteComOperationCore(operation, requireExclusive);
-            }
-
-            T result = default!;
-            ExecuteWithOleDbReleased(() =>
-            {
-                result = ExecuteComOperationCore(operation, requireExclusive);
+                Console.Error.WriteLine("[DLG] Dismisser thread started");
+                int polls = 0;
+                while (!dismissStop.IsSet)
+                {
+                    polls++;
+                    try { TryDismissVbeDialogs(); } catch { }
+                    dismissStop.Wait(500); // interruptible sleep
+                }
+                Console.Error.WriteLine($"[DLG] Dismisser thread stopped after {polls} polls");
             });
+            dismissThread.IsBackground = true;
+            dismissThread.Name = "VBE-Dialog-Dismisser";
+            dismissThread.Start();
 
-            return result;
+            try
+            {
+                if (!releaseOleDb)
+                {
+                    return ExecuteComOperationCore(operation, requireExclusive);
+                }
+
+                T result = default!;
+                ExecuteWithOleDbReleased(() =>
+                {
+                    result = ExecuteComOperationCore(operation, requireExclusive);
+                });
+
+                return result;
+            }
+            finally
+            {
+                dismissStop.Set();
+                dismissThread.Join(3000);
+            }
         }
 
         private T ExecuteComOperationCore<T>(Func<dynamic, T> operation, bool requireExclusive)
         {
-            Exception? lastRecoverableError = null;
+            Exception? lastError = null;
 
-            for (var attempt = 0; attempt < 2; attempt++)
+            for (var attempt = 0; attempt < 3; attempt++)
             {
                 try
                 {
                     var accessApp = EnsureAccessApplication(openCurrentDatabase: true, requireExclusive: requireExclusive);
                     return operation(accessApp);
                 }
+                catch (Exception ex) when (attempt < 2 && IsVbeFileNotFoundError(ex))
+                {
+                    // 0x800A0035 (CTL_E_FILENOTFOUND) during VBE operations indicates VBA project
+                    // corruption. On first hit, wait for dialog dismisser and retry on same instance.
+                    // If that fails, compact & repair the database to fix the corruption, then retry.
+                    lastError = ex;
+                    if (attempt == 0)
+                    {
+                        Console.Error.WriteLine($"[VBE] Operation hit VBE file-not-found on attempt 1, retrying in 2s");
+                        Thread.Sleep(2000);
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine($"[VBE] VBE file-not-found persists, compact & repair database");
+                        TryCompactRepairForVbeRecovery();
+                    }
+                }
                 catch (Exception ex) when (attempt == 0 && IsRecoverableAccessStateError(ex))
                 {
-                    lastRecoverableError = ex;
+                    lastError = ex;
                     ResetAccessApplication();
                 }
             }
 
-            throw lastRecoverableError ?? new InvalidOperationException("COM operation failed.");
+            throw lastError ?? new InvalidOperationException("COM operation failed.");
+        }
+
+        private void TryCompactRepairForVbeRecovery()
+        {
+            if (string.IsNullOrWhiteSpace(_currentDatabasePath)) return;
+
+            var dbPath = _currentDatabasePath;
+            Console.Error.WriteLine($"[VBE] Compact & repair: {dbPath}");
+
+            try
+            {
+                // Close Access completely
+                ResetAccessApplication();
+
+                // Wait for file locks to release
+                Thread.Sleep(2000);
+
+                // Compact & repair to a temp file, then replace original
+                var tempPath = dbPath + ".compact_tmp";
+                try
+                {
+                    if (File.Exists(tempPath)) File.Delete(tempPath);
+                    RunCompactRepair(dbPath, tempPath);
+
+                    if (File.Exists(tempPath))
+                    {
+                        File.Delete(dbPath);
+                        File.Move(tempPath, dbPath);
+                        Console.Error.WriteLine($"[VBE] Compact & repair succeeded");
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine($"[VBE] Compact & repair produced no output");
+                    }
+                }
+                finally
+                {
+                    if (File.Exists(tempPath))
+                    {
+                        try { File.Delete(tempPath); } catch { }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[VBE] Compact & repair failed: {ex.Message}");
+            }
+        }
+
+        private static bool IsVbeFileNotFoundError(Exception ex)
+        {
+            if (ex is COMException comEx && unchecked((uint)comEx.ErrorCode) == 0x800A0035)
+                return true;
+            if (unchecked((uint)ex.HResult) == 0x800A0035)
+                return true;
+            return ex.InnerException != null && IsVbeFileNotFoundError(ex.InnerException);
         }
 
         private static bool IsRecoverableAccessStateError(Exception ex)
         {
+            // NOTE: 0x800A0035 (CTL_E_FILENOTFOUND) is NOT recoverable via Access reset.
+            // It comes from broken VBA references during VBE initialization. Resetting Access
+            // just creates a new process that hits the same broken references.
+            // AccessVbeWithRetry handles this error with its own retry-with-delay logic.
             if (ex is COMException comException)
             {
                 var errorCode = unchecked((uint)comException.ErrorCode);
@@ -10366,12 +10574,31 @@ namespace MS.Access.MCP.Interop
 
         private void ResetAccessApplication()
         {
+            int accessPid = 0;
+
             if (_accessApplication != null)
             {
+                // Get the process ID via hWndAccessApp before quitting so we can
+                // wait for the process to fully exit and release file locks.
                 try
                 {
-                    // 2 = acQuitSaveNone (avoid save prompts during recovery/cleanup)
-                    _accessApplication.Quit(2);
+                    IntPtr hWnd = (IntPtr)(int)_accessApplication.hWndAccessApp;
+                    if (hWnd != IntPtr.Zero)
+                    {
+                        GetWindowThreadProcessId(hWnd, out uint pid);
+                        accessPid = (int)pid;
+                    }
+                }
+                catch { }
+
+                try
+                {
+                    // 0 = acQuitSaveAll — save all objects before quitting.
+                    // Previously used acQuitSaveNone (2) to avoid save prompts, but that
+                    // discards VBA project modifications that are partially written to disk,
+                    // leaving the VBA project in an inconsistent state (0x800A0035 on next VBE write).
+                    // The dialog dismisser thread handles any save prompts.
+                    _accessApplication.Quit(0);
                 }
                 catch
                 {
@@ -10395,12 +10622,60 @@ namespace MS.Access.MCP.Interop
 
             _accessDatabasePath = null;
             _accessDatabaseOpenedExclusive = false;
+
+            // Wait for the Access process to fully exit so file locks (.laccdb) are
+            // released before creating a new instance or reopening via OleDb.
+            if (accessPid != 0)
+            {
+                try
+                {
+                    var process = Process.GetProcessById(accessPid);
+                    if (!process.WaitForExit(5000))
+                    {
+                        Console.Error.WriteLine($"[COM] Access PID {accessPid} did not exit in 5s, killing");
+                        try { process.Kill(); } catch { }
+                        process.WaitForExit(3000);
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine($"[COM] Access PID {accessPid} exited cleanly");
+                    }
+                }
+                catch (ArgumentException)
+                {
+                    // Process already exited — this is the expected fast path.
+                    Console.Error.WriteLine($"[COM] Access PID {accessPid} already exited");
+                }
+            }
+            else
+            {
+                // Couldn't determine PID — fall back to a fixed delay.
+                Thread.Sleep(1500);
+            }
         }
 
         private dynamic EnsureAccessApplication(bool openCurrentDatabase, bool requireExclusive = false)
         {
+            // When upgrading from shared to exclusive mode, destroy the existing Access
+            // instance and create a fresh one. Reusing the same COM instance for a
+            // close-then-reopen-exclusive path is unreliable (stale .ldb entries,
+            // Save As dialogs during close, COM state carry-over).
+            // Use _accessDatabasePath (not _currentDatabasePath) so this only fires
+            // when Access actually has a database open in shared mode. When
+            // _accessDatabasePath is null (e.g. after TryReleaseExclusiveAccessLock
+            // closed the DB), EnsureCurrentDatabaseOpen will open it directly in
+            // exclusive mode without needing to kill Access.
+            if (_accessApplication != null && requireExclusive && !_accessDatabaseOpenedExclusive
+                && openCurrentDatabase && !string.IsNullOrWhiteSpace(_accessDatabasePath))
+            {
+                Console.Error.WriteLine("[COM] Upgrading to exclusive: resetting Access to get a clean instance");
+                ResetAccessApplication();
+            }
+
             if (_accessApplication == null)
             {
+                EnsureVbeAccessEnabled();
+
                 var accessType = Type.GetTypeFromProgID("Access.Application", throwOnError: false);
                 if (accessType == null)
                     throw new InvalidOperationException("Microsoft Access COM automation is not available on this machine.");
@@ -10426,6 +10701,27 @@ namespace MS.Access.MCP.Interop
                 {
                     // Best effort only.
                 }
+
+                try
+                {
+                    // msoAutomationSecurityLow = 1 — disables macro security prompts for COM automation.
+                    _accessApplication.AutomationSecurity = 1;
+                }
+                catch
+                {
+                    // Best effort only.
+                }
+
+                try
+                {
+                    // Suppress Access alert dialogs (like "File not found" during VBE init)
+                    // to prevent modal dialogs that block the COM thread.
+                    _accessApplication.DisplayAlerts = false;
+                }
+                catch
+                {
+                    // Best effort — DisplayAlerts may not exist in all Access versions.
+                }
             }
 
             if (openCurrentDatabase && !string.IsNullOrWhiteSpace(_currentDatabasePath))
@@ -10434,6 +10730,306 @@ namespace MS.Access.MCP.Interop
             }
 
             return _accessApplication;
+        }
+
+        /// <summary>
+        /// Ensures the "Trust access to the VBA project object model" setting is enabled
+        /// in the registry. Without this, accessing Application.VBE causes a modal
+        /// "File not found" dialog that blocks the COM thread indefinitely.
+        /// </summary>
+        private static void EnsureVbeAccessEnabled()
+        {
+            if (_vbeAccessEnsured) return;
+
+            try
+            {
+                const string keyPath = @"Software\Microsoft\Office\16.0\Access\Security";
+                using var key = Registry.CurrentUser.CreateSubKey(keyPath, writable: true);
+                if (key != null)
+                {
+                    var current = key.GetValue("AccessVBOM");
+                    if (current == null || Convert.ToInt32(current) != 1)
+                    {
+                        key.SetValue("AccessVBOM", 1, RegistryValueKind.DWord);
+                        Console.Error.WriteLine("[VBE] Set AccessVBOM=1 in registry");
+                    }
+
+                    // Verify the write succeeded
+                    var verify = key.GetValue("AccessVBOM");
+                    Console.Error.WriteLine($"[VBE] AccessVBOM registry value: {verify}");
+                }
+                else
+                {
+                    Console.Error.WriteLine("[VBE] WARNING: Could not open registry key");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[VBE] Registry error: {ex.Message}");
+            }
+
+            _vbeAccessEnsured = true;
+        }
+
+        // ── VBE dialog dismissal via Win32 ──────────────────────────────────────
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool IsWindowVisible(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+
+        private const int GWL_STYLE = -16;
+        private const uint WS_POPUP = 0x80000000;
+        private const uint WS_CHILD = 0x40000000;
+        private const uint WS_VISIBLE = 0x10000000;
+        private const uint WS_DISABLED = 0x08000000;
+        private const uint DS_MODALFRAME = 0x80;
+        private const uint WM_CLOSE = 0x0010;
+        private const uint BM_CLICK = 0x00F5;
+
+        private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+        // Known dialog titles to dismiss (case-insensitive substring match)
+        private static readonly (string Pattern, string Button)[] _dialogDismissRules = new[]
+        {
+            ("Save As", "OK"),
+            ("Do you want to save", "No"),
+            ("File not found", "OK"),
+            ("not a valid path", "OK"),
+            ("can't find", "OK"),
+            ("Action Failed", "OK"),
+            ("Compile error", "OK"),
+            ("Microsoft Visual Basic for Applications", "OK"),
+            ("Microsoft Visual Basic", "End"),  // VBA runtime error: End/Debug/Help buttons
+            ("Enter Parameter Value", "Cancel"),
+        };
+
+        /// <summary>
+        /// Finds and dismisses modal dialogs shown by MSACCESS during VBE operations.
+        /// Detects ANY visible popup/dialog window from MSACCESS — not limited to #32770 class.
+        /// Returns true if a dialog was found and dismissed.
+        /// </summary>
+        private static bool TryDismissVbeDialogs()
+        {
+            bool dismissed = false;
+
+            // Collect MSACCESS PIDs first
+            var accessPids = new HashSet<uint>();
+            foreach (var proc in System.Diagnostics.Process.GetProcessesByName("MSACCESS"))
+            {
+                try { accessPids.Add((uint)proc.Id); } catch { }
+            }
+            if (accessPids.Count == 0) return false;
+
+            var candidates = new List<(IntPtr Handle, string Title, string ClassName)>();
+
+            EnumWindows((hWnd, _) =>
+            {
+                if (!IsWindowVisible(hWnd)) return true;
+
+                GetWindowThreadProcessId(hWnd, out uint pid);
+                if (!accessPids.Contains(pid)) return true;
+
+                var titleBuf = new StringBuilder(256);
+                GetWindowText(hWnd, titleBuf, 256);
+                var title = titleBuf.ToString();
+                if (string.IsNullOrWhiteSpace(title)) return true;
+
+                var classBuf = new StringBuilder(256);
+                GetClassName(hWnd, classBuf, 256);
+                var cls = classBuf.ToString();
+
+                // Accept #32770 (standard dialog) OR any popup/overlapped window that isn't the main Access window
+                bool isDialog = cls == "#32770";
+                if (!isDialog)
+                {
+                    // Check for popup style (not child) — excludes the main OMain window by checking
+                    // against known Access main window classes
+                    if (cls == "OMain" || cls == "OForm" || cls == "OReport") return true;
+                    uint style = unchecked((uint)GetWindowLong(hWnd, GWL_STYLE));
+                    // Any visible window that is NOT child and NOT the main window
+                    isDialog = (style & WS_CHILD) == 0;
+                }
+
+                if (isDialog)
+                {
+                    candidates.Add((hWnd, title, cls));
+                }
+                return true;
+            }, IntPtr.Zero);
+
+            foreach (var (dlgHwnd, title, className) in candidates)
+            {
+                // Match against known dialog patterns
+                string? targetButton = null;
+                foreach (var (pattern, button) in _dialogDismissRules)
+                {
+                    if (title.IndexOf(pattern, StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        targetButton = button;
+                        break;
+                    }
+                }
+
+                // If no known pattern matched, skip — don't dismiss unknown dialogs
+                if (targetButton == null)
+                {
+                    Console.Error.WriteLine($"[DLG] Unknown dialog: '{title}' class='{className}' — not dismissing");
+                    continue;
+                }
+
+                Console.Error.WriteLine($"[DLG] Found dialog: '{title}' class='{className}'");
+
+                // Enumerate ALL child windows and log them for debugging
+                var childButtons = new List<(IntPtr Handle, string Text, string ClassName)>();
+                var allChildren = new List<(string Text, string ClassName)>();
+                EnumChildWindows(dlgHwnd, (childHwnd, _) =>
+                {
+                    var classBuf2 = new StringBuilder(64);
+                    GetClassName(childHwnd, classBuf2, 64);
+                    var cls = classBuf2.ToString();
+
+                    var textBuf = new StringBuilder(256);
+                    GetWindowText(childHwnd, textBuf, 256);
+                    var text = textBuf.ToString();
+                    allChildren.Add((text, cls));
+
+                    if (cls == "Button" || cls == "ThunderCommandButton" ||
+                        cls.StartsWith("WindowsForms") || cls.Contains("Button"))
+                    {
+                        if (!string.IsNullOrWhiteSpace(text))
+                            childButtons.Add((childHwnd, text, cls));
+                    }
+                    return true;
+                }, IntPtr.Zero);
+
+                Console.Error.WriteLine($"[DLG] Children: [{string.Join(", ", allChildren.Select(c => $"{c.ClassName}:'{c.Text}'"))}]");
+                Console.Error.WriteLine($"[DLG] Buttons: [{string.Join(", ", childButtons.Select(b => b.Text))}], target={targetButton}");
+
+                bool clicked = false;
+                foreach (var (btnHwnd, btnText, _) in childButtons)
+                {
+                    var cleanText = btnText.Replace("&", "");
+                    if (cleanText.Equals(targetButton, StringComparison.OrdinalIgnoreCase))
+                    {
+                        SetForegroundWindow(dlgHwnd);
+                        SendMessage(btnHwnd, BM_CLICK, IntPtr.Zero, IntPtr.Zero);
+                        Console.Error.WriteLine($"[DLG] Clicked '{btnText}' on '{title}'");
+                        clicked = true;
+                        break;
+                    }
+                }
+
+                if (!clicked)
+                {
+                    // Fallback: try common dismiss buttons before WM_CLOSE
+                    var fallbackButtons = new[] { "End", "OK", "No", "Cancel", "Close", "Abort" };
+                    foreach (var fb in fallbackButtons)
+                    {
+                        if (fb.Equals(targetButton, StringComparison.OrdinalIgnoreCase)) continue;
+                        foreach (var (btnHwnd2, btnText2, _) in childButtons)
+                        {
+                            var cleanText2 = btnText2.Replace("&", "");
+                            if (cleanText2.Equals(fb, StringComparison.OrdinalIgnoreCase))
+                            {
+                                SetForegroundWindow(dlgHwnd);
+                                SendMessage(btnHwnd2, BM_CLICK, IntPtr.Zero, IntPtr.Zero);
+                                Console.Error.WriteLine($"[DLG] Clicked fallback '{btnText2}' on '{title}' (target '{targetButton}' not found)");
+                                clicked = true;
+                                break;
+                            }
+                        }
+                        if (clicked) break;
+                    }
+
+                    if (!clicked)
+                    {
+                        PostMessage(dlgHwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                        Console.Error.WriteLine($"[DLG] Sent WM_CLOSE to '{title}' (no dismiss button found)");
+                    }
+                }
+
+                dismissed = true;
+            }
+
+            return dismissed;
+        }
+
+        /// <summary>
+        /// Accesses Application.VBE, pre-initializing via DoCmd compile if needed.
+        /// On some databases, the first direct accessApp.VBE call triggers a modal dialog
+        /// and throws 0x800A0035 or 0x800ADEB9. DoCmd.RunCommand(125) initializes VBE
+        /// through Access's internal path without triggering the dialog. Once initialized,
+        /// accessApp.VBE works reliably.
+        /// </summary>
+        private static dynamic AccessVbeWithRetry(dynamic accessApp)
+        {
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                try
+                {
+                    var vbe = accessApp.VBE;
+                    var projectCount = (int)vbe.VBProjects.Count;
+                    if (attempt > 0)
+                        Console.Error.WriteLine($"[VBE] VBE accessed on retry {attempt + 1}: {projectCount} project(s)");
+                    return vbe;
+                }
+                catch (Exception ex) when (attempt < 2 && IsVbeInitError(ex))
+                {
+                    Console.Error.WriteLine($"[VBE] VBE access attempt {attempt + 1} failed (0x{GetComErrorCode(ex):X8}), retrying");
+                    Thread.Sleep(1500);
+                }
+            }
+
+            // Final attempt — throws naturally on failure
+            return accessApp.VBE;
+        }
+
+        private static bool IsVbeInitError(Exception ex)
+        {
+            var code = GetComErrorCode(ex);
+            // 0x800A0035 = CTL_E_FILENOTFOUND (broken VBA references)
+            // 0x800ADEB9 = VBA project not ready / corrupt state
+            if (code == 0x800A0035 || code == 0x800ADEB9)
+                return true;
+            if (ex.InnerException != null)
+                return IsVbeInitError(ex.InnerException);
+            return false;
+        }
+
+        private static uint GetComErrorCode(Exception ex)
+        {
+            if (ex is COMException comEx)
+                return unchecked((uint)comEx.ErrorCode);
+            return unchecked((uint)ex.HResult);
         }
 
         private void EnsureCurrentDatabaseOpen(dynamic accessApplication, string databasePath, bool requireExclusive)
@@ -10596,13 +11192,19 @@ namespace MS.Access.MCP.Interop
 
             try
             {
-                _accessApplication!.CloseCurrentDatabase();
-                _accessDatabasePath = null;
-                _accessDatabaseOpenedExclusive = false;
+                // CloseCurrentDatabase() alone is NOT sufficient — the ACE engine
+                // inside the running Access.exe process often holds the .laccdb file
+                // lock for seconds after the call returns, causing OleDb "file already
+                // in use" errors.  A full ResetAccessApplication (Quit + WaitForExit)
+                // guarantees the file lock is released because the process is gone.
+                Console.Error.WriteLine("[COM] TryReleaseExclusiveAccessLock: resetting Access to release file lock");
+                ResetAccessApplication();
+                Console.Error.WriteLine("[COM] TryReleaseExclusiveAccessLock: Access shut down, file lock released");
                 return true;
             }
-            catch
+            catch (Exception ex)
             {
+                Console.Error.WriteLine($"[COM] TryReleaseExclusiveAccessLock failed: {ex.GetType().Name}: {ex.Message}");
                 ResetAccessApplication();
                 return false;
             }
@@ -10801,15 +11403,19 @@ namespace MS.Access.MCP.Interop
 
         private static dynamic? FindVbProject(dynamic accessApp, string? projectName)
         {
+            EnsureVbeAccessEnabled();
+
             var normalizedName = string.IsNullOrWhiteSpace(projectName) || string.Equals(projectName, "CurrentProject", StringComparison.OrdinalIgnoreCase)
                 ? null
                 : projectName;
+
+            var vbe = AccessVbeWithRetry(accessApp);
 
             if (normalizedName == null)
             {
                 try
                 {
-                    var activeProject = TryGetDynamicProperty(accessApp.VBE, "ActiveVBProject");
+                    var activeProject = TryGetDynamicProperty(vbe, "ActiveVBProject");
                     if (activeProject != null)
                         return activeProject;
                 }
@@ -10819,7 +11425,7 @@ namespace MS.Access.MCP.Interop
                 }
             }
 
-            foreach (var project in accessApp.VBE.VBProjects)
+            foreach (var project in vbe.VBProjects)
             {
                 var name = SafeToString(TryGetDynamicProperty(project, "Name"));
                 if (normalizedName == null || string.Equals(name, normalizedName, StringComparison.OrdinalIgnoreCase))
@@ -10843,13 +11449,16 @@ namespace MS.Access.MCP.Interop
 
         private static VbaProjectPropertiesInfo BuildVbaProjectPropertiesInfo(dynamic project)
         {
-            var protection = ToNullableInt(TryGetDynamicProperty(project, "Protection"));
+            // Cast results to concrete types to avoid DLR dispatch issues — inside a method
+            // with dynamic parameters, ToNullableInt returns dynamic (not int?), so .HasValue
+            // fails with "'int' does not contain a definition for 'HasValue'".
+            int? protection = (int?)ToNullableInt(TryGetDynamicProperty(project, "Protection"));
             return new VbaProjectPropertiesInfo
             {
                 ProjectName = SafeToString(TryGetDynamicProperty(project, "Name")) ?? "",
                 Description = SafeToString(TryGetDynamicProperty(project, "Description")),
                 HelpFile = SafeToString(TryGetDynamicProperty(project, "HelpFile")),
-                HelpContextId = ToNullableInt(TryGetDynamicProperty(project, "HelpContextID")),
+                HelpContextId = (int?)ToNullableInt(TryGetDynamicProperty(project, "HelpContextID")),
                 Protection = protection,
                 IsLocked = protection.HasValue && protection.Value != 0
             };

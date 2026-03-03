@@ -334,6 +334,9 @@ function Try-AutoDismissDialog {
             [DialogDetector]::ClickButton($okButton) | Out-Null
             return [PSCustomObject]@{ Dismissed = $true; Pattern = "generic_access_error"; Safe = $true; Reason = "Generic Access dialog dismissed via OK button" }
         }
+        # Fallback: WM_CLOSE if no OK button found (e.g. "Microsoft Visual Basic" runtime dialogs)
+        [DialogDetector]::DismissViaClose($handle) | Out-Null
+        return [PSCustomObject]@{ Dismissed = $true; Pattern = "generic_access_error"; Safe = $true; Reason = "Generic Access dialog dismissed via WM_CLOSE (OK not found)" }
     }
 
     # "Save As" dialog - dismiss via Escape (WM_CLOSE)

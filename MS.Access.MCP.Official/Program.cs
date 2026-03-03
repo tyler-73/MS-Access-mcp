@@ -4520,13 +4520,12 @@ class Program
     {
         try
         {
-            var projectName = arguments.GetProperty("project_name").GetString();
-            var moduleName = arguments.GetProperty("module_name").GetString();
-            var code = arguments.GetProperty("code").GetString();
-            
-            if (string.IsNullOrEmpty(projectName) || string.IsNullOrEmpty(moduleName) || string.IsNullOrEmpty(code))
-                return new { success = false, error = "Project name, module name, and code are required" };
-                
+            _ = TryGetOptionalString(arguments, "project_name", out var projectName);
+            if (!TryGetRequiredString(arguments, "module_name", out var moduleName, out var moduleNameError))
+                return moduleNameError;
+            if (!TryGetRequiredString(arguments, "code", out var code, out var codeError))
+                return codeError;
+
             accessService.SetVBACode(projectName, moduleName, code);
             return new { success = true, message = $"Updated VBA code in {moduleName}" };
         }
@@ -4540,15 +4539,14 @@ class Program
     {
         try
         {
-            var projectName = arguments.GetProperty("project_name").GetString();
-            var moduleName = arguments.GetProperty("module_name").GetString();
-            var procedureName = arguments.GetProperty("procedure_name").GetString();
-            var code = arguments.GetProperty("code").GetString();
-            
-            if (string.IsNullOrEmpty(projectName) || string.IsNullOrEmpty(moduleName) || 
-                string.IsNullOrEmpty(procedureName) || string.IsNullOrEmpty(code))
-                return new { success = false, error = "All parameters are required" };
-                
+            _ = TryGetOptionalString(arguments, "project_name", out var projectName);
+            if (!TryGetRequiredString(arguments, "module_name", out var moduleName, out var moduleNameError))
+                return moduleNameError;
+            if (!TryGetRequiredString(arguments, "procedure_name", out var procedureName, out var procedureNameError))
+                return procedureNameError;
+            if (!TryGetRequiredString(arguments, "code", out var code, out var codeError))
+                return codeError;
+
             accessService.AddVBAProcedure(projectName, moduleName, procedureName, code);
             return new { success = true, message = $"Added VBA procedure {procedureName}" };
         }
