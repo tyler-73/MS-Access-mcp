@@ -25,3 +25,27 @@ artifacts/
 
 # Test diagnostics output (screenshots, dialog event logs)
 tests/_diagnostics/
+tests/mv_debug_diagnostics/
+
+# Ad-hoc debug/diagnostic scripts (keep only committed test harnesses)
+tests/_diag_*
+tests/_check_*
+tests/_snippet_*
+tests/_test_*
+tests/_regression_*.log
+tests/_regression_output*.txt
+tests/_reset_*
+tests/_enum_*
+tests/_parse_*
+
+# Publish directory (use mcp-server-official-x64 build output instead)
+publish/
+
+# Ad-hoc root-level debug scripts
+check_refs.ps1
+find_corruption.ps1
+list_vba_refs.ps1
+repair_db.ps1
+test_vbe_*.ps1
+test_vbe_sta/
+PLAN-Session*.md

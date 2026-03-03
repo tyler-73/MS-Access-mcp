@@ -37,14 +37,14 @@ class Program
 
                     var document = JsonDocument.Parse(trimmed);
                     var root = document.RootElement;
-                    
+
                     if (!root.TryGetProperty("method", out var methodElement))
                         continue;
-                        
+
                     var method = methodElement.GetString();
                     if (string.IsNullOrEmpty(method))
                         continue;
-                        
+
                     // Skip notifications (no response needed)
                     if (method.StartsWith("notifications/"))
                         continue;
@@ -92,14 +92,47 @@ class Program
                 }
                 catch (JsonException ex)
                 {
-                    // Log JSON parsing errors to stderr
+                    // JSON parsing failed — send error response so the client doesn't hang.
                     Console.Error.WriteLine($"JSON parsing error: {ex.Message}");
+                    try
+                    {
+                        JsonElement? errorId = null;
+                        var idMatch = System.Text.RegularExpressions.Regex.Match(line, @"""id""\s*:\s*(\d+)");
+                        if (idMatch.Success && int.TryParse(idMatch.Groups[1].Value, out var parsedId))
+                            errorId = JsonDocument.Parse(parsedId.ToString()).RootElement.Clone();
+                        Console.WriteLine(JsonSerializer.Serialize(new JsonRpcErrorResponse
+                        {
+                            Id = errorId,
+                            Error = new JsonRpcError { Code = -32700, Message = $"Parse error: {ex.Message}" }
+                        }));
+                    }
+                    catch { }
                     continue;
                 }
                 catch (Exception ex)
                 {
-                    // Log other errors to stderr
+                    // Processing error — send JSON-RPC error response if we have an id
                     Console.Error.WriteLine($"Error processing request: {ex.Message}");
+                    try
+                    {
+                        // Try to extract id from the raw line if not already parsed
+                        JsonElement? errorId = null;
+                        try
+                        {
+                            var errorDoc = JsonDocument.Parse(line);
+                            if (errorDoc.RootElement.TryGetProperty("id", out var eid))
+                                errorId = eid.Clone();
+                        }
+                        catch { }
+
+                        var errorResponse = JsonSerializer.Serialize(new JsonRpcErrorResponse
+                        {
+                            Id = errorId,
+                            Error = new JsonRpcError { Code = -32603, Message = $"Internal error: {ex.Message}" }
+                        });
+                        Console.WriteLine(errorResponse);
+                    }
+                    catch { /* Best effort */ }
                     continue;
                 }
             }

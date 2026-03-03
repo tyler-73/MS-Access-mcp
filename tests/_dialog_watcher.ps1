@@ -561,6 +561,13 @@ function Invoke-McpBatchWithTimeout {
         }
     } | ConvertTo-Json -Depth 40 -Compress))
 
+    # MCP protocol requires notifications/initialized after initialize handshake
+    $jsonLines.Add((@{
+        jsonrpc = "2.0"
+        method = "notifications/initialized"
+        params = @{}
+    } | ConvertTo-Json -Depth 20 -Compress))
+
     foreach ($call in $Calls) {
         $jsonLines.Add((@{
             jsonrpc = "2.0"
@@ -586,27 +593,19 @@ function Invoke-McpBatchWithTimeout {
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $psi
 
-    $stdoutBuilder = New-Object System.Text.StringBuilder
-    $stderrBuilder = New-Object System.Text.StringBuilder
-
-    $stdoutEvent = Register-ObjectEvent -InputObject $process -EventName OutputDataReceived -Action {
-        if ($null -ne $EventArgs.Data) {
-            [void]$Event.MessageData.AppendLine($EventArgs.Data)
-        }
-    } -MessageData $stdoutBuilder
-
-    $stderrEvent = Register-ObjectEvent -InputObject $process -EventName ErrorDataReceived -Action {
-        if ($null -ne $EventArgs.Data) {
-            [void]$Event.MessageData.AppendLine($EventArgs.Data)
-        }
-    } -MessageData $stderrBuilder
-
     try {
         $process.Start() | Out-Null
-        $process.BeginOutputReadLine()
-        $process.BeginErrorReadLine()
 
-        $process.StandardInput.Write($inputPayload)
+        # Read stdout and stderr on background threads (more reliable than
+        # Register-ObjectEvent + BeginOutputReadLine which can drop events
+        # when the PowerShell event queue is congested).
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+
+        # Write raw UTF-8 bytes to avoid PS 5.1 ANSI codepage mismatch with .NET 8 server
+        $payloadBytes = [System.Text.Encoding]::UTF8.GetBytes($inputPayload)
+        $process.StandardInput.BaseStream.Write($payloadBytes, 0, $payloadBytes.Length)
+        $process.StandardInput.BaseStream.Flush()
         $process.StandardInput.Close()
 
         $exited = $process.WaitForExit($TimeoutSeconds * 1000)
@@ -632,17 +631,18 @@ function Invoke-McpBatchWithTimeout {
             return @{ _timeout = $true; _section = $SectionName; _timeoutSeconds = $TimeoutSeconds }
         }
 
-        # Ensure async reads complete
+        # Process exited — wait for background readers to finish
         $process.WaitForExit()
+        [void]$stdoutTask.Wait(5000)
+        [void]$stderrTask.Wait(5000)
     }
-    finally {
-        Unregister-Event -SourceIdentifier $stdoutEvent.Name -ErrorAction SilentlyContinue
-        Unregister-Event -SourceIdentifier $stderrEvent.Name -ErrorAction SilentlyContinue
-        Remove-Job -Name $stdoutEvent.Name -Force -ErrorAction SilentlyContinue
-        Remove-Job -Name $stderrEvent.Name -Force -ErrorAction SilentlyContinue
+    catch {
+        Write-Host ("BATCH_ERROR: section='{0}' error={1}" -f $SectionName, $_.Exception.Message)
+        return @{}
     }
 
-    $rawOutput = $stdoutBuilder.ToString()
+    $rawOutput = if ($stdoutTask.IsCompleted) { $stdoutTask.Result } else { "" }
+    $rawStderr = if ($stderrTask.IsCompleted) { $stderrTask.Result } else { "" }
     $rawLines = $rawOutput -split "`r?`n"
 
     $responses = @{}
@@ -660,6 +660,11 @@ function Invoke-McpBatchWithTimeout {
         catch {
             Write-Host ("WARN: Could not parse response line: {0}" -f $line)
         }
+    }
+
+    # Attach stderr for diagnostic purposes (callers can inspect _stderr key)
+    if (-not [string]::IsNullOrWhiteSpace($rawStderr)) {
+        $responses["_stderr"] = $rawStderr
     }
 
     return $responses
@@ -693,6 +698,13 @@ function Invoke-McpRawBatchWithTimeout {
         }
     } | ConvertTo-Json -Depth 40 -Compress))
 
+    # MCP protocol requires notifications/initialized after initialize handshake
+    $jsonLines.Add((@{
+        jsonrpc = "2.0"
+        method = "notifications/initialized"
+        params = @{}
+    } | ConvertTo-Json -Depth 20 -Compress))
+
     foreach ($req in $Requests) {
         $jsonLines.Add(($req | ConvertTo-Json -Depth 50 -Compress))
     }
@@ -710,27 +722,16 @@ function Invoke-McpRawBatchWithTimeout {
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $psi
 
-    $stdoutBuilder = New-Object System.Text.StringBuilder
-    $stderrBuilder = New-Object System.Text.StringBuilder
-
-    $stdoutEvent = Register-ObjectEvent -InputObject $process -EventName OutputDataReceived -Action {
-        if ($null -ne $EventArgs.Data) {
-            [void]$Event.MessageData.AppendLine($EventArgs.Data)
-        }
-    } -MessageData $stdoutBuilder
-
-    $stderrEvent = Register-ObjectEvent -InputObject $process -EventName ErrorDataReceived -Action {
-        if ($null -ne $EventArgs.Data) {
-            [void]$Event.MessageData.AppendLine($EventArgs.Data)
-        }
-    } -MessageData $stderrBuilder
-
     try {
         $process.Start() | Out-Null
-        $process.BeginOutputReadLine()
-        $process.BeginErrorReadLine()
 
-        $process.StandardInput.Write($inputPayload)
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+
+        # Write raw UTF-8 bytes to avoid PS 5.1 ANSI codepage mismatch with .NET 8 server
+        $payloadBytes = [System.Text.Encoding]::UTF8.GetBytes($inputPayload)
+        $process.StandardInput.BaseStream.Write($payloadBytes, 0, $payloadBytes.Length)
+        $process.StandardInput.BaseStream.Flush()
         $process.StandardInput.Close()
 
         $exited = $process.WaitForExit($TimeoutSeconds * 1000)
@@ -754,15 +755,15 @@ function Invoke-McpRawBatchWithTimeout {
         }
 
         $process.WaitForExit()
+        [void]$stdoutTask.Wait(5000)
+        [void]$stderrTask.Wait(5000)
     }
-    finally {
-        Unregister-Event -SourceIdentifier $stdoutEvent.Name -ErrorAction SilentlyContinue
-        Unregister-Event -SourceIdentifier $stderrEvent.Name -ErrorAction SilentlyContinue
-        Remove-Job -Name $stdoutEvent.Name -Force -ErrorAction SilentlyContinue
-        Remove-Job -Name $stderrEvent.Name -Force -ErrorAction SilentlyContinue
+    catch {
+        Write-Host ("BATCH_ERROR: section='{0}' error={1}" -f $SectionName, $_.Exception.Message)
+        return @{}
     }
 
-    $rawOutput = $stdoutBuilder.ToString()
+    $rawOutput = if ($stdoutTask.IsCompleted) { $stdoutTask.Result } else { "" }
     $rawLines = $rawOutput -split "`r?`n"
 
     $responses = @{}
@@ -832,27 +833,16 @@ function Get-McpToolsListWithTimeout {
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $psi
 
-    $stdoutBuilder = New-Object System.Text.StringBuilder
-    $stderrBuilder = New-Object System.Text.StringBuilder
-
-    $stdoutEvent = Register-ObjectEvent -InputObject $process -EventName OutputDataReceived -Action {
-        if ($null -ne $EventArgs.Data) {
-            [void]$Event.MessageData.AppendLine($EventArgs.Data)
-        }
-    } -MessageData $stdoutBuilder
-
-    $stderrEvent = Register-ObjectEvent -InputObject $process -EventName ErrorDataReceived -Action {
-        if ($null -ne $EventArgs.Data) {
-            [void]$Event.MessageData.AppendLine($EventArgs.Data)
-        }
-    } -MessageData $stderrBuilder
-
     try {
         $process.Start() | Out-Null
-        $process.BeginOutputReadLine()
-        $process.BeginErrorReadLine()
 
-        $process.StandardInput.Write($inputPayload)
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+
+        # Write raw UTF-8 bytes to avoid PS 5.1 ANSI codepage mismatch with .NET 8 server
+        $payloadBytes = [System.Text.Encoding]::UTF8.GetBytes($inputPayload)
+        $process.StandardInput.BaseStream.Write($payloadBytes, 0, $payloadBytes.Length)
+        $process.StandardInput.BaseStream.Flush()
         $process.StandardInput.Close()
 
         $exited = $process.WaitForExit($TimeoutSeconds * 1000)
@@ -876,15 +866,15 @@ function Get-McpToolsListWithTimeout {
         }
 
         $process.WaitForExit()
+        [void]$stdoutTask.Wait(5000)
+        [void]$stderrTask.Wait(5000)
     }
-    finally {
-        Unregister-Event -SourceIdentifier $stdoutEvent.Name -ErrorAction SilentlyContinue
-        Unregister-Event -SourceIdentifier $stderrEvent.Name -ErrorAction SilentlyContinue
-        Remove-Job -Name $stdoutEvent.Name -Force -ErrorAction SilentlyContinue
-        Remove-Job -Name $stderrEvent.Name -Force -ErrorAction SilentlyContinue
+    catch {
+        Write-Host ("TOOLS_LIST_ERROR: {0}" -f $_.Exception.Message)
+        return @()
     }
 
-    $rawOutput = $stdoutBuilder.ToString()
+    $rawOutput = if ($stdoutTask.IsCompleted) { $stdoutTask.Result } else { "" }
     $rawLines = $rawOutput -split "`r?`n"
 
     $responses = @{}

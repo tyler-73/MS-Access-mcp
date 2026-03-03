@@ -1802,6 +1802,9 @@ namespace MS.Access.MCP.Interop
                     _ = InvokeDynamicMethod(recordset, "MoveNext");
                 }
 
+                // Close recordset to release table lock
+                try { InvokeDynamicMethod(recordset, "Close"); } catch { }
+
                 return results;
             },
             requireExclusive: false,
@@ -1833,23 +1836,83 @@ namespace MS.Access.MCP.Interop
                     ?? throw new InvalidOperationException($"Field not found: {fieldName}");
                 var complexValueRecordset = TryGetDynamicProperty(field, "Value");
 
-                // For NULL multi-value fields, COM interop returns DBNull instead of an
-                // empty child Recordset2. This is a known limitation — the field must have
-                // at least one value before set_multi_value_field_values can modify it.
-                if (complexValueRecordset == null || complexValueRecordset is DBNull)
+                // For NULL multi-value fields, COM interop may return DBNull instead of
+                // an empty child Recordset2. Non-complex fields return plain values (string, int, etc.).
+                // Check that we actually have a Recordset-like object before proceeding.
+                bool isRecordset = complexValueRecordset != null
+                    && !(complexValueRecordset is DBNull)
+                    && !(complexValueRecordset is string)
+                    && !(complexValueRecordset is ValueType)
+                    && TryGetDynamicProperty(complexValueRecordset, "EOF") != null;
+
+                if (!isRecordset)
                 {
-                    throw new InvalidOperationException(
-                        $"Multi-value field '{fieldName}' is NULL. " +
-                        "COM interop cannot access the child recordset for NULL complex fields. " +
-                        "Insert at least one value via VBA (rs.Fields(\"" + fieldName + "\").Value.AddNew) first.");
+                    if (values.Count == 0)
+                    {
+                        // Field is already empty/NULL and caller wants no values — nothing to do
+                        _ = InvokeDynamicMethod(recordset, "CancelUpdate");
+                        return new MultiValueFieldUpdateInfo
+                        {
+                            TableName = tableName,
+                            FieldName = fieldName,
+                            ValuesWritten = 0
+                        };
+                    }
+
+                    // Seed the MV field with the first value via direct field assignment.
+                    // For properly-typed complex fields, DAO handles this internally.
+                    try
+                    {
+                        Console.Error.WriteLine($"[MV] Field '{fieldName}' returned DBNull — seeding with direct assignment");
+                        SetDynamicProperty(field, "Value", values[0]?.ToString() ?? "");
+                        _ = InvokeDynamicMethod(recordset, "Update");
+                    }
+                    catch (Exception seedEx)
+                    {
+                        try { _ = InvokeDynamicMethod(recordset, "CancelUpdate"); } catch { }
+                        throw new InvalidOperationException(
+                            $"Multi-value field '{fieldName}' is NULL and could not be seeded. " +
+                            $"The field may not be a true complex/multi-value type. " +
+                            $"Seed error: {seedEx.Message}");
+                    }
+
+                    if (values.Count == 1)
+                    {
+                        return new MultiValueFieldUpdateInfo
+                        {
+                            TableName = tableName,
+                            FieldName = fieldName,
+                            ValuesWritten = 1
+                        };
+                    }
+
+                    // Re-open recordset so the child Recordset2 is now accessible
+                    try { InvokeDynamicMethod(recordset, "Close"); } catch { }
+                    recordset = InvokeDynamicMethod(currentDb, "OpenRecordset", sql, 2)
+                        ?? throw new InvalidOperationException("Failed to re-open recordset after seeding MV field.");
+                    if (ToBool(TryGetDynamicProperty(recordset, "EOF"), true))
+                        throw new InvalidOperationException("Row disappeared after seeding MV field.");
+                    _ = InvokeDynamicMethod(recordset, "Edit");
+                    field = GetRecordsetField(recordset, fieldName)
+                        ?? throw new InvalidOperationException($"Field not found after re-open: {fieldName}");
+                    complexValueRecordset = TryGetDynamicProperty(field, "Value");
+
+                    if (complexValueRecordset == null || complexValueRecordset is DBNull)
+                    {
+                        throw new InvalidOperationException(
+                            $"Multi-value field '{fieldName}' still returned DBNull after seeding. " +
+                            "The field is not a true complex/multi-value type.");
+                    }
                 }
 
+                // Clear existing values
                 while (!ToBool(TryGetDynamicProperty(complexValueRecordset, "EOF"), true))
                 {
                     _ = InvokeDynamicMethod(complexValueRecordset, "Delete");
                     _ = InvokeDynamicMethod(complexValueRecordset, "MoveNext");
                 }
 
+                // Add all requested values
                 foreach (var value in values)
                 {
                     _ = InvokeDynamicMethod(complexValueRecordset, "AddNew");
@@ -1859,6 +1922,10 @@ namespace MS.Access.MCP.Interop
 
                 // Commit parent recordset changes
                 _ = InvokeDynamicMethod(recordset, "Update");
+
+                // Close child and parent recordsets to release table lock
+                try { InvokeDynamicMethod(complexValueRecordset, "Close"); } catch { }
+                try { InvokeDynamicMethod(recordset, "Close"); } catch { }
 
                 return new MultiValueFieldUpdateInfo
                 {

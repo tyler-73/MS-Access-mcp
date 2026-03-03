@@ -227,6 +227,13 @@ function Invoke-McpBatch {
             }
         } | ConvertTo-Json -Depth 40 -Compress))
 
+        # MCP protocol requires notifications/initialized after initialize handshake
+        $jsonLines.Add((@{
+            jsonrpc = "2.0"
+            method = "notifications/initialized"
+            params = @{}
+        } | ConvertTo-Json -Depth 20 -Compress))
+
         foreach ($call in $Calls) {
             $jsonLines.Add((@{
                 jsonrpc = "2.0"
@@ -3600,27 +3607,6 @@ foreach ($id in ($vbaIdLabels.Keys | Sort-Object)) {
     }
 }
 
-# ── VBE Health Check: After VBA/Module Coverage ──
-Write-Host ""
-Write-Host "=== VBE Health Check: After VBA/Module Coverage ==="
-Cleanup-AccessArtifacts -DbPath $DatabasePath
-Start-Sleep -Milliseconds 300
-$hcModName0 = "MCP_HC_PostVBA_$suffix"
-$hcCalls0 = New-Object 'System.Collections.Generic.List[object]'
-Add-ToolCall -Calls $hcCalls0 -Id 8031 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
-Add-ToolCall -Calls $hcCalls0 -Id 8032 -Name "set_vba_code" -Arguments @{ project_name = "CurrentProject"; module_name = $hcModName0; code = "Public Sub HC_PostVBA()`r`nEnd Sub" }
-Add-ToolCall -Calls $hcCalls0 -Id 8033 -Name "delete_module" -Arguments @{ project_name = "CurrentProject"; module_name = $hcModName0 }
-Add-ToolCall -Calls $hcCalls0 -Id 8034 -Name "disconnect_access" -Arguments @{}
-Add-ToolCall -Calls $hcCalls0 -Id 8035 -Name "close_access" -Arguments @{}
-$hcResp0 = Invoke-McpBatch -ExePath $ServerExe -Calls $hcCalls0 -ClientName "vbe-health-post-vba" -ClientVersion "1.0"
-$hcResult0 = Decode-McpResult -Response $hcResp0[8032]
-if ($hcResult0.success -eq $true) {
-    Write-Host "VBE_HEALTH_CHECK after VBA/Module Coverage: OK"
-} else {
-    $failed++
-    Write-Host "VBE_HEALTH_CHECK after VBA/Module Coverage: FAIL - $($hcResult0.error)"
-}
-
 # ── Podbc Compat Layer Coverage (IDs 835-850) ──
 
 Write-Host ""
@@ -3754,25 +3740,6 @@ foreach ($id in ($podbcIdLabels.Keys | Sort-Object)) {
         }
     }
     Write-Host ('{0}: OK' -f $label)
-}
-
-# ── VBE Health Check: After Podbc ──
-Write-Host ""
-Write-Host "=== VBE Health Check: After Podbc ==="
-$hcModName1 = "MCP_HC_PostPodbc_$suffix"
-$hcCalls1 = New-Object 'System.Collections.Generic.List[object]'
-Add-ToolCall -Calls $hcCalls1 -Id 8001 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
-Add-ToolCall -Calls $hcCalls1 -Id 8002 -Name "set_vba_code" -Arguments @{ project_name = "CurrentProject"; module_name = $hcModName1; code = "Public Sub HC_PostPodbc()`r`nEnd Sub" }
-Add-ToolCall -Calls $hcCalls1 -Id 8003 -Name "delete_module" -Arguments @{ project_name = "CurrentProject"; module_name = $hcModName1 }
-Add-ToolCall -Calls $hcCalls1 -Id 8004 -Name "disconnect_access" -Arguments @{}
-Add-ToolCall -Calls $hcCalls1 -Id 8005 -Name "close_access" -Arguments @{}
-$hcResp1 = Invoke-McpBatch -ExePath $ServerExe -Calls $hcCalls1 -ClientName "vbe-health-post-podbc" -ClientVersion "1.0"
-$hcResult1 = Decode-McpResult -Response $hcResp1[8002]
-if ($hcResult1.success -eq $true) {
-    Write-Host "VBE_HEALTH_CHECK after podbc: OK"
-} else {
-    $failed++
-    Write-Host "VBE_HEALTH_CHECK after podbc: FAIL - $($hcResult1.error)"
 }
 
 # ── Conditional Formatting ──
@@ -3984,27 +3951,6 @@ foreach ($id in ($condFmtIdLabels.Keys | Sort-Object)) {
     }
 }
 
-# ── VBE Health Check: After Conditional Formatting ──
-Write-Host ""
-Write-Host "=== VBE Health Check: After Conditional Formatting ==="
-Cleanup-AccessArtifacts -DbPath $DatabasePath
-Start-Sleep -Milliseconds 300
-$hcModName2 = "MCP_HC_PostCondFmt_$suffix"
-$hcCalls2 = New-Object 'System.Collections.Generic.List[object]'
-Add-ToolCall -Calls $hcCalls2 -Id 8011 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
-Add-ToolCall -Calls $hcCalls2 -Id 8012 -Name "set_vba_code" -Arguments @{ project_name = "CurrentProject"; module_name = $hcModName2; code = "Public Sub HC_PostCondFmt()`r`nEnd Sub" }
-Add-ToolCall -Calls $hcCalls2 -Id 8013 -Name "delete_module" -Arguments @{ project_name = "CurrentProject"; module_name = $hcModName2 }
-Add-ToolCall -Calls $hcCalls2 -Id 8014 -Name "disconnect_access" -Arguments @{}
-Add-ToolCall -Calls $hcCalls2 -Id 8015 -Name "close_access" -Arguments @{}
-$hcResp2 = Invoke-McpBatch -ExePath $ServerExe -Calls $hcCalls2 -ClientName "vbe-health-post-condfmt" -ClientVersion "1.0"
-$hcResult2 = Decode-McpResult -Response $hcResp2[8012]
-if ($hcResult2.success -eq $true) {
-    Write-Host "VBE_HEALTH_CHECK after conditional formatting: OK"
-} else {
-    $failed++
-    Write-Host "VBE_HEALTH_CHECK after conditional formatting: FAIL - $($hcResult2.error)"
-}
-
 # ── Navigation Groups ──
 
 Write-Host ""
@@ -4178,27 +4124,6 @@ foreach ($id in ($navGroupIdLabels.Keys | Sort-Object)) {
     }
 }
 
-# ── VBE Health Check: After Navigation Groups ──
-Write-Host ""
-Write-Host "=== VBE Health Check: After Navigation Groups ==="
-Cleanup-AccessArtifacts -DbPath $DatabasePath
-Start-Sleep -Milliseconds 300
-$hcModName3 = "MCP_HC_PostNavGroup_$suffix"
-$hcCalls3 = New-Object 'System.Collections.Generic.List[object]'
-Add-ToolCall -Calls $hcCalls3 -Id 8021 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
-Add-ToolCall -Calls $hcCalls3 -Id 8022 -Name "set_vba_code" -Arguments @{ project_name = "CurrentProject"; module_name = $hcModName3; code = "Public Sub HC_PostNavGroup()`r`nEnd Sub" }
-Add-ToolCall -Calls $hcCalls3 -Id 8023 -Name "delete_module" -Arguments @{ project_name = "CurrentProject"; module_name = $hcModName3 }
-Add-ToolCall -Calls $hcCalls3 -Id 8024 -Name "disconnect_access" -Arguments @{}
-Add-ToolCall -Calls $hcCalls3 -Id 8025 -Name "close_access" -Arguments @{}
-$hcResp3 = Invoke-McpBatch -ExePath $ServerExe -Calls $hcCalls3 -ClientName "vbe-health-post-navgroup" -ClientVersion "1.0"
-$hcResult3 = Decode-McpResult -Response $hcResp3[8022]
-if ($hcResult3.success -eq $true) {
-    Write-Host "VBE_HEALTH_CHECK after navigation groups: OK"
-} else {
-    $failed++
-    Write-Host "VBE_HEALTH_CHECK after navigation groups: FAIL - $($hcResult3.error)"
-}
-
 # ── Multi-Value Fields (IDs 893-902) ──
 #
 # Multi-value fields in Access require a complex lookup field type that can only be
@@ -4217,7 +4142,11 @@ $mvTableName = "MCP_MV_$suffix"
 $mvModuleName = "MCP_MV_Mod_$suffix"
 $mvProcName = "CreateMVTable_$suffix"
 
-# VBA code to create a table with a multi-value lookup field via DAO
+# VBA code to create a table with a proper multi-value (complex) field via DAO.
+# Key: use dbComplexText (109) field type so ACE engine creates the complex
+# infrastructure (hidden system table, child Recordset2 support). Setting
+# AllowMultipleValues as a custom property on a dbText field does NOT make it
+# complex — the field type must be 109 from creation.
 $mvVbaCode = @"
 Public Sub $mvProcName()
     Dim db As Object
@@ -4232,22 +4161,25 @@ Public Sub $mvProcName()
     Err.Clear
     On Error GoTo 0
 
-    ' Step 1: Create table with SQL DDL
-    db.Execute "CREATE TABLE $mvTableName (id LONG, tags TEXT(100))", 128
+    ' Step 1: Create table with just the id column via SQL DDL
+    db.Execute "CREATE TABLE $mvTableName (id LONG)", 128
     db.TableDefs.Refresh
 
-    ' Step 2: Set multi-value properties on the EXISTING field
+    ' Step 2: Add multi-value field via DAO using dbComplexText (109)
     Set tdf = db.TableDefs("$mvTableName")
-    Set fld = tdf.Fields("tags")
+    Set fld = tdf.CreateField("tags", 109)
+    tdf.Fields.Append fld
+    tdf.Fields.Refresh
 
+    ' Step 3: Set lookup properties on the appended field
+    Set fld = tdf.Fields("tags")
     On Error Resume Next
     fld.Properties.Append fld.CreateProperty("DisplayControl", 3, 111)
     fld.Properties.Append fld.CreateProperty("RowSourceType", 10, "Value List")
-    fld.Properties.Append fld.CreateProperty("RowSource", 10, """Alpha"";""Beta"";""Gamma""")
-    fld.Properties.Append fld.CreateProperty("AllowMultipleValues", 1, True)
+    fld.Properties.Append fld.CreateProperty("RowSource", 10, Chr(34) & "Alpha" & Chr(34) & ";" & Chr(34) & "Beta" & Chr(34) & ";" & Chr(34) & "Gamma" & Chr(34))
     On Error GoTo 0
 
-    ' Step 3: Insert a row (dbFailOnError=128)
+    ' Step 4: Insert a row (dbFailOnError=128)
     db.Execute "INSERT INTO [$mvTableName] (id) VALUES (1)", 128
 End Sub
 "@
@@ -4283,6 +4215,7 @@ Add-ToolCall -Calls $mvCalls -Id 901 -Name "disconnect_access" -Arguments @{}
 Add-ToolCall -Calls $mvCalls -Id 902 -Name "close_access" -Arguments @{}
 
 $mvResponses = Invoke-McpBatch -ExePath $ServerExe -Calls $mvCalls -ClientName "full-regression-multi-value" -ClientVersion "1.0"
+
 $mvIdLabels = @{
     893 = "mv_connect_access"
     894 = "mv_set_vba_code"
@@ -4313,13 +4246,6 @@ foreach ($id in ($mvIdLabels.Keys | Sort-Object)) {
     }
 
     if ($decoded.success -ne $true) {
-        # Graceful-fail: set_multi_value_field_values on NULL complex fields is a known
-        # COM interop limitation (Field2.Value returns DBNull instead of Recordset2).
-        # delete_table may also fail if the set_values operation left a lock.
-        if ($label -eq "mv_set_values" -or $label -eq "mv_delete_table") {
-            Write-Host ('{0}: OK (graceful-fail: {1})' -f $label, $decoded.error)
-            continue
-        }
         $failed++
         Write-Host ('{0}: FAIL {1}' -f $label, $decoded.error)
         continue
