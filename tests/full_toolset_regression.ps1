@@ -649,21 +649,27 @@ try {
         $orphanedModules = @($modulesResp.modules | Where-Object { $_.Name -match '^MCP_' })
         if ($orphanedModules.Count -gt 0) {
             Write-Host "Found $($orphanedModules.Count) orphaned MCP module(s) - cleaning up..."
-            $delCalls = New-Object 'System.Collections.Generic.List[object]'
-            Add-ToolCall -Calls $delCalls -Id 1 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
-            $delId = 2
-            foreach ($mod in $orphanedModules) {
-                Add-ToolCall -Calls $delCalls -Id $delId -Name "delete_module" -Arguments @{
-                    project_name = "CurrentProject"
-                    module_name = $mod.Name
+            # Delete in chunks of 8 to stay within the 120s batch timeout.
+            # Each delete_module triggers VBE access + broken-ref dialog (~3-4s each).
+            $chunkSize = 8
+            for ($i = 0; $i -lt $orphanedModules.Count; $i += $chunkSize) {
+                $chunk = @($orphanedModules[$i..([Math]::Min($i + $chunkSize - 1, $orphanedModules.Count - 1))])
+                $delCalls = New-Object 'System.Collections.Generic.List[object]'
+                Add-ToolCall -Calls $delCalls -Id 1 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
+                $delId = 2
+                foreach ($mod in $chunk) {
+                    Add-ToolCall -Calls $delCalls -Id $delId -Name "delete_module" -Arguments @{
+                        project_name = "CurrentProject"
+                        module_name = $mod.Name
+                    }
+                    $delId++
                 }
-                $delId++
+                Add-ToolCall -Calls $delCalls -Id $delId -Name "disconnect_access" -Arguments @{}
+                Add-ToolCall -Calls $delCalls -Id ($delId + 1) -Name "close_access" -Arguments @{}
+                $null = Invoke-McpBatch -ExePath $ServerExe -Calls $delCalls -ClientName "pre-cleanup-delete" -ClientVersion "1.0"
+                Cleanup-AccessArtifacts -DbPath $DatabasePath
             }
-            Add-ToolCall -Calls $delCalls -Id $delId -Name "disconnect_access" -Arguments @{}
-            Add-ToolCall -Calls $delCalls -Id ($delId + 1) -Name "close_access" -Arguments @{}
-            $null = Invoke-McpBatch -ExePath $ServerExe -Calls $delCalls -ClientName "pre-cleanup-delete" -ClientVersion "1.0"
             Write-Host "Orphaned module cleanup complete."
-            Cleanup-AccessArtifacts -DbPath $DatabasePath
             Start-Sleep -Milliseconds 500
         }
     }
