@@ -321,7 +321,7 @@ class Program
                 new { name = "describe_table", description = "Describe a table schema including columns, nullability, defaults, and primary key columns.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
                 new { name = "create_table", description = "Create a new table in the database", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, fields = new { type = "array", items = new { type = "object", properties = new { name = new { type = "string" }, type = new { type = "string" }, size = new { type = "integer" }, required = new { type = "boolean" }, allow_zero_length = new { type = "boolean" } } } } }, required = new string[] { "table_name", "fields" } } },
                 new { name = "delete_table", description = "Delete a table from the database", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
-                new { name = "add_field", description = "Add a field to an existing table", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, field_type = new { type = "string" }, size = new { type = "integer" }, required = new { type = "boolean" }, allow_zero_length = new { type = "boolean" } }, required = new string[] { "table_name", "field_name", "field_type" } } },
+                new { name = "add_field", description = "Add a field to an existing table. Optionally set default_value, format, decimal_places, and description.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, field_type = new { type = "string" }, size = new { type = "integer" }, required = new { type = "boolean" }, allow_zero_length = new { type = "boolean" }, default_value = new { type = "string", description = "Default value expression for the field" }, format = new { type = "string", description = "Display format (e.g. Currency, Short Date, Percent)" }, decimal_places = new { type = "integer", description = "Number of decimal places (0-15, or 255 for Auto)" }, description = new { type = "string", description = "Field description shown in table design view" } }, required = new string[] { "table_name", "field_name", "field_type" } } },
                 new { name = "alter_field", description = "Alter an existing field definition on a table", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, new_field_type = new { type = "string" }, new_size = new { type = "integer" } }, required = new string[] { "table_name", "field_name", "new_field_type" } } },
                 new { name = "drop_field", description = "Drop a field from a table", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" } }, required = new string[] { "table_name", "field_name" } } },
                 new { name = "rename_table", description = "Rename an existing table", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, new_table_name = new { type = "string" } }, required = new string[] { "table_name", "new_table_name" } } },
@@ -330,7 +330,7 @@ class Program
                 new { name = "create_index", description = "Create an index on one or more columns. Supports UNIQUE and IGNORE NULL options.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, index_name = new { type = "string" }, columns = new { type = "array", items = new { type = "string" } }, unique = new { type = "boolean" }, ignore_nulls = new { type = "boolean", description = "When true, rows with NULL in indexed columns are excluded from the index" } }, required = new string[] { "table_name", "index_name", "columns" } } },
                 new { name = "delete_index", description = "Delete an index from a table", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, index_name = new { type = "string" } }, required = new string[] { "table_name", "index_name" } } },
                 new { name = "launch_access", description = "Launch Microsoft Access application", inputSchema = new { type = "object", properties = new { } } },
-                new { name = "close_access", description = "Close Microsoft Access application", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "close_access", description = "Close Microsoft Access application. Optionally specify save mode.", inputSchema = new { type = "object", properties = new { save_mode = new { type = "string", description = "save_all (default), prompt, or save_none" } } } },
                 new { name = "get_forms", description = "Get list of all forms in the database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_reports", description = "Get list of all reports in the database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_macros", description = "Get list of all macros in the database", inputSchema = new { type = "object", properties = new { } } },
@@ -521,7 +521,10 @@ class Program
                 new { name = "set_field_description", description = "Set description text for a field (shown in status bar and design view).", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, description = new { type = "string" } }, required = new string[] { "table_name", "field_name", "description" } } },
                 // Phase 7C: Create blank form/report
                 new { name = "create_form", description = "Create a new blank form. Optionally specify a name and record source.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name for the form (auto-generated if omitted)" }, record_source = new { type = "string", description = "Table or query name to bind as record source" } } } },
-                new { name = "create_report", description = "Create a new blank report. Optionally specify a name and record source.", inputSchema = new { type = "object", properties = new { report_name = new { type = "string", description = "Name for the report (auto-generated if omitted)" }, record_source = new { type = "string", description = "Table or query name to bind as record source" } } } }
+                new { name = "create_report", description = "Create a new blank report. Optionally specify a name and record source.", inputSchema = new { type = "object", properties = new { report_name = new { type = "string", description = "Name for the report (auto-generated if omitted)" }, record_source = new { type = "string", description = "Table or query name to bind as record source" } } } },
+                // Phase 8
+                new { name = "get_form_runtime_state", description = "Get runtime state of an open form: filter, order, allow edits, current record, dirty flag, etc.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
+                new { name = "set_report_sorting", description = "Set OrderBy and OrderByOn on a report at design time.", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" }, order_by = new { type = "string", description = "SQL ORDER BY clause (e.g. \"[LastName] ASC, [FirstName] ASC\")" }, order_by_on = new { type = "boolean", description = "Whether the OrderBy is active" } }, required = new string[] { "report_name" } } }
             }
         };
     }
@@ -888,6 +891,8 @@ class Program
             "set_field_description" => HandleSetFieldDescription(accessService, toolArguments),
             "create_form" => HandleCreateForm(accessService, toolArguments),
             "create_report" => HandleCreateReport(accessService, toolArguments),
+            "get_form_runtime_state" => HandleGetFormRuntimeState(accessService, toolArguments),
+            "set_report_sorting" => HandleSetReportSorting(accessService, toolArguments),
             _ => new { success = false, error = $"Unknown tool: {toolName}" }
         };
     }
@@ -4254,14 +4259,24 @@ class Program
             if (!TryGetRequiredStringFromAliases(arguments, new[] { "field_type", "type" }, "field_type", out var fieldType, out var fieldTypeError))
                 return fieldTypeError;
 
+            _ = TryGetOptionalString(arguments, "default_value", out var defaultValue);
+            _ = TryGetOptionalString(arguments, "format", out var format);
+            _ = TryGetOptionalString(arguments, "description", out var description);
+
             var field = new FieldInfo
             {
                 Name = fieldName,
                 Type = fieldType,
                 Size = GetOptionalIntFromAliases(arguments, new[] { "size" }, 0),
                 Required = GetOptionalBool(arguments, "required", false),
-                AllowZeroLength = GetOptionalBool(arguments, "allow_zero_length", false)
+                AllowZeroLength = GetOptionalBool(arguments, "allow_zero_length", false),
+                DefaultValue = string.IsNullOrWhiteSpace(defaultValue) ? null : defaultValue,
+                Format = string.IsNullOrWhiteSpace(format) ? null : format,
+                Description = string.IsNullOrWhiteSpace(description) ? null : description
             };
+
+            if (arguments.TryGetProperty("decimal_places", out var dpElem) && dpElem.ValueKind == JsonValueKind.Number)
+                field.DecimalPlaces = dpElem.GetInt32();
 
             accessService.AddField(tableName, field);
             return new { success = true, message = $"Added field {fieldName} to {tableName}" };
@@ -4422,7 +4437,8 @@ class Program
     {
         try
         {
-            accessService.CloseAccess();
+            _ = TryGetOptionalString(arguments, "save_mode", out var saveMode);
+            accessService.CloseAccess(string.IsNullOrWhiteSpace(saveMode) ? null : saveMode);
             return new { success = true, message = "Access closed successfully" };
         }
         catch (Exception ex)
@@ -5892,7 +5908,14 @@ class Program
                 return reportNameError;
 
             var sorting = accessService.GetReportSorting(reportName);
-            return new { success = true, sorting = sorting };
+            return new
+            {
+                success = true,
+                report_name = sorting.ReportName,
+                orderBy = sorting.OrderBy,
+                orderByOn = sorting.OrderByOn,
+                groupLevels = sorting.GroupLevels
+            };
         }
         catch (Exception ex)
         {
@@ -7875,6 +7898,61 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("create_report", ex);
+        }
+    }
+
+    static object HandleGetFormRuntimeState(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var formNameError))
+                return formNameError;
+
+            var state = accessService.GetFormRuntimeState(formName);
+            return new
+            {
+                success = true,
+                form_name = state.FormName,
+                filter = state.Filter,
+                filter_on = state.FilterOn,
+                order_by = state.OrderBy,
+                order_by_on = state.OrderByOn,
+                allow_edits = state.AllowEdits,
+                allow_additions = state.AllowAdditions,
+                allow_deletions = state.AllowDeletions,
+                record_source = state.RecordSource,
+                current_view = state.CurrentView,
+                dirty = state.Dirty,
+                new_record = state.NewRecord,
+                current_record = state.CurrentRecord
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_form_runtime_state", ex);
+        }
+    }
+
+    static object HandleSetReportSorting(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "report_name", out var reportName, out var reportNameError))
+                return reportNameError;
+
+            _ = TryGetOptionalString(arguments, "order_by", out var orderBy);
+            if (!TryGetOptionalBoolNullable(arguments, "order_by_on", out var orderByOn, out var orderByOnError))
+                return orderByOnError;
+
+            var diag = accessService.SetReportSorting(reportName,
+                string.IsNullOrWhiteSpace(orderBy) ? null : orderBy,
+                orderByOn);
+
+            return new { success = true, report_name = reportName, order_by = orderBy, order_by_on = orderByOn, diagnostics = diag };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_report_sorting", ex);
         }
     }
 

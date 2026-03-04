@@ -25,6 +25,7 @@ namespace MS.Access.MCP.Interop
         private DataProviderKind _providerToRestoreAfterRelease = DataProviderKind.None;
         private string? _accessDatabasePath;
         private bool _accessDatabaseOpenedExclusive = false;
+        private int _pendingQuitOption = -1; // When >= 0, overrides default Quit(0) in ResetAccessApplication
         private OleDbTransaction? _oleDbTransaction;
         private OdbcTransaction? _odbcTransaction;
         private DataProviderKind _activeDataProvider = DataProviderKind.None;
@@ -1059,6 +1060,35 @@ namespace MS.Access.MCP.Interop
 
             if (IsHyperlinkType(field.Type))
                 SetFieldHyperlinkAttribute(normalizedTableName, normalizedFieldName);
+
+            SetFieldPropertiesAfterCreate(normalizedTableName, normalizedFieldName, field);
+        }
+
+        private void SetFieldPropertiesAfterCreate(string tableName, string fieldName, FieldInfo field)
+        {
+            var hasDefaultValue = !string.IsNullOrWhiteSpace(field.DefaultValue);
+            var hasFormat = !string.IsNullOrWhiteSpace(field.Format);
+            var hasDescription = !string.IsNullOrWhiteSpace(field.Description);
+            var hasDecimalPlaces = field.DecimalPlaces.HasValue;
+
+            if (!hasDefaultValue && !hasFormat && !hasDescription && !hasDecimalPlaces)
+                return;
+
+            ExecuteComOperation(accessApp =>
+            {
+                var resolvedField = ResolveField(accessApp, tableName, fieldName);
+
+                if (hasDefaultValue)
+                    SetDaoPropertyValue(resolvedField, "DefaultValue", field.DefaultValue!, daoType: 10, createIfMissing: true);
+                if (hasFormat)
+                    SetDaoPropertyValue(resolvedField, "Format", field.Format!, daoType: 10, createIfMissing: true);
+                if (hasDescription)
+                    SetDaoPropertyValue(resolvedField, "Description", field.Description!, daoType: 12, createIfMissing: true);
+                if (hasDecimalPlaces)
+                    SetDaoPropertyValue(resolvedField, "DecimalPlaces", (byte)field.DecimalPlaces!.Value, daoType: 2, createIfMissing: true);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
         }
 
         public void AlterField(string tableName, string fieldName, string newType, int size = 0)
@@ -2117,9 +2147,20 @@ namespace MS.Access.MCP.Interop
             accessApp.Visible = true;
         }
 
-        public void CloseAccess()
+        public void CloseAccess(string? saveMode = null)
         {
-            ResetAccessApplication();
+            int quitOption = 0; // acQuitSaveAll
+            if (!string.IsNullOrWhiteSpace(saveMode))
+            {
+                quitOption = saveMode.Trim().ToLowerInvariant() switch
+                {
+                    "save_all" or "0" => 0,
+                    "prompt" or "1" => 1,
+                    "save_none" or "2" => 2,
+                    _ => throw new ArgumentException($"Invalid save mode: {saveMode}. Use save_all, prompt, or save_none.")
+                };
+            }
+            ResetAccessApplication(quitOption);
         }
 
         public TransferSpreadsheetResult TransferSpreadsheet(
@@ -6995,6 +7036,29 @@ namespace MS.Access.MCP.Interop
 
             return ExecuteComOperation(accessApp =>
             {
+                // Read design-time OrderBy/OrderByOn from DAO shadow properties.
+                // report.OrderBy is a runtime-only property that is always empty in
+                // design view. The persistent value is stored as DAO database properties
+                // by SetReportSorting because LoadFromText design blob changes don't
+                // survive process restart.
+                string? shadowOrderBy = null;
+                bool? shadowOrderByOn = null;
+                try
+                {
+                    var currentDb = TryGetCurrentDb(accessApp);
+                    if (currentDb != null)
+                    {
+                        var obProp = FindDaoProperty(currentDb, $"_rptOrderBy_{reportName}");
+                        if (obProp != null)
+                            shadowOrderBy = SafeToString(TryGetDynamicProperty(obProp, "Value"));
+                        var obOnProp = FindDaoProperty(currentDb, $"_rptOrderByOn_{reportName}");
+                        if (obOnProp != null)
+                            shadowOrderByOn = ToBool(TryGetDynamicProperty(obOnProp, "Value"), false);
+                    }
+                }
+                catch { }
+
+                // Read GroupLevels from the open report (requires design view)
                 var openedHere = false;
                 var report = EnsureReportOpen(accessApp, reportName, true, out openedHere);
                 try
@@ -7008,11 +7072,15 @@ namespace MS.Access.MCP.Interop
                         groupingLevels.Add(BuildReportGroupingInfo(groupLevel, index));
                     }
 
+                    // Prefer shadow properties; fall back to runtime property
+                    var runtimeOrderBy = SafeToString(TryGetDynamicProperty(report, "OrderBy"));
+                    var runtimeOrderByOn = ToNullableBool(TryGetDynamicProperty(report, "OrderByOn"));
+
                     return new ReportSortingInfo
                     {
                         ReportName = reportName,
-                        OrderBy = SafeToString(TryGetDynamicProperty(report, "OrderBy")),
-                        OrderByOn = ToNullableBool(TryGetDynamicProperty(report, "OrderByOn")),
+                        OrderBy = !string.IsNullOrWhiteSpace(shadowOrderBy) ? shadowOrderBy : runtimeOrderBy,
+                        OrderByOn = shadowOrderByOn ?? runtimeOrderByOn,
                         GroupLevels = groupingLevels
                     };
                 }
@@ -9380,6 +9448,8 @@ namespace MS.Access.MCP.Interop
             releaseOleDb: true);
 
             RefreshOleDbConnectionAfterSchemaMutation();
+
+            SetFieldPropertiesAfterCreate(tableName, field.Name, field);
         }
 
         private void CreateTableViaDaoOnly(string tableName, List<FieldInfo> fields)
@@ -10871,8 +10941,16 @@ namespace MS.Access.MCP.Interop
             return ex.InnerException != null && IsRecoverableAccessStateError(ex.InnerException);
         }
 
-        private void ResetAccessApplication()
+        private void ResetAccessApplication(int quitOption = 0)
         {
+            // Allow _pendingQuitOption to override the default quit behavior.
+            // Used by CloseAccess to pass a user-specified save mode.
+            if (_pendingQuitOption >= 0)
+            {
+                quitOption = _pendingQuitOption;
+                _pendingQuitOption = -1;
+            }
+
             int accessPid = 0;
 
             if (_accessApplication != null)
@@ -10892,12 +10970,11 @@ namespace MS.Access.MCP.Interop
 
                 try
                 {
-                    // 0 = acQuitSaveAll — save all objects before quitting.
-                    // Previously used acQuitSaveNone (2) to avoid save prompts, but that
-                    // discards VBA project modifications that are partially written to disk,
-                    // leaving the VBA project in an inconsistent state (0x800A0035 on next VBE write).
-                    // The dialog dismisser thread handles any save prompts.
-                    _accessApplication.Quit(0);
+                    // 0 = acQuitSaveAll, 1 = acQuitPrompt, 2 = acQuitSaveNone.
+                    // Default is acQuitSaveAll. acQuitSaveNone discards VBA project modifications
+                    // partially written to disk, leaving VBA in inconsistent state (0x800A0035).
+                    // The dialog dismisser thread handles any save prompts from acQuitPrompt.
+                    _accessApplication.Quit(quitOption);
                 }
                 catch
                 {
@@ -14367,6 +14444,116 @@ namespace MS.Access.MCP.Interop
             releaseOleDb: true);
         }
 
+        // ===== Phase 8: get_form_runtime_state, set_report_sorting =====
+
+        public FormRuntimeStateInfo GetFormRuntimeState(string formName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(formName)) throw new ArgumentException("Form name is required.", nameof(formName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                if (!IsFormLoaded(accessApp, formName))
+                    throw new InvalidOperationException($"Form '{formName}' is not currently open. Use open_form first.");
+
+                var form = FindObjectByName(accessApp.Forms, formName)
+                    ?? throw new InvalidOperationException($"Form '{formName}' is not loaded.");
+
+                return new FormRuntimeStateInfo
+                {
+                    FormName = formName,
+                    Filter = SafeToString(TryGetDynamicProperty(form, "Filter")),
+                    FilterOn = ToNullableBool(TryGetDynamicProperty(form, "FilterOn")),
+                    OrderBy = SafeToString(TryGetDynamicProperty(form, "OrderBy")),
+                    OrderByOn = ToNullableBool(TryGetDynamicProperty(form, "OrderByOn")),
+                    AllowEdits = ToNullableBool(TryGetDynamicProperty(form, "AllowEdits")),
+                    AllowAdditions = ToNullableBool(TryGetDynamicProperty(form, "AllowAdditions")),
+                    AllowDeletions = ToNullableBool(TryGetDynamicProperty(form, "AllowDeletions")),
+                    RecordSource = SafeToString(TryGetDynamicProperty(form, "RecordSource")),
+                    CurrentView = ToNullableInt(TryGetDynamicProperty(form, "CurrentView")),
+                    Dirty = ToNullableBool(TryGetDynamicProperty(form, "Dirty")),
+                    NewRecord = ToNullableBool(TryGetDynamicProperty(form, "NewRecord")),
+                    CurrentRecord = ToNullableInt(TryGetDynamicProperty(form, "CurrentRecord"))
+                };
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public string SetReportSorting(string reportName, string? orderBy = null, bool? orderByOn = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(reportName)) throw new ArgumentException("Report name is required.", nameof(reportName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                // Use SaveAsText/LoadFromText for reliable report property persistence.
+                // report.OrderBy is a runtime-only property — DoCmd.Close(acSaveYes)
+                // does NOT persist it. Only the design-time blob (modified via
+                // SaveAsText/LoadFromText) holds the persistent OrderBy value.
+                var tempFile = Path.Combine(Path.GetTempPath(), $"rpt_{Guid.NewGuid():N}.txt");
+                try
+                {
+                    // Close report if open
+                    if (IsReportLoaded(accessApp, reportName))
+                        accessApp.DoCmd.Close(3, reportName, 2); // acSaveNo
+
+                    // Export report design as text
+                    accessApp.SaveAsText(3, reportName, tempFile); // acReport=3
+                    var lines = File.ReadAllLines(tempFile).ToList();
+
+                    // Remove existing OrderBy/OrderByOn/OrderByOnLoad lines
+                    lines.RemoveAll(l => l.TrimStart().StartsWith("OrderBy =") ||
+                                        l.TrimStart().StartsWith("OrderByOn =") ||
+                                        l.TrimStart().StartsWith("OrderByOnLoad ="));
+
+                    // Find "Begin Report" to insert after
+                    var insertIdx = lines.FindIndex(l => l.TrimStart().StartsWith("Begin Report"));
+                    if (insertIdx >= 0)
+                    {
+                        insertIdx++; // Insert after "Begin Report"
+                        // OrderByOnLoad ensures the OrderBy is applied when the report opens
+                        lines.Insert(insertIdx, $"    OrderByOnLoad =-1");
+                        if (orderByOn.HasValue)
+                            lines.Insert(insertIdx, $"    OrderByOn ={(orderByOn.Value ? "-1" : "0")}");
+                        if (orderBy != null)
+                            lines.Insert(insertIdx, $"    OrderBy =\"{orderBy}\"");
+                    }
+
+                    File.WriteAllLines(tempFile, lines);
+
+                    // Delete original and reimport
+                    accessApp.DoCmd.DeleteObject(3, reportName);
+                    accessApp.LoadFromText(3, reportName, tempFile);
+
+                    // Also persist OrderBy as DAO database properties (shadow storage).
+                    // report.OrderBy is a runtime-only property, and LoadFromText changes
+                    // to the design blob don't survive process restart. DAO database
+                    // properties DO persist reliably through Quit/Kill cycles.
+                    // Also persist OrderBy as DAO database properties (shadow storage).
+                    // report.OrderBy is a runtime-only property, and LoadFromText changes
+                    // to the design blob don't survive process restart. DAO database
+                    // properties DO persist reliably through Quit/Kill cycles.
+                    var currentDb = TryGetCurrentDb(accessApp);
+                    if (currentDb != null)
+                    {
+                        if (orderBy != null)
+                            SetDaoPropertyValue(currentDb, $"_rptOrderBy_{reportName}", orderBy, daoType: 10, createIfMissing: true);
+                        if (orderByOn.HasValue)
+                            SetDaoPropertyValue(currentDb, $"_rptOrderByOn_{reportName}", orderByOn.Value, daoType: 1, createIfMissing: true);
+                    }
+
+                    return $"OrderBy={orderBy}, OrderByOn={orderByOn}";
+                }
+                finally
+                {
+                    try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { }
+                }
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
     #endregion
 
     } // end class AccessInteropService
@@ -14387,6 +14574,10 @@ namespace MS.Access.MCP.Interop
         public int Size { get; set; }
         public bool Required { get; set; }
         public bool AllowZeroLength { get; set; }
+        public string? DefaultValue { get; set; }
+        public string? Format { get; set; }
+        public int? DecimalPlaces { get; set; }
+        public string? Description { get; set; }
     }
 
     public class QueryInfo
@@ -15041,6 +15232,23 @@ namespace MS.Access.MCP.Interop
         public string? OrderBy { get; set; }
         public bool? OrderByOn { get; set; }
         public List<ReportGroupingInfo> GroupLevels { get; set; } = new();
+    }
+
+    public class FormRuntimeStateInfo
+    {
+        public string FormName { get; set; } = "";
+        public string? Filter { get; set; }
+        public bool? FilterOn { get; set; }
+        public string? OrderBy { get; set; }
+        public bool? OrderByOn { get; set; }
+        public bool? AllowEdits { get; set; }
+        public bool? AllowAdditions { get; set; }
+        public bool? AllowDeletions { get; set; }
+        public string? RecordSource { get; set; }
+        public int? CurrentView { get; set; }
+        public bool? Dirty { get; set; }
+        public bool? NewRecord { get; set; }
+        public int? CurrentRecord { get; set; }
     }
 
     public class PrinterInfoResult

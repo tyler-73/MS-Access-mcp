@@ -6412,6 +6412,155 @@ foreach ($id in ($p7Labels.Keys | Sort-Object)) {
     }
 }
 
+Write-Host "=== Feature Gap Phase 8: AddField Props, FormRuntimeState, CloseAccess SaveMode, SetReportSorting (IDs 1221-1245) ==="
+Cleanup-AccessArtifacts -DbPath $DatabasePath
+$p8Calls = New-Object 'System.Collections.Generic.List[object]'
+Add-ToolCall -Calls $p8Calls -Id 1221 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
+# Create test table
+Add-ToolCall -Calls $p8Calls -Id 1222 -Name "create_table" -Arguments @{
+    table_name = "mcp_p8_test"
+    fields = @(
+        @{ name = "id"; type = "COUNTER"; size = 0; required = $false; allow_zero_length = $false },
+        @{ name = "emp_name"; type = "TEXT"; size = 50; required = $false; allow_zero_length = $true }
+    )
+}
+# add_field with optional properties
+Add-ToolCall -Calls $p8Calls -Id 1223 -Name "add_field" -Arguments @{
+    table_name = "mcp_p8_test"; field_name = "price"; field_type = "CURRENCY"
+    format = "Currency"; decimal_places = 2; description = "Unit price"; default_value = "0"
+}
+Add-ToolCall -Calls $p8Calls -Id 1224 -Name "get_field_properties" -Arguments @{
+    table_name = "mcp_p8_test"; field_name = "price"
+}
+# Create a report for sorting tests
+Add-ToolCall -Calls $p8Calls -Id 1225 -Name "create_report" -Arguments @{
+    report_name = "mcp_p8_report"; record_source = "mcp_p8_test"
+}
+# set_report_sorting
+Add-ToolCall -Calls $p8Calls -Id 1226 -Name "set_report_sorting" -Arguments @{
+    report_name = "mcp_p8_report"; order_by = "[emp_name] ASC"; order_by_on = $true
+}
+# get_report_sorting to verify
+Add-ToolCall -Calls $p8Calls -Id 1227 -Name "get_report_sorting" -Arguments @{
+    report_name = "mcp_p8_report"
+}
+# Create a form, open it, then get runtime state
+Add-ToolCall -Calls $p8Calls -Id 1228 -Name "create_form" -Arguments @{
+    form_name = "mcp_p8_form"; record_source = "mcp_p8_test"
+}
+Add-ToolCall -Calls $p8Calls -Id 1229 -Name "open_form" -Arguments @{
+    form_name = "mcp_p8_form"; view = "normal"; window_mode = "hidden"
+}
+Add-ToolCall -Calls $p8Calls -Id 1230 -Name "get_form_runtime_state" -Arguments @{
+    form_name = "mcp_p8_form"
+}
+Add-ToolCall -Calls $p8Calls -Id 1231 -Name "close_form" -Arguments @{
+    form_name = "mcp_p8_form"; save = $false
+}
+# close_access with save_none
+Add-ToolCall -Calls $p8Calls -Id 1232 -Name "close_access" -Arguments @{ save_mode = "save_none" }
+# Reconnect and verify data still accessible
+Add-ToolCall -Calls $p8Calls -Id 1233 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
+# Cleanup
+Add-ToolCall -Calls $p8Calls -Id 1234 -Name "delete_form" -Arguments @{ form_name = "mcp_p8_form" }
+Add-ToolCall -Calls $p8Calls -Id 1235 -Name "delete_report" -Arguments @{ report_name = "mcp_p8_report" }
+Add-ToolCall -Calls $p8Calls -Id 1236 -Name "delete_table" -Arguments @{ table_name = "mcp_p8_test" }
+
+$p8Responses = Invoke-McpBatch -ExePath $ServerExe -Calls $p8Calls -ClientName "full-regression-phase8" -ClientVersion "1.0"
+$p8Labels = @{
+    1221 = "p8_connect"
+    1222 = "p8_create_table"
+    1223 = "p8_add_field_with_props"
+    1224 = "p8_get_field_properties"
+    1225 = "p8_create_report"
+    1226 = "p8_set_report_sorting"
+    1227 = "p8_get_report_sorting"
+    1228 = "p8_create_form"
+    1229 = "p8_open_form"
+    1230 = "p8_get_form_runtime_state"
+    1231 = "p8_close_form"
+    1232 = "p8_close_access"
+    1233 = "p8_reconnect"
+    1234 = "p8_delete_form"
+    1235 = "p8_delete_report"
+    1236 = "p8_delete_table"
+}
+
+foreach ($id in ($p8Labels.Keys | Sort-Object)) {
+    $label = $p8Labels[$id]
+    $decoded = Decode-McpResult -Response $p8Responses[[int]$id]
+
+    if ($null -eq $decoded) {
+        $failed++
+        Write-Host ('{0}: FAIL missing-response' -f $label)
+        continue
+    }
+    if ($decoded.success -ne $true) {
+        $failed++
+        Write-Host ('{0}: FAIL {1}' -f $label, $decoded.error)
+        continue
+    }
+
+    $p8Failed = $false
+    switch ($label) {
+        "p8_set_report_sorting" {
+            Write-Host ('{0}: OK [diag: {1}]' -f $label, $decoded.diagnostics)
+        }
+        "p8_get_field_properties" {
+            $fmt = $decoded.properties.format
+            $dp = $decoded.properties.decimalPlaces
+            $desc = $decoded.properties.description
+            $dv = $decoded.properties.defaultValue
+            if ("$fmt" -ne "Currency") {
+                $failed++
+                $p8Failed = $true
+                Write-Host ('{0}: FAIL expected format=Currency, got {1}' -f $label, $fmt)
+            }
+            if ($dp -ne 2) {
+                $failed++
+                $p8Failed = $true
+                Write-Host ('{0}: FAIL expected decimalPlaces=2, got {1}' -f $label, $dp)
+            }
+            if ("$desc" -ne "Unit price") {
+                $failed++
+                $p8Failed = $true
+                Write-Host ('{0}: FAIL expected description="Unit price", got {1}' -f $label, $desc)
+            }
+            if ("$dv" -ne "0") {
+                $failed++
+                $p8Failed = $true
+                Write-Host ('{0}: FAIL expected defaultValue=0, got {1}' -f $label, $dv)
+            }
+        }
+        "p8_get_report_sorting" {
+            $ob = $decoded.orderBy
+            $obon = $decoded.orderByOn
+            if ("$ob" -notmatch '\[emp_name\]') {
+                $failed++
+                $p8Failed = $true
+                Write-Host ('{0}: FAIL expected orderBy containing [emp_name], got {1}' -f $label, $ob)
+            }
+            if ($obon -ne $true) {
+                $failed++
+                $p8Failed = $true
+                Write-Host ('{0}: FAIL expected orderByOn=true, got {1}' -f $label, $obon)
+            }
+        }
+        "p8_get_form_runtime_state" {
+            $rs = $decoded.record_source
+            if ("$rs" -ne "mcp_p8_test") {
+                $failed++
+                $p8Failed = $true
+                Write-Host ('{0}: FAIL expected record_source=mcp_p8_test, got {1}' -f $label, $rs)
+            }
+        }
+    }
+
+    if (-not $p8Failed) {
+        Write-Host ('{0}: OK' -f $label)
+    }
+}
+
 Write-Host "=== End Feature Gap Tests ==="
 Write-Host ""
 
