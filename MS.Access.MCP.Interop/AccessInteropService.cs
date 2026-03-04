@@ -950,13 +950,32 @@ namespace MS.Access.MCP.Interop
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
             EnsureOleDbConnection();
 
-            var fieldDefinitions = new List<string>();
+            // Separate fields into DDL-compatible and DAO-only categories
+            var ddlFields = new List<FieldInfo>();
+            var daoOnlyFields = new List<FieldInfo>();
+
             foreach (var field in fields)
             {
-                var fieldDef = $"[{field.Name}] {field.Type}";
-                if (field.Size > 0 && field.Type.ToLower() == "text")
-                    fieldDef += $"({field.Size})";
-                if (field.Required)
+                if (IsDaoOnlyFieldType(field.Type))
+                    daoOnlyFields.Add(field);
+                else
+                    ddlFields.Add(field);
+            }
+
+            if (ddlFields.Count == 0 && daoOnlyFields.Count > 0)
+            {
+                // Need at least one DDL field to create the table; create a temp placeholder
+                // Actually, create the table via DAO entirely
+                CreateTableViaDaoOnly(tableName, fields);
+                return;
+            }
+
+            var fieldDefinitions = new List<string>();
+            foreach (var field in ddlFields)
+            {
+                var typeDeclaration = BuildAccessDataTypeDeclaration(field.Type, field.Size, nameof(field.Type), nameof(field.Size));
+                var fieldDef = $"[{field.Name}] {typeDeclaration}";
+                if (field.Required && typeDeclaration != "COUNTER")
                     fieldDef += " NOT NULL";
                 fieldDefinitions.Add(fieldDef);
             }
@@ -964,6 +983,43 @@ namespace MS.Access.MCP.Interop
             var createSql = $"CREATE TABLE [{tableName}] ({string.Join(", ", fieldDefinitions)})";
             using var command = CreateCommand(createSql);
             command.ExecuteNonQuery();
+
+            // Add DAO-only fields (hyperlink) in a single COM operation.
+            // Hyperlink fields must be created via DAO because the dbHyperlinkField attribute (0x8000)
+            // can only be set BEFORE the field is appended to the Fields collection.
+            if (daoOnlyFields.Count > 0)
+            {
+                ExecuteComOperation(accessApp =>
+                {
+                    var tableDef = FindTableDefWithRetry(accessApp, tableName)
+                        ?? throw new InvalidOperationException($"Table not found after DDL create: {tableName}");
+                    var fieldsColl = TryGetDynamicProperty(tableDef, "Fields")
+                        ?? throw new InvalidOperationException("DAO Fields collection is unavailable.");
+
+                    foreach (var field in daoOnlyFields)
+                    {
+                        var daoType = GetDaoFieldTypeCode(field.Type);
+                        var newField = InvokeDynamicMethod(tableDef, "CreateField", field.Name, daoType)
+                            ?? throw new InvalidOperationException($"Failed to create DAO field: {field.Name}");
+
+                        if (field.Required)
+                            SetDynamicProperty(newField, "Required", true);
+
+                        // Set hyperlink attribute before appending
+                        if (IsHyperlinkType(field.Type))
+                        {
+                            var currentAttributes = ToInt32(TryGetDynamicProperty(newField, "Attributes"));
+                            SetDynamicProperty(newField, "Attributes", currentAttributes | 0x8000);
+                        }
+
+                        _ = InvokeDynamicMethod(fieldsColl, "Append", newField);
+                    }
+                },
+                requireExclusive: false,
+                releaseOleDb: true);
+
+                RefreshOleDbConnectionAfterSchemaMutation();
+            }
         }
 
         public void DeleteTable(string tableName)
@@ -981,11 +1037,18 @@ namespace MS.Access.MCP.Interop
 
             var normalizedTableName = NormalizeSchemaIdentifier(tableName, nameof(tableName), "Table name is required");
             var normalizedFieldName = NormalizeSchemaIdentifier(field.Name, nameof(field), "Field name is required");
-            var typeDeclaration = BuildAccessDataTypeDeclaration(field.Type, field.Size, nameof(field.Type), nameof(field.Size));
 
             EnsureTableExists(normalizedTableName);
             if (FieldExists(normalizedTableName, normalizedFieldName))
                 throw new InvalidOperationException($"Field already exists: {normalizedTableName}.{normalizedFieldName}");
+
+            if (IsDaoOnlyFieldType(field.Type))
+            {
+                AddFieldViaDaoCreateField(normalizedTableName, field);
+                return;
+            }
+
+            var typeDeclaration = BuildAccessDataTypeDeclaration(field.Type, field.Size, nameof(field.Type), nameof(field.Size));
 
             if (typeDeclaration == "COUNTER" && field.Required)
                 throw new ArgumentException("COUNTER fields cannot be explicitly marked as required.", nameof(field));
@@ -993,6 +1056,9 @@ namespace MS.Access.MCP.Interop
             var notNullClause = field.Required ? " NOT NULL" : string.Empty;
             var sql = $"ALTER TABLE [{EscapeSqlIdentifier(normalizedTableName)}] ADD COLUMN [{EscapeSqlIdentifier(normalizedFieldName)}] {typeDeclaration}{notNullClause}";
             ExecuteSchemaNonQuery(sql);
+
+            if (IsHyperlinkType(field.Type))
+                SetFieldHyperlinkAttribute(normalizedTableName, normalizedFieldName);
         }
 
         public void AlterField(string tableName, string fieldName, string newType, int size = 0)
@@ -9202,8 +9268,126 @@ namespace MS.Access.MCP.Interop
                 "counter" or "autoincrement" or "identity" => ValidateUnsizedType(size, sizeParamName, "COUNTER"),
                 "binary" => $"BINARY({ValidateSizedType(size, 1, 510, 255, sizeParamName, "BINARY")})",
                 "varbinary" => $"VARBINARY({ValidateSizedType(size, 1, 510, 255, sizeParamName, "VARBINARY")})",
+                "oleobject" or "ole" or "image" or "longbinary" => ValidateUnsizedType(size, sizeParamName, "LONGBINARY"),
+                "bigint" or "largenumber" => ValidateUnsizedType(size, sizeParamName, "BIGINT"),
+                "hyperlink" => ValidateUnsizedType(size, sizeParamName, "LONGTEXT"),
                 _ => throw new ArgumentException($"Unsupported Access field type: {typeName}", typeParamName)
             };
+        }
+
+        private static bool IsHyperlinkType(string typeName)
+        {
+            var normalized = typeName?.Trim().ToLowerInvariant();
+            return normalized == "hyperlink";
+        }
+
+        private static bool IsDaoOnlyFieldType(string typeName)
+        {
+            // Hyperlink fields must be created via DAO because the dbHyperlinkField attribute (0x8000)
+            // can only be set on a DAO Field object BEFORE it is appended to the Fields collection.
+            var normalized = typeName?.Trim().ToLowerInvariant();
+            return normalized == "hyperlink";
+        }
+
+        private static int GetDaoFieldTypeCode(string typeName)
+        {
+            var normalized = typeName.Trim().ToLowerInvariant();
+            return normalized switch
+            {
+                "oleobject" or "ole" or "image" or "longbinary" => 11, // dbLongBinary
+                "bigint" or "largenumber" => 16,                       // dbBigInt
+                "hyperlink" => 12,                                     // dbMemo (LONGTEXT) — hyperlink is memo with attribute
+                _ => throw new ArgumentException($"No DAO type code for: {typeName}")
+            };
+        }
+
+        private void AddFieldViaDaoCreateField(string tableName, FieldInfo field)
+        {
+            var daoType = GetDaoFieldTypeCode(field.Type);
+            var isHyperlink = IsHyperlinkType(field.Type);
+
+            ExecuteComOperation(accessApp =>
+            {
+                var tableDef = FindTableDefWithRetry(accessApp, tableName)
+                    ?? throw new InvalidOperationException($"Table not found: {tableName}");
+                var fields = TryGetDynamicProperty(tableDef, "Fields")
+                    ?? throw new InvalidOperationException("DAO Fields collection is unavailable.");
+
+                var newField = InvokeDynamicMethod(tableDef, "CreateField", field.Name, daoType)
+                    ?? throw new InvalidOperationException($"Failed to create field: {field.Name}");
+
+                if (field.Required)
+                    SetDynamicProperty(newField, "Required", true);
+
+                // Hyperlink attribute must be set BEFORE appending to Fields collection
+                if (isHyperlink)
+                {
+                    var currentAttributes = ToInt32(TryGetDynamicProperty(newField, "Attributes"));
+                    SetDynamicProperty(newField, "Attributes", currentAttributes | 0x8000); // dbHyperlinkField
+                }
+
+                _ = InvokeDynamicMethod(fields, "Append", newField);
+            },
+            requireExclusive: false,
+            releaseOleDb: true);
+
+            RefreshOleDbConnectionAfterSchemaMutation();
+        }
+
+        private void CreateTableViaDaoOnly(string tableName, List<FieldInfo> fields)
+        {
+            ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+                var tableDefs = TryGetDynamicProperty(currentDb, "TableDefs")
+                    ?? throw new InvalidOperationException("DAO TableDefs collection is unavailable.");
+
+                var tableDef = InvokeDynamicMethod(currentDb, "CreateTableDef", tableName)
+                    ?? throw new InvalidOperationException($"Failed to create TableDef: {tableName}");
+                var fieldsColl = TryGetDynamicProperty(tableDef, "Fields")
+                    ?? throw new InvalidOperationException("DAO Fields collection is unavailable.");
+
+                foreach (var field in fields)
+                {
+                    var daoType = GetDaoFieldTypeCode(field.Type);
+                    var newField = InvokeDynamicMethod(tableDef, "CreateField", field.Name, daoType)
+                        ?? throw new InvalidOperationException($"Failed to create field: {field.Name}");
+
+                    if (field.Required)
+                        SetDynamicProperty(newField, "Required", true);
+
+                    if (IsHyperlinkType(field.Type))
+                    {
+                        var currentAttributes = ToInt32(TryGetDynamicProperty(newField, "Attributes"));
+                        SetDynamicProperty(newField, "Attributes", currentAttributes | 0x8000);
+                    }
+
+                    _ = InvokeDynamicMethod(fieldsColl, "Append", newField);
+                }
+
+                _ = InvokeDynamicMethod(tableDefs, "Append", tableDef);
+            },
+            requireExclusive: false,
+            releaseOleDb: true);
+
+            RefreshOleDbConnectionAfterSchemaMutation();
+        }
+
+        private void SetFieldHyperlinkAttribute(string tableName, string fieldName)
+        {
+            ExecuteComOperation(accessApp =>
+            {
+                var field = ResolveField(accessApp, tableName, fieldName);
+                var currentAttributes = ToInt32(TryGetDynamicProperty(field, "Attributes"));
+                const int dbHyperlinkField = 0x8000; // 32768
+                if ((currentAttributes & dbHyperlinkField) == 0)
+                {
+                    SetDynamicProperty(field, "Attributes", currentAttributes | dbHyperlinkField);
+                }
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
         }
 
         private void RenameTableViaOleDbCopy(string sourceTableName, string targetTableName)
@@ -13340,6 +13524,376 @@ namespace MS.Access.MCP.Interop
             };
         }
 
+        // ── Phase 2: Query Enhancement ──
+
+        public void SetQueryAdvancedProperties(string queryName, string? connect = null, bool? returnsRecords = null, int? odbcTimeout = null, int? maxRecords = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(queryName)) throw new ArgumentException("Query name is required.", nameof(queryName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+                var queryDef = FindQueryDef(currentDb, queryName)
+                    ?? throw new InvalidOperationException($"Query not found: {queryName}");
+
+                if (connect != null)
+                    SetDynamicProperty(queryDef, "Connect", connect);
+
+                if (returnsRecords.HasValue)
+                    SetDynamicProperty(queryDef, "ReturnsRecords", returnsRecords.Value);
+
+                if (odbcTimeout.HasValue)
+                    SetDynamicProperty(queryDef, "ODBCTimeout", odbcTimeout.Value);
+
+                if (maxRecords.HasValue)
+                    SetDynamicProperty(queryDef, "MaxRecords", maxRecords.Value);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void CreatePassthroughQuery(string queryName, string sql, string connect, bool returnsRecords = true)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(queryName)) throw new ArgumentException("Query name is required.", nameof(queryName));
+            if (string.IsNullOrWhiteSpace(sql)) throw new ArgumentException("SQL is required.", nameof(sql));
+            if (string.IsNullOrWhiteSpace(connect)) throw new ArgumentException("Connect string is required for pass-through queries.", nameof(connect));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+
+                if (FindQueryDef(currentDb, queryName) != null)
+                    throw new InvalidOperationException($"Query already exists: {queryName}");
+
+                // For pass-through queries, create with name only (no SQL param),
+                // set Connect first so Jet knows not to parse SQL locally, then set SQL.
+                var queryDef = InvokeDynamicMethod(currentDb, "CreateQueryDef", queryName)
+                    ?? throw new InvalidOperationException($"Failed to create QueryDef: {queryName}");
+
+                SetDynamicProperty(queryDef, "Connect", connect);
+                SetDynamicProperty(queryDef, "SQL", sql);
+                SetDynamicProperty(queryDef, "ReturnsRecords", returnsRecords);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        // ── Phase 3: Batch Linked Table Refresh ──
+
+        public RefreshAllLinkedTablesResult RefreshAllLinkedTables(string? newBasePath = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            var result = ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+                var tableDefs = TryGetDynamicProperty(currentDb, "TableDefs")
+                    ?? throw new InvalidOperationException("DAO TableDefs collection is unavailable.");
+
+                var refreshed = 0;
+                var failedCount = 0;
+                var errors = new List<string>();
+
+                foreach (var tableDef in tableDefs)
+                {
+                    var tableName = SafeToString(TryGetDynamicProperty(tableDef, "Name"));
+                    if (string.IsNullOrWhiteSpace(tableName) || IsSystemOrTemporaryTableName(tableName))
+                        continue;
+
+                    var connectString = SafeToString(TryGetDynamicProperty(tableDef, "Connect"));
+                    if (string.IsNullOrWhiteSpace(connectString))
+                        continue; // not a linked table
+
+                    try
+                    {
+                        if (!string.IsNullOrWhiteSpace(newBasePath))
+                        {
+                            var updatedConnect = RebuildConnectStringWithNewPath(connectString, newBasePath);
+                            SetDynamicProperty(tableDef, "Connect", updatedConnect);
+                        }
+
+                        _ = InvokeDynamicMethod(tableDef, "RefreshLink");
+                        refreshed++;
+                    }
+                    catch (Exception ex)
+                    {
+                        failedCount++;
+                        errors.Add($"{tableName}: {ex.Message}");
+                    }
+                }
+
+                return new RefreshAllLinkedTablesResult
+                {
+                    Refreshed = refreshed,
+                    Failed = failedCount,
+                    Errors = errors,
+                    NewBasePath = newBasePath
+                };
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+
+            RefreshOleDbConnectionAfterSchemaMutation();
+            return result;
+        }
+
+        private static string RebuildConnectStringWithNewPath(string connectString, string newBasePath)
+        {
+            // Replace DATABASE=<path> portion with new base path
+            var match = Regex.Match(connectString, @"(DATABASE=)([^;]+)", RegexOptions.IgnoreCase);
+            if (!match.Success)
+                return connectString;
+
+            var oldDbPath = match.Groups[2].Value.Trim();
+            var fileName = Path.GetFileName(oldDbPath);
+            var newDbPath = Path.Combine(newBasePath, fileName);
+            return connectString.Substring(0, match.Groups[2].Index) + newDbPath + connectString.Substring(match.Groups[2].Index + match.Groups[2].Length);
+        }
+
+        // ── Phase 4: Database Operations ──
+
+        public DatabaseConvertResult ConvertDatabase(string sourceDatabasePath, string destinationDatabasePath, string targetFormat = "accdb")
+        {
+            var normalizedSourcePath = NormalizeDatabasePath(sourceDatabasePath, nameof(sourceDatabasePath), requireExists: true);
+            var normalizedDestinationPath = NormalizeDatabasePath(destinationDatabasePath, nameof(destinationDatabasePath), requireExists: false);
+
+            EnsureDistinctDatabasePaths(normalizedSourcePath, normalizedDestinationPath, nameof(sourceDatabasePath), nameof(destinationDatabasePath));
+
+            var destinationDirectory = Path.GetDirectoryName(normalizedDestinationPath);
+            if (!string.IsNullOrWhiteSpace(destinationDirectory))
+                Directory.CreateDirectory(destinationDirectory);
+
+            if (File.Exists(normalizedDestinationPath))
+                throw new IOException($"Destination database already exists: {normalizedDestinationPath}");
+
+            // Version constants for DBEngine.CompactDatabase locale/version params
+            // 120 = ACCDB (Access 2007+), 64 = MDB2000
+            var normalizedFormat = targetFormat.Trim().ToLowerInvariant();
+            var versionConstant = normalizedFormat switch
+            {
+                "accdb" or "access2007" or "120" => 120,
+                "mdb2000" or "mdb" or "64" => 64,
+                _ => throw new ArgumentException($"Unsupported target format: {targetFormat}. Use 'accdb' or 'mdb2000'.", nameof(targetFormat))
+            };
+
+            return ExecuteWithConnectedDatabaseReleased(
+                normalizedSourcePath,
+                nameof(ConvertDatabase),
+                () =>
+                {
+                    // Use CompactDatabase with version param to convert format
+                    ExecuteWithTemporaryAccessApplication(accessApp =>
+                    {
+                        // Access.Application.CompactRepair doesn't support version conversion,
+                        // but DBEngine.CompactDatabase does. Access the DBEngine via the application.
+                        var dbEngine = TryGetDynamicProperty(accessApp, "DBEngine")
+                            ?? throw new InvalidOperationException("DBEngine is unavailable.");
+
+                        // DBEngine.CompactDatabase(srcName, dstName, dstLocale, options, srcLocale)
+                        // options parameter accepts the version constant
+                        _ = InvokeDynamicMethod(dbEngine, "CompactDatabase",
+                            normalizedSourcePath, normalizedDestinationPath,
+                            Type.Missing, versionConstant);
+                    });
+
+                    if (!File.Exists(normalizedDestinationPath))
+                        throw new InvalidOperationException($"Database conversion did not produce destination: {normalizedDestinationPath}");
+
+                    var sourceInfo = new FileInfo(normalizedSourcePath);
+                    var destInfo = new FileInfo(normalizedDestinationPath);
+
+                    return new DatabaseConvertResult
+                    {
+                        SourceDatabasePath = normalizedSourcePath,
+                        DestinationDatabasePath = normalizedDestinationPath,
+                        TargetFormat = normalizedFormat,
+                        SourceSizeBytes = sourceInfo.Exists ? sourceInfo.Length : 0,
+                        DestinationSizeBytes = destInfo.Exists ? destInfo.Length : 0
+                    };
+                });
+        }
+
+        public SplitDatabaseResult SplitDatabase(string backendDatabasePath)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(backendDatabasePath)) throw new ArgumentException("Backend database path is required.", nameof(backendDatabasePath));
+
+            var normalizedBackendPath = Path.GetFullPath(backendDatabasePath);
+
+            if (!string.IsNullOrWhiteSpace(_currentDatabasePath) && PathsMatch(_currentDatabasePath, normalizedBackendPath))
+                throw new InvalidOperationException("Backend database path cannot be the same as the current database.");
+
+            var tablesTransferred = new List<string>();
+            var failedTables = new List<string>();
+            var errors = new List<string>();
+
+            // Create backend database if it doesn't exist
+            if (!File.Exists(normalizedBackendPath))
+            {
+                CreateDatabase(normalizedBackendPath);
+            }
+
+            // Get list of local (non-linked, non-system) tables
+            var localTables = ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+                var tableDefs = TryGetDynamicProperty(currentDb, "TableDefs")
+                    ?? throw new InvalidOperationException("DAO TableDefs collection is unavailable.");
+
+                var tables = new List<string>();
+                foreach (var tableDef in tableDefs)
+                {
+                    var name = SafeToString(TryGetDynamicProperty(tableDef, "Name"));
+                    if (string.IsNullOrWhiteSpace(name) || IsSystemOrTemporaryTableName(name))
+                        continue;
+
+                    var connectStr = SafeToString(TryGetDynamicProperty(tableDef, "Connect"));
+                    if (!string.IsNullOrWhiteSpace(connectStr))
+                        continue; // already linked
+
+                    tables.Add(name);
+                }
+                return tables;
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+
+            foreach (var tableName in localTables)
+            {
+                try
+                {
+                    // Export table to backend
+                    TransferDatabase("acExport", "Microsoft Access", normalizedBackendPath, "acTable", tableName, tableName, false, false);
+
+                    // Delete local table
+                    DeleteTable(tableName);
+
+                    // Create link to backend
+                    LinkTable(tableName, normalizedBackendPath, tableName);
+
+                    tablesTransferred.Add(tableName);
+                }
+                catch (Exception ex)
+                {
+                    failedTables.Add(tableName);
+                    errors.Add($"{tableName}: {ex.Message}");
+                }
+            }
+
+            return new SplitDatabaseResult
+            {
+                BackendPath = normalizedBackendPath,
+                TablesTransferred = tablesTransferred,
+                Failed = failedTables.Count,
+                Errors = errors
+            };
+        }
+
+        // ── Phase 5: Property & Calculated Field Enhancements ──
+
+        public TableCustomPropertyResult SetTableCustomProperty(string tableName, string propertyName, object? value, int? daoType = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(propertyName)) throw new ArgumentException("Property name is required.", nameof(propertyName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var tableDef = FindTableDefWithRetry(accessApp, tableName)
+                    ?? throw new InvalidOperationException($"Table not found: {tableName}");
+                SetDaoPropertyValue(tableDef, propertyName, value, daoType, createIfMissing: true);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+
+            return new TableCustomPropertyResult
+            {
+                TableName = tableName,
+                PropertyName = propertyName,
+                Value = value
+            };
+        }
+
+        public TableCustomPropertyResult GetTableCustomProperty(string tableName, string propertyName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(propertyName)) throw new ArgumentException("Property name is required.", nameof(propertyName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var tableDef = FindTableDefWithRetry(accessApp, tableName)
+                    ?? throw new InvalidOperationException($"Table not found: {tableName}");
+
+                var propValue = GetDaoPropertyValue(tableDef, propertyName);
+                return new TableCustomPropertyResult
+                {
+                    TableName = tableName,
+                    PropertyName = propertyName,
+                    Value = NormalizeValue(propValue)
+                };
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void AddCalculatedField(string tableName, string fieldName, string expression, string resultType = "double")
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(fieldName)) throw new ArgumentException("Field name is required.", nameof(fieldName));
+            if (string.IsNullOrWhiteSpace(expression)) throw new ArgumentException("Expression is required.", nameof(expression));
+
+            var normalizedTableName = NormalizeSchemaIdentifier(tableName, nameof(tableName), "Table name is required");
+            var normalizedFieldName = NormalizeSchemaIdentifier(fieldName, nameof(fieldName), "Field name is required");
+
+            EnsureTableExists(normalizedTableName);
+            if (FieldExists(normalizedTableName, normalizedFieldName))
+                throw new InvalidOperationException($"Field already exists: {normalizedTableName}.{normalizedFieldName}");
+
+            // Map result type to DAO type constant
+            var normalizedResultType = resultType.Trim().ToLowerInvariant();
+            var daoFieldType = normalizedResultType switch
+            {
+                "double" or "real" => 7,            // dbDouble
+                "single" or "float" => 6,           // dbSingle
+                "long" or "integer" or "int" => 4,  // dbLong
+                "currency" or "money" => 5,         // dbCurrency
+                "text" or "string" => 10,           // dbText
+                "boolean" or "yesno" or "bool" => 1, // dbBoolean
+                "datetime" or "date" => 8,          // dbDate
+                _ => 7 // default to dbDouble
+            };
+
+            ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+                var tableDef = FindTableDefWithRetry(accessApp, normalizedTableName)
+                    ?? throw new InvalidOperationException($"Table not found: {normalizedTableName}");
+                var fields = TryGetDynamicProperty(tableDef, "Fields")
+                    ?? throw new InvalidOperationException("DAO Fields collection is unavailable.");
+
+                // Create field with DAO — set Expression BEFORE appending
+                var field = InvokeDynamicMethod(tableDef, "CreateField", normalizedFieldName, daoFieldType)
+                    ?? throw new InvalidOperationException($"Failed to create field: {normalizedFieldName}");
+
+                SetDynamicProperty(field, "Expression", expression);
+
+                _ = InvokeDynamicMethod(fields, "Append", field);
+            },
+            requireExclusive: false,
+            releaseOleDb: true);
+
+            RefreshOleDbConnectionAfterSchemaMutation();
+        }
+
     #endregion
 
     } // end class AccessInteropService
@@ -14205,6 +14759,38 @@ namespace MS.Access.MCP.Interop
     {
         public Dictionary<string, object?> Values { get; set; } = new();
         public int Count { get; set; }
+    }
+
+    public class RefreshAllLinkedTablesResult
+    {
+        public int Refreshed { get; set; }
+        public int Failed { get; set; }
+        public List<string> Errors { get; set; } = new();
+        public string? NewBasePath { get; set; }
+    }
+
+    public class DatabaseConvertResult
+    {
+        public string SourceDatabasePath { get; set; } = "";
+        public string DestinationDatabasePath { get; set; } = "";
+        public string TargetFormat { get; set; } = "";
+        public long SourceSizeBytes { get; set; }
+        public long DestinationSizeBytes { get; set; }
+    }
+
+    public class SplitDatabaseResult
+    {
+        public string BackendPath { get; set; } = "";
+        public List<string> TablesTransferred { get; set; } = new();
+        public int Failed { get; set; }
+        public List<string> Errors { get; set; } = new();
+    }
+
+    public class TableCustomPropertyResult
+    {
+        public string TableName { get; set; } = "";
+        public string PropertyName { get; set; } = "";
+        public object? Value { get; set; }
     }
 
     #endregion

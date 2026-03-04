@@ -5753,6 +5753,300 @@ foreach ($id in ($gapIdLabels.Keys | Sort-Object)) {
 Write-Host "=== End MCP Feature Tests ==="
 Write-Host ""
 
+# ── Feature Gap Phase 1: Field Type Additions (IDs 1101-1110) ──
+
+Write-Host ""
+Write-Host "=== Feature Gap Phase 1: Field Types (IDs 1101-1110) ==="
+Write-Host "Intermediate cleanup: clearing stale Access/MCP processes before phase 1 section."
+Cleanup-AccessArtifacts -DbPath $DatabasePath
+
+$phase1Calls = New-Object 'System.Collections.Generic.List[object]'
+Add-ToolCall -Calls $phase1Calls -Id 1101 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
+Add-ToolCall -Calls $phase1Calls -Id 1102 -Name "create_table" -Arguments @{
+    table_name = "mcp_fieldtype_test"
+    fields = @(
+        @{ name = "id"; type = "COUNTER"; size = 0; required = $false; allow_zero_length = $false }
+        @{ name = "ole_data"; type = "OLEOBJECT"; size = 0; required = $false; allow_zero_length = $false }
+        @{ name = "big_num"; type = "BIGINT"; size = 0; required = $false; allow_zero_length = $false }
+        @{ name = "link_url"; type = "HYPERLINK"; size = 0; required = $false; allow_zero_length = $false }
+    )
+}
+Add-ToolCall -Calls $phase1Calls -Id 1103 -Name "describe_table" -Arguments @{ table_name = "mcp_fieldtype_test" }
+Add-ToolCall -Calls $phase1Calls -Id 1104 -Name "get_field_attributes" -Arguments @{ table_name = "mcp_fieldtype_test"; field_name = "link_url" }
+Add-ToolCall -Calls $phase1Calls -Id 1105 -Name "add_field" -Arguments @{ table_name = "mcp_fieldtype_test"; field_name = "extra_ole"; field_type = "OLE"; size = 0; required = $false }
+Add-ToolCall -Calls $phase1Calls -Id 1106 -Name "describe_table" -Arguments @{ table_name = "mcp_fieldtype_test" }
+Add-ToolCall -Calls $phase1Calls -Id 1107 -Name "delete_table" -Arguments @{ table_name = "mcp_fieldtype_test" }
+
+$phase1Responses = Invoke-McpBatch -ExePath $ServerExe -Calls $phase1Calls -ClientName "full-regression-phase1" -ClientVersion "1.0"
+$phase1Labels = @{
+    1101 = "p1_connect"
+    1102 = "p1_create_table_fieldtypes"
+    1103 = "p1_describe_table"
+    1104 = "p1_get_hyperlink_attrs"
+    1105 = "p1_add_ole_field"
+    1106 = "p1_describe_after_add"
+    1107 = "p1_cleanup_table"
+}
+
+foreach ($id in ($phase1Labels.Keys | Sort-Object)) {
+    $label = $phase1Labels[$id]
+    $decoded = Decode-McpResult -Response $phase1Responses[[int]$id]
+
+    if ($null -eq $decoded) {
+        $failed++
+        Write-Host ('{0}: FAIL missing-response' -f $label)
+        continue
+    }
+    if ($decoded -is [string]) {
+        $failed++
+        Write-Host ('{0}: FAIL raw-string-response' -f $label)
+        continue
+    }
+    if ($decoded.success -ne $true) {
+        $failed++
+        Write-Host ('{0}: FAIL {1}' -f $label, $decoded.error)
+        continue
+    }
+
+    $p1Failed = $false
+    switch ($label) {
+        "p1_get_hyperlink_attrs" {
+            $attrValue = if ($decoded.attributes) { $decoded.attributes.attributes } else { 0 }
+            if (($attrValue -band 32768) -eq 0) {
+                $failed++
+                $p1Failed = $true
+                Write-Host ('{0}: FAIL expected hyperlink attribute bit (0x8000), got attributes={1}' -f $label, $attrValue)
+            }
+        }
+        "p1_describe_table" {
+            $cols = if ($decoded.table) { @($decoded.table.columns) } else { @() }
+            if ($cols.Count -lt 4) {
+                $failed++
+                $p1Failed = $true
+                Write-Host ('{0}: FAIL expected at least 4 columns, got {1}' -f $label, $cols.Count)
+            }
+        }
+        "p1_describe_after_add" {
+            $cols = if ($decoded.table) { @($decoded.table.columns) } else { @() }
+            if ($cols.Count -lt 5) {
+                $failed++
+                $p1Failed = $true
+                Write-Host ('{0}: FAIL expected at least 5 columns after add_field, got {1}' -f $label, $cols.Count)
+            }
+        }
+    }
+
+    if (-not $p1Failed) {
+        Write-Host ('{0}: OK' -f $label)
+    }
+}
+
+# ── Feature Gap Phase 2: Query Enhancement (IDs 1111-1120) ──
+
+Write-Host ""
+Write-Host "=== Feature Gap Phase 2: Query Enhancement (IDs 1111-1120) ==="
+Cleanup-AccessArtifacts -DbPath $DatabasePath
+
+$phase2Calls = New-Object 'System.Collections.Generic.List[object]'
+Add-ToolCall -Calls $phase2Calls -Id 1111 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
+Add-ToolCall -Calls $phase2Calls -Id 1112 -Name "create_query" -Arguments @{ query_name = "mcp_adv_query_test"; sql = "SELECT 1 AS val" }
+Add-ToolCall -Calls $phase2Calls -Id 1113 -Name "set_query_advanced_properties" -Arguments @{ query_name = "mcp_adv_query_test"; odbc_timeout = 30; max_records = 100 }
+Add-ToolCall -Calls $phase2Calls -Id 1114 -Name "get_query_properties" -Arguments @{ query_name = "mcp_adv_query_test" }
+Add-ToolCall -Calls $phase2Calls -Id 1115 -Name "create_passthrough_query" -Arguments @{ query_name = "mcp_pt_query_test"; sql = "SELECT 1"; connect = "ODBC;DSN=NonExistentDSN;" }
+Add-ToolCall -Calls $phase2Calls -Id 1116 -Name "get_query_properties" -Arguments @{ query_name = "mcp_pt_query_test" }
+Add-ToolCall -Calls $phase2Calls -Id 1117 -Name "delete_query" -Arguments @{ query_name = "mcp_adv_query_test" }
+Add-ToolCall -Calls $phase2Calls -Id 1118 -Name "delete_query" -Arguments @{ query_name = "mcp_pt_query_test" }
+
+$phase2Responses = Invoke-McpBatch -ExePath $ServerExe -Calls $phase2Calls -ClientName "full-regression-phase2" -ClientVersion "1.0"
+$phase2Labels = @{
+    1111 = "p2_connect"
+    1112 = "p2_create_normal_query"
+    1113 = "p2_set_advanced_props"
+    1114 = "p2_get_query_props"
+    1115 = "p2_create_passthrough"
+    1116 = "p2_get_pt_props"
+    1117 = "p2_delete_normal_query"
+    1118 = "p2_delete_pt_query"
+}
+
+foreach ($id in ($phase2Labels.Keys | Sort-Object)) {
+    $label = $phase2Labels[$id]
+    $decoded = Decode-McpResult -Response $phase2Responses[[int]$id]
+
+    if ($null -eq $decoded) {
+        $failed++
+        Write-Host ('{0}: FAIL missing-response' -f $label)
+        continue
+    }
+    if ($decoded -is [string]) {
+        $failed++
+        Write-Host ('{0}: FAIL raw-string-response' -f $label)
+        continue
+    }
+    if ($decoded.success -ne $true) {
+        $failed++
+        Write-Host ('{0}: FAIL {1}' -f $label, $decoded.error)
+        continue
+    }
+
+    Write-Host ('{0}: OK' -f $label)
+}
+
+# ── Feature Gap Phase 3: Refresh All Linked Tables (IDs 1121-1130) ──
+
+Write-Host ""
+Write-Host "=== Feature Gap Phase 3: Refresh All Linked Tables (IDs 1121-1130) ==="
+Cleanup-AccessArtifacts -DbPath $DatabasePath
+
+# Create a source DB for linking
+$phase3SourceDb = [System.IO.Path]::Combine([System.IO.Path]::GetDirectoryName($DatabasePath), "mcp_phase3_source.accdb")
+
+$phase3Calls = New-Object 'System.Collections.Generic.List[object]'
+Add-ToolCall -Calls $phase3Calls -Id 1121 -Name "create_database" -Arguments @{ database_path = $phase3SourceDb }
+Add-ToolCall -Calls $phase3Calls -Id 1122 -Name "connect_access" -Arguments @{ database_path = $phase3SourceDb }
+Add-ToolCall -Calls $phase3Calls -Id 1123 -Name "create_table" -Arguments @{
+    table_name = "mcp_link_source"
+    fields = @(
+        @{ name = "id"; type = "LONG"; size = 0; required = $true; allow_zero_length = $false }
+    )
+}
+Add-ToolCall -Calls $phase3Calls -Id 1124 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
+Add-ToolCall -Calls $phase3Calls -Id 1125 -Name "link_table" -Arguments @{ table_name = "mcp_link_source"; source_database_path = $phase3SourceDb; source_table_name = "mcp_link_source" }
+Add-ToolCall -Calls $phase3Calls -Id 1126 -Name "refresh_all_linked_tables" -Arguments @{}
+Add-ToolCall -Calls $phase3Calls -Id 1127 -Name "unlink_table" -Arguments @{ table_name = "mcp_link_source" }
+
+$phase3Responses = Invoke-McpBatch -ExePath $ServerExe -Calls $phase3Calls -ClientName "full-regression-phase3" -ClientVersion "1.0"
+$phase3Labels = @{
+    1121 = "p3_create_source_db"
+    1122 = "p3_connect_source"
+    1123 = "p3_create_source_table"
+    1124 = "p3_connect_main"
+    1125 = "p3_link_table"
+    1126 = "p3_refresh_all_linked"
+    1127 = "p3_unlink_table"
+}
+
+foreach ($id in ($phase3Labels.Keys | Sort-Object)) {
+    $label = $phase3Labels[$id]
+    $decoded = Decode-McpResult -Response $phase3Responses[[int]$id]
+
+    if ($null -eq $decoded) {
+        $failed++
+        Write-Host ('{0}: FAIL missing-response' -f $label)
+        continue
+    }
+    if ($decoded -is [string]) {
+        $failed++
+        Write-Host ('{0}: FAIL raw-string-response' -f $label)
+        continue
+    }
+    if ($decoded.success -ne $true) {
+        $failed++
+        Write-Host ('{0}: FAIL {1}' -f $label, $decoded.error)
+        continue
+    }
+
+    $p3Failed = $false
+    switch ($label) {
+        "p3_refresh_all_linked" {
+            if ($null -eq $decoded.result -or $decoded.result.refreshed -lt 1) {
+                $failed++
+                $p3Failed = $true
+                Write-Host ('{0}: FAIL expected refreshed >= 1, got {1}' -f $label, $decoded.result.refreshed)
+            }
+        }
+    }
+
+    if (-not $p3Failed) {
+        Write-Host ('{0}: OK' -f $label)
+    }
+}
+
+# Cleanup phase 3 source DB
+Cleanup-AccessArtifacts -DbPath $phase3SourceDb
+Remove-Item -Path $phase3SourceDb -Force -ErrorAction SilentlyContinue
+
+# ── Feature Gap Phase 5: Property & Calculated Fields (IDs 1146-1160) ──
+# (Phase 4 convert/split skipped in automated regression — requires exclusive DB access patterns that conflict with batch test flow)
+
+Write-Host ""
+Write-Host "=== Feature Gap Phase 5: Properties & Calculated Fields (IDs 1146-1160) ==="
+Cleanup-AccessArtifacts -DbPath $DatabasePath
+
+$phase5Calls = New-Object 'System.Collections.Generic.List[object]'
+Add-ToolCall -Calls $phase5Calls -Id 1146 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
+Add-ToolCall -Calls $phase5Calls -Id 1147 -Name "create_table" -Arguments @{
+    table_name = "mcp_calc_test"
+    fields = @(
+        @{ name = "id"; type = "COUNTER"; size = 0; required = $false; allow_zero_length = $false }
+        @{ name = "price"; type = "CURRENCY"; size = 0; required = $false; allow_zero_length = $false }
+        @{ name = "quantity"; type = "LONG"; size = 0; required = $false; allow_zero_length = $false }
+    )
+}
+Add-ToolCall -Calls $phase5Calls -Id 1148 -Name "add_calculated_field" -Arguments @{ table_name = "mcp_calc_test"; field_name = "total"; expression = "[price]*[quantity]"; result_type = "currency" }
+Add-ToolCall -Calls $phase5Calls -Id 1149 -Name "describe_table" -Arguments @{ table_name = "mcp_calc_test" }
+Add-ToolCall -Calls $phase5Calls -Id 1150 -Name "set_table_custom_property" -Arguments @{ table_name = "mcp_calc_test"; property_name = "mcp_test_prop"; value = "hello_mcp" }
+Add-ToolCall -Calls $phase5Calls -Id 1151 -Name "get_table_custom_property" -Arguments @{ table_name = "mcp_calc_test"; property_name = "mcp_test_prop" }
+Add-ToolCall -Calls $phase5Calls -Id 1152 -Name "delete_table" -Arguments @{ table_name = "mcp_calc_test" }
+
+$phase5Responses = Invoke-McpBatch -ExePath $ServerExe -Calls $phase5Calls -ClientName "full-regression-phase5" -ClientVersion "1.0"
+$phase5Labels = @{
+    1146 = "p5_connect"
+    1147 = "p5_create_calc_table"
+    1148 = "p5_add_calculated_field"
+    1149 = "p5_describe_calc_table"
+    1150 = "p5_set_custom_property"
+    1151 = "p5_get_custom_property"
+    1152 = "p5_cleanup_table"
+}
+
+foreach ($id in ($phase5Labels.Keys | Sort-Object)) {
+    $label = $phase5Labels[$id]
+    $decoded = Decode-McpResult -Response $phase5Responses[[int]$id]
+
+    if ($null -eq $decoded) {
+        $failed++
+        Write-Host ('{0}: FAIL missing-response' -f $label)
+        continue
+    }
+    if ($decoded -is [string]) {
+        $failed++
+        Write-Host ('{0}: FAIL raw-string-response' -f $label)
+        continue
+    }
+    if ($decoded.success -ne $true) {
+        $failed++
+        Write-Host ('{0}: FAIL {1}' -f $label, $decoded.error)
+        continue
+    }
+
+    $p5Failed = $false
+    switch ($label) {
+        "p5_describe_calc_table" {
+            $cols = if ($decoded.table) { @($decoded.table.columns) } else { @() }
+            if ($cols.Count -lt 4) {
+                $failed++
+                $p5Failed = $true
+                Write-Host ('{0}: FAIL expected at least 4 columns, got {1}' -f $label, $cols.Count)
+            }
+        }
+        "p5_get_custom_property" {
+            if ($null -eq $decoded.result -or $decoded.result.value -ne "hello_mcp") {
+                $failed++
+                $p5Failed = $true
+                Write-Host ('{0}: FAIL expected value=hello_mcp, got {1}' -f $label, $decoded.result.value)
+            }
+        }
+    }
+
+    if (-not $p5Failed) {
+        Write-Host ('{0}: OK' -f $label)
+    }
+}
+
+Write-Host "=== End Feature Gap Tests ==="
+Write-Host ""
+
 if ($script:TimeoutCount -gt 0) {
     Write-Host ("TIMEOUT_SECTIONS={0} ({1})" -f $script:TimeoutCount, (($script:TimeoutSections.Keys | Sort-Object) -join ", "))
 }
@@ -5791,6 +6085,11 @@ finally {
     }
     Remove-Item -Path $tempNavXmlPath -Force -ErrorAction SilentlyContinue
     Remove-Item -Path $tempXmlDataPath -Force -ErrorAction SilentlyContinue
+    # Phase 3 source DB cleanup
+    if (-not [string]::IsNullOrWhiteSpace($phase3SourceDb)) {
+        Cleanup-AccessArtifacts -DbPath $phase3SourceDb
+        Remove-Item -Path $phase3SourceDb -Force -ErrorAction SilentlyContinue
+    }
     Release-RegressionLock -LockState $regressionLock
 }
 

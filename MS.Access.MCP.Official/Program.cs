@@ -495,7 +495,15 @@ class Program
                 new { name = "export_schema_snapshot", description = "Export complete database schema as a JSON snapshot for version control or diffing. Includes tables, fields, indexes, relationships, queries, and optionally VBA code and small table data.", inputSchema = new { type = "object", properties = new { include_vba = new { type = "boolean", description = "Include VBA module code in snapshot (default false)" }, include_data = new { type = "boolean", description = "Include data from small lookup tables (default false)" }, max_data_rows = new { type = "integer", description = "Max rows per table when include_data is true (default 100)" } }, required = new string[] { } } },
                 new { name = "export_all_vba", description = "Export all VBA modules (standard, class, form, report) as a single JSON bundle. Useful for version control and code review.", inputSchema = new { type = "object", properties = new { }, required = new string[] { } } },
                 new { name = "check_referential_integrity", description = "Find orphaned foreign key records that violate referential integrity. Checks all relationships or a specific table.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string", description = "Optional: check only relationships involving this table. Omit to check all." } }, required = new string[] { } } },
-                new { name = "find_duplicate_records", description = "Find duplicate records in a table based on specified fields.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string", description = "Name of the table to check" }, field_names = new { type = "array", items = new { type = "string" }, description = "Fields to check for uniqueness" }, max_groups = new { type = "integer", description = "Maximum duplicate groups to return (default 50)" } }, required = new string[] { "table_name", "field_names" } } }
+                new { name = "find_duplicate_records", description = "Find duplicate records in a table based on specified fields.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string", description = "Name of the table to check" }, field_names = new { type = "array", items = new { type = "string" }, description = "Fields to check for uniqueness" }, max_groups = new { type = "integer", description = "Maximum duplicate groups to return (default 50)" } }, required = new string[] { "table_name", "field_names" } } },
+                new { name = "set_query_advanced_properties", description = "Set advanced properties on an existing query: Connect, ReturnsRecords, ODBCTimeout, MaxRecords.", inputSchema = new { type = "object", properties = new { query_name = new { type = "string", description = "Name of the query" }, connect = new { type = "string", description = "ODBC connect string" }, returns_records = new { type = "boolean", description = "Whether the query returns records" }, odbc_timeout = new { type = "integer", description = "ODBC timeout in seconds" }, max_records = new { type = "integer", description = "Maximum number of records" } }, required = new string[] { "query_name" } } },
+                new { name = "create_passthrough_query", description = "Create a pass-through query that sends SQL directly to an ODBC data source. Connect string must be set before SQL.", inputSchema = new { type = "object", properties = new { query_name = new { type = "string", description = "Name of the pass-through query" }, sql = new { type = "string", description = "SQL to execute on the remote server" }, connect = new { type = "string", description = "ODBC connect string (e.g. ODBC;DSN=mydsn;)" }, returns_records = new { type = "boolean", description = "Whether the query returns records (default true)" } }, required = new string[] { "query_name", "sql", "connect" } } },
+                new { name = "refresh_all_linked_tables", description = "Refresh links for all linked tables. Optionally update the base path for all links (batch relink).", inputSchema = new { type = "object", properties = new { new_base_path = new { type = "string", description = "New directory path to use for all linked table DATABASE= references. Omit to refresh without changing paths." } }, required = new string[] { } } },
+                new { name = "convert_database", description = "Convert an Access database to a different format (ACCDB or MDB2000) using DBEngine.CompactDatabase.", inputSchema = new { type = "object", properties = new { source_database_path = new { type = "string", description = "Path to the source database" }, destination_database_path = new { type = "string", description = "Path for the converted output database" }, target_format = new { type = "string", description = "Target format: 'accdb' (default) or 'mdb2000'" } }, required = new string[] { "source_database_path", "destination_database_path" } } },
+                new { name = "split_database", description = "Split the current database into a frontend (forms/queries/reports) and backend (tables). Exports all local tables to a backend database and creates links.", inputSchema = new { type = "object", properties = new { backend_database_path = new { type = "string", description = "Path for the backend database containing the tables" } }, required = new string[] { "backend_database_path" } } },
+                new { name = "set_table_custom_property", description = "Set a custom DAO property on a table. Creates the property if it does not exist.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string", description = "Name of the table" }, property_name = new { type = "string", description = "Name of the property" }, value = new { type = "string", description = "Value to set" }, dao_type = new { type = "integer", description = "DAO data type constant (10=dbText, 12=dbMemo). Auto-detected if omitted." } }, required = new string[] { "table_name", "property_name", "value" } } },
+                new { name = "get_table_custom_property", description = "Read a custom DAO property from a table.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string", description = "Name of the table" }, property_name = new { type = "string", description = "Name of the property to read" } }, required = new string[] { "table_name", "property_name" } } },
+                new { name = "add_calculated_field", description = "Add a calculated field to a table using a DAO Expression. The field value is computed from other fields.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string", description = "Name of the table" }, field_name = new { type = "string", description = "Name of the calculated field" }, expression = new { type = "string", description = "Access expression (e.g. [Price]*[Quantity])" }, result_type = new { type = "string", description = "Result data type: double (default), single, long, currency, text, boolean, datetime" } }, required = new string[] { "table_name", "field_name", "expression" } } }
             }
         };
     }
@@ -838,6 +846,15 @@ class Program
             "export_all_vba" => HandleExportAllVba(accessService, toolArguments),
             "check_referential_integrity" => HandleCheckReferentialIntegrity(accessService, toolArguments),
             "find_duplicate_records" => HandleFindDuplicateRecords(accessService, toolArguments),
+            // Feature gap tools
+            "set_query_advanced_properties" => HandleSetQueryAdvancedProperties(accessService, toolArguments),
+            "create_passthrough_query" => HandleCreatePassthroughQuery(accessService, toolArguments),
+            "refresh_all_linked_tables" => HandleRefreshAllLinkedTables(accessService, toolArguments),
+            "convert_database" => HandleConvertDatabase(accessService, toolArguments),
+            "split_database" => HandleSplitDatabase(accessService, toolArguments),
+            "set_table_custom_property" => HandleSetTableCustomProperty(accessService, toolArguments),
+            "get_table_custom_property" => HandleGetTableCustomProperty(accessService, toolArguments),
+            "add_calculated_field" => HandleAddCalculatedField(accessService, toolArguments),
             _ => new { success = false, error = $"Unknown tool: {toolName}" }
         };
     }
@@ -7295,6 +7312,153 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("find_duplicate_records", ex);
+        }
+    }
+
+    // ── Feature Gap Tool Handlers ──
+
+    static object HandleSetQueryAdvancedProperties(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "query_name", out var queryName, out var err)) return err;
+
+            _ = TryGetOptionalString(arguments, "connect", out var connect);
+            bool? returnsRecords = arguments.TryGetProperty("returns_records", out var rr) && (rr.ValueKind == JsonValueKind.True || rr.ValueKind == JsonValueKind.False) ? rr.GetBoolean() : null;
+            int? odbcTimeout = arguments.TryGetProperty("odbc_timeout", out var ot) && ot.TryGetInt32(out var otv) ? otv : null;
+            int? maxRecords = arguments.TryGetProperty("max_records", out var mr) && mr.TryGetInt32(out var mrv) ? mrv : null;
+
+            accessService.SetQueryAdvancedProperties(queryName,
+                string.IsNullOrWhiteSpace(connect) ? null : connect,
+                returnsRecords, odbcTimeout, maxRecords);
+
+            return new { success = true, message = $"Advanced properties updated for query: {queryName}", query_name = queryName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_query_advanced_properties", ex);
+        }
+    }
+
+    static object HandleCreatePassthroughQuery(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "query_name", out var queryName, out var err1)) return err1;
+            if (!TryGetRequiredString(arguments, "sql", out var sql, out var err2)) return err2;
+            if (!TryGetRequiredString(arguments, "connect", out var connect, out var err3)) return err3;
+
+            var returnsRecords = arguments.TryGetProperty("returns_records", out var rr) && rr.ValueKind != JsonValueKind.False;
+
+            accessService.CreatePassthroughQuery(queryName, sql, connect, returnsRecords);
+            return new { success = true, message = $"Created pass-through query: {queryName}", query_name = queryName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("create_passthrough_query", ex);
+        }
+    }
+
+    static object HandleRefreshAllLinkedTables(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            _ = TryGetOptionalString(arguments, "new_base_path", out var newBasePath);
+            var result = accessService.RefreshAllLinkedTables(string.IsNullOrWhiteSpace(newBasePath) ? null : newBasePath);
+            return new { success = true, result };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("refresh_all_linked_tables", ex);
+        }
+    }
+
+    static object HandleConvertDatabase(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "source_database_path", out var sourcePath, out var err1)) return err1;
+            if (!TryGetRequiredString(arguments, "destination_database_path", out var destPath, out var err2)) return err2;
+
+            _ = TryGetOptionalString(arguments, "target_format", out var targetFormat);
+            if (string.IsNullOrWhiteSpace(targetFormat)) targetFormat = "accdb";
+
+            var result = accessService.ConvertDatabase(sourcePath, destPath, targetFormat);
+            return new { success = true, result };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("convert_database", ex);
+        }
+    }
+
+    static object HandleSplitDatabase(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "backend_database_path", out var backendPath, out var err)) return err;
+
+            var result = accessService.SplitDatabase(backendPath);
+            return new { success = true, result };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("split_database", ex);
+        }
+    }
+
+    static object HandleSetTableCustomProperty(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var err1)) return err1;
+            if (!TryGetRequiredString(arguments, "property_name", out var propertyName, out var err2)) return err2;
+            if (!TryGetRequiredString(arguments, "value", out var value, out var err3)) return err3;
+
+            int? daoType = arguments.TryGetProperty("dao_type", out var dt) && dt.TryGetInt32(out var dtv) ? dtv : null;
+
+            var result = accessService.SetTableCustomProperty(tableName, propertyName, value, daoType);
+            return new { success = true, result };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_table_custom_property", ex);
+        }
+    }
+
+    static object HandleGetTableCustomProperty(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var err1)) return err1;
+            if (!TryGetRequiredString(arguments, "property_name", out var propertyName, out var err2)) return err2;
+
+            var result = accessService.GetTableCustomProperty(tableName, propertyName);
+            return new { success = true, result };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_table_custom_property", ex);
+        }
+    }
+
+    static object HandleAddCalculatedField(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var err1)) return err1;
+            if (!TryGetRequiredString(arguments, "field_name", out var fieldName, out var err2)) return err2;
+            if (!TryGetRequiredString(arguments, "expression", out var expression, out var err3)) return err3;
+
+            _ = TryGetOptionalString(arguments, "result_type", out var resultType);
+            if (string.IsNullOrWhiteSpace(resultType)) resultType = "double";
+
+            accessService.AddCalculatedField(tableName, fieldName, expression, resultType);
+            return new { success = true, message = $"Added calculated field '{fieldName}' to table '{tableName}'", table_name = tableName, field_name = fieldName, expression };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("add_calculated_field", ex);
         }
     }
 
