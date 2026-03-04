@@ -1229,7 +1229,7 @@ namespace MS.Access.MCP.Interop
                 .ToList();
         }
 
-        public void CreateIndex(string tableName, string indexName, List<string> columns, bool unique = false)
+        public void CreateIndex(string tableName, string indexName, List<string> columns, bool unique = false, bool ignoreNulls = false)
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
             if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required", nameof(tableName));
@@ -1248,7 +1248,8 @@ namespace MS.Access.MCP.Interop
 
             var uniqueSql = unique ? "UNIQUE " : string.Empty;
             var columnSql = string.Join(", ", normalizedColumns.Select(c => $"[{EscapeSqlIdentifier(c)}]"));
-            var sql = $"CREATE {uniqueSql}INDEX [{EscapeSqlIdentifier(indexName)}] ON [{EscapeSqlIdentifier(tableName)}] ({columnSql})";
+            var withClause = ignoreNulls ? " WITH IGNORE NULL" : string.Empty;
+            var sql = $"CREATE {uniqueSql}INDEX [{EscapeSqlIdentifier(indexName)}] ON [{EscapeSqlIdentifier(tableName)}] ({columnSql}){withClause}";
             using var command = CreateCommand(sql);
             command.ExecuteNonQuery();
         }
@@ -5017,15 +5018,24 @@ namespace MS.Access.MCP.Interop
             releaseOleDb: true);
         }
 
-        public void RunMacro(string macroName)
+        public void RunMacro(string macroName, int? repeatCount = null, string? repeatExpression = null)
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
             if (string.IsNullOrWhiteSpace(macroName)) throw new ArgumentException("Macro name is required", nameof(macroName));
 
-            ExecuteComOperation(
-                accessApp => accessApp.DoCmd.RunMacro(macroName),
-                requireExclusive: false,
-                releaseOleDb: false);
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+                _ = InvokeDynamicMethod(
+                    doCmd,
+                    "RunMacro",
+                    macroName,
+                    repeatCount.HasValue ? (object)repeatCount.Value : Type.Missing,
+                    NormalizeDoCmdVariant(repeatExpression));
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
         }
 
         public void DeleteMacro(string macroName)
@@ -5088,15 +5098,34 @@ namespace MS.Access.MCP.Interop
             return modules;
         }
 
-        public void OpenForm(string formName)
+        public void OpenForm(string formName, string? view = null, string? filterName = null,
+            string? whereCondition = null, string? dataMode = null, string? windowMode = null,
+            string? openArgs = null)
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
             if (string.IsNullOrWhiteSpace(formName)) throw new ArgumentException("Form name is required", nameof(formName));
 
-            ExecuteComOperation(
-                accessApp => accessApp.DoCmd.OpenForm(formName),
-                requireExclusive: false,
-                releaseOleDb: false);
+            var viewValue = ParseOpenFormView(view);
+            var dataModeValue = ParseOpenDataMode(dataMode);
+            var windowModeValue = ParseWindowMode(windowMode);
+
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+                _ = InvokeDynamicMethod(
+                    doCmd,
+                    "OpenForm",
+                    formName,
+                    viewValue,
+                    NormalizeDoCmdVariant(filterName),
+                    NormalizeDoCmdVariant(whereCondition),
+                    dataModeValue,
+                    windowModeValue,
+                    NormalizeDoCmdVariant(openArgs));
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
         }
 
         public void CloseForm(string formName)
@@ -5110,15 +5139,31 @@ namespace MS.Access.MCP.Interop
                 releaseOleDb: false);
         }
 
-        public void OpenReport(string reportName)
+        public void OpenReport(string reportName, string? view = null, string? filterName = null,
+            string? whereCondition = null, string? windowMode = null, string? openArgs = null)
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
             if (string.IsNullOrWhiteSpace(reportName)) throw new ArgumentException("Report name is required", nameof(reportName));
 
-            ExecuteComOperation(
-                accessApp => accessApp.DoCmd.OpenReport(reportName, 1), // 1 = acViewDesign
-                requireExclusive: false,
-                releaseOleDb: false);
+            var viewValue = ParseOpenReportView(view);
+            var windowModeValue = ParseWindowMode(windowMode);
+
+            ExecuteComOperation(accessApp =>
+            {
+                var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
+                    ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
+                _ = InvokeDynamicMethod(
+                    doCmd,
+                    "OpenReport",
+                    reportName,
+                    viewValue,
+                    NormalizeDoCmdVariant(filterName),
+                    NormalizeDoCmdVariant(whereCondition),
+                    windowModeValue,
+                    NormalizeDoCmdVariant(openArgs));
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
         }
 
         public void CloseReport(string reportName)
@@ -11948,6 +11993,77 @@ namespace MS.Access.MCP.Interop
             };
         }
 
+        private static object ParseOpenFormView(string? view)
+        {
+            if (string.IsNullOrWhiteSpace(view))
+                return Type.Missing;
+
+            var trimmed = view.Trim();
+            if (int.TryParse(trimmed, out var numericView))
+                return numericView;
+
+            var normalized = NormalizeEnumToken(trimmed);
+            return normalized switch
+            {
+                "normal" or "acnormal" => 0,
+                "design" or "acdesign" => 1,
+                "preview" or "printpreview" or "acpreview" => 2,
+                "pivottable" or "acpivottable" => 3,
+                "pivotchart" or "acpivotchart" => 4,
+                "layout" or "aclayout" => 6,
+                _ => throw new ArgumentException(
+                    "view must be normal, design, preview, pivot_table, pivot_chart, layout, or an Access enum integer value.",
+                    nameof(view))
+            };
+        }
+
+        private static object ParseOpenReportView(string? view)
+        {
+            if (string.IsNullOrWhiteSpace(view))
+                return Type.Missing;
+
+            var trimmed = view.Trim();
+            if (int.TryParse(trimmed, out var numericView))
+                return numericView;
+
+            var normalized = NormalizeEnumToken(trimmed);
+            return normalized switch
+            {
+                "normal" or "acviewnormal" => 0,
+                "design" or "acviewdesign" => 1,
+                "preview" or "printpreview" or "acviewpreview" => 2,
+                "pivottable" or "acviewpivottable" => 3,
+                "pivotchart" or "acviewpivotchart" => 4,
+                "pdf" or "formatpdf" or "acformatpdf" => 5,
+                "layout" or "acviewlayout" => 6,
+                _ => throw new ArgumentException(
+                    "view must be normal, design, preview, pivot_table, pivot_chart, pdf, layout, or an Access enum integer value.",
+                    nameof(view))
+            };
+        }
+
+        private static object ParseWindowMode(string? windowMode)
+        {
+            if (string.IsNullOrWhiteSpace(windowMode))
+                return Type.Missing;
+
+            var trimmed = windowMode.Trim();
+            if (int.TryParse(trimmed, out var numericWindowMode))
+                return numericWindowMode;
+
+            var normalized = NormalizeEnumToken(trimmed);
+            return normalized switch
+            {
+                "normal" or "acwindownormal" => 0,
+                "hidden" or "achidden" => 1,
+                "icon" or "acicon" => 2,
+                "dialog" or "acdialog" => 3,
+                _ => throw new ArgumentException(
+                    "window_mode must be normal, hidden, icon, dialog, or an Access enum integer value.",
+                    nameof(windowMode))
+            };
+        }
+
         private static int ParseDoCmdObjectType(string objectType, string paramName)
         {
             var trimmed = objectType.Trim();
@@ -13894,6 +14010,137 @@ namespace MS.Access.MCP.Interop
             RefreshOleDbConnectionAfterSchemaMutation();
         }
 
+        // ===== Phase 6B: New DAO/COM tools =====
+
+        public int ExecuteActionQuery(string queryName, int? options = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(queryName)) throw new ArgumentException("Query name is required.", nameof(queryName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+                var queryDef = FindQueryDef(currentDb, queryName)
+                    ?? throw new InvalidOperationException($"Query not found: {queryName}");
+
+                var effectiveOptions = options ?? (128 | 512); // dbFailOnError | dbSeeChanges
+                _ = InvokeDynamicMethod(queryDef, "Execute", effectiveOptions);
+
+                var recordsAffected = ToInt32(TryGetDynamicProperty(queryDef, "RecordsAffected"));
+                return recordsAffected;
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public SubdatasheetPropertiesInfo GetSubdatasheetProperties(string tableName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var tableDef = FindTableDefWithRetry(accessApp, tableName)
+                    ?? throw new InvalidOperationException($"Table not found: {tableName}");
+
+                return new SubdatasheetPropertiesInfo
+                {
+                    TableName = SafeToString(TryGetDynamicProperty(tableDef, "Name")) ?? tableName,
+                    SubdatasheetName = SafeToString(GetDaoPropertyValue(tableDef, "SubdatasheetName")),
+                    SubdatasheetHeight = ToNullableInt(GetDaoPropertyValue(tableDef, "SubdatasheetHeight")),
+                    SubdatasheetExpanded = ToNullableBool(GetDaoPropertyValue(tableDef, "SubdatasheetExpanded")),
+                    LinkChildFields = SafeToString(GetDaoPropertyValue(tableDef, "LinkChildFields")),
+                    LinkMasterFields = SafeToString(GetDaoPropertyValue(tableDef, "LinkMasterFields"))
+                };
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void SetSubdatasheetProperties(string tableName, string? subdatasheetName = null,
+            int? subdatasheetHeight = null, bool? subdatasheetExpanded = null,
+            string? linkChildFields = null, string? linkMasterFields = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var tableDef = FindTableDefWithRetry(accessApp, tableName)
+                    ?? throw new InvalidOperationException($"Table not found: {tableName}");
+
+                if (subdatasheetName != null)
+                    SetDaoPropertyValue(tableDef, "SubdatasheetName", subdatasheetName, daoType: 10, createIfMissing: true);
+                if (subdatasheetHeight.HasValue)
+                    SetDaoPropertyValue(tableDef, "SubdatasheetHeight", subdatasheetHeight.Value, daoType: 4, createIfMissing: true);
+                if (subdatasheetExpanded.HasValue)
+                    SetDaoPropertyValue(tableDef, "SubdatasheetExpanded", subdatasheetExpanded.Value, daoType: 1, createIfMissing: true);
+                if (linkChildFields != null)
+                    SetDaoPropertyValue(tableDef, "LinkChildFields", linkChildFields, daoType: 10, createIfMissing: true);
+                if (linkMasterFields != null)
+                    SetDaoPropertyValue(tableDef, "LinkMasterFields", linkMasterFields, daoType: 10, createIfMissing: true);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void SetFieldAppendOnly(string tableName, string fieldName, bool appendOnly)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(fieldName)) throw new ArgumentException("Field name is required.", nameof(fieldName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var field = ResolveField(accessApp, tableName, fieldName);
+                var fieldType = ToInt32(TryGetDynamicProperty(field, "Type"));
+                // dbMemo = 12, dbComplexText = 109
+                if (fieldType != 12 && fieldType != 109)
+                    throw new InvalidOperationException($"AppendOnly can only be set on Memo/Long Text fields. Field '{fieldName}' has type code {fieldType}.");
+
+                SetDaoPropertyValue(field, "AppendOnly", appendOnly, daoType: 1, createIfMissing: true);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void ResetAutoNumber(string tableName, string columnName, long newSeed)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(columnName)) throw new ArgumentException("Column name is required.", nameof(columnName));
+            if (newSeed < 0) throw new ArgumentException("New seed must be non-negative.", nameof(newSeed));
+
+            // Use DAO CurrentDb.Execute to reset AutoNumber seed. OleDb DDL for ALTER TABLE
+            // COUNTER() can leave ACE engine internal state stale after exclusive COM operations.
+            var sql = $"ALTER TABLE [{EscapeSqlIdentifier(tableName)}] ALTER COLUMN [{EscapeSqlIdentifier(columnName)}] COUNTER({newSeed}, 1)";
+            ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp);
+                InvokeDynamicMethod(currentDb, "Execute", sql, 128); // dbFailOnError = 128
+            },
+            requireExclusive: false,
+            releaseOleDb: true);
+        }
+
+        // ===== Phase 6C: follow_hyperlink =====
+
+        public void FollowHyperlink(string address, string? subAddress = null, bool? newWindow = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(address)) throw new ArgumentException("Address (URL or path) is required.", nameof(address));
+
+            ExecuteComOperation(accessApp =>
+            {
+                _ = InvokeDynamicMethod(accessApp, "FollowHyperlink", address,
+                    string.IsNullOrWhiteSpace(subAddress) ? Type.Missing : (object)subAddress.Trim(),
+                    newWindow.HasValue ? (object)newWindow.Value : Type.Missing);
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
     #endregion
 
     } // end class AccessInteropService
@@ -14791,6 +15038,16 @@ namespace MS.Access.MCP.Interop
         public string TableName { get; set; } = "";
         public string PropertyName { get; set; } = "";
         public object? Value { get; set; }
+    }
+
+    public class SubdatasheetPropertiesInfo
+    {
+        public string? TableName { get; set; }
+        public string? SubdatasheetName { get; set; }
+        public int? SubdatasheetHeight { get; set; }
+        public bool? SubdatasheetExpanded { get; set; }
+        public string? LinkChildFields { get; set; }
+        public string? LinkMasterFields { get; set; }
     }
 
     #endregion

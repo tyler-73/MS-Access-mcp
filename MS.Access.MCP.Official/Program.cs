@@ -327,7 +327,7 @@ class Program
                 new { name = "rename_table", description = "Rename an existing table", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, new_table_name = new { type = "string" } }, required = new string[] { "table_name", "new_table_name" } } },
                 new { name = "rename_field", description = "Rename an existing field on a table", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, new_field_name = new { type = "string" } }, required = new string[] { "table_name", "field_name", "new_field_name" } } },
                 new { name = "get_indexes", description = "Get indexes for a table", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
-                new { name = "create_index", description = "Create an index on one or more columns", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, index_name = new { type = "string" }, columns = new { type = "array", items = new { type = "string" } }, unique = new { type = "boolean" } }, required = new string[] { "table_name", "index_name", "columns" } } },
+                new { name = "create_index", description = "Create an index on one or more columns. Supports UNIQUE and IGNORE NULL options.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, index_name = new { type = "string" }, columns = new { type = "array", items = new { type = "string" } }, unique = new { type = "boolean" }, ignore_nulls = new { type = "boolean", description = "When true, rows with NULL in indexed columns are excluded from the index" } }, required = new string[] { "table_name", "index_name", "columns" } } },
                 new { name = "delete_index", description = "Delete an index from a table", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, index_name = new { type = "string" } }, required = new string[] { "table_name", "index_name" } } },
                 new { name = "launch_access", description = "Launch Microsoft Access application", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "close_access", description = "Close Microsoft Access application", inputSchema = new { type = "object", properties = new { } } },
@@ -335,15 +335,15 @@ class Program
                 new { name = "get_reports", description = "Get list of all reports in the database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_macros", description = "Get list of all macros in the database", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_modules", description = "Get list of all modules in the database", inputSchema = new { type = "object", properties = new { } } },
-                new { name = "open_form", description = "Open a form in Access", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
+                new { name = "open_form", description = "Open a form in Access using DoCmd.OpenForm with full parameter support.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" }, view = new { type = "string", description = "normal, design, preview, pivot_table, pivot_chart, layout, or Access enum integer" }, filter_name = new { type = "string", description = "Name of a saved query to use as filter" }, where_condition = new { type = "string", description = "SQL WHERE clause without WHERE keyword (e.g. \"[Status]='Active'\")" }, data_mode = new { type = "string", description = "add, edit, read_only, or Access enum integer" }, window_mode = new { type = "string", description = "normal, hidden, icon, dialog, or Access enum integer" }, open_args = new { type = "string", description = "String argument accessible via Me.OpenArgs in the form" } }, required = new string[] { "form_name" } } },
                 new { name = "close_form", description = "Close a form in Access", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
                 new { name = "get_form_record_count", description = "Get record count from an open form.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
                 new { name = "get_form_current_record", description = "Get current record data from an open form.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
                 new { name = "set_form_filter", description = "Set Filter and FilterOn on a form at runtime.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" }, filter = new { type = "string" }, filter_on = new { type = "boolean" } }, required = new string[] { "form_name" } } },
                 new { name = "get_open_objects", description = "List currently open Access objects.", inputSchema = new { type = "object", properties = new { } } },
-                new { name = "open_report", description = "Open a report in Access", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" } }, required = new string[] { "report_name" } } },
+                new { name = "open_report", description = "Open a report in Access using DoCmd.OpenReport with full parameter support.", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" }, view = new { type = "string", description = "normal, design, preview, pivot_table, pivot_chart, pdf, layout, or Access enum integer" }, filter_name = new { type = "string", description = "Name of a saved query to use as filter" }, where_condition = new { type = "string", description = "SQL WHERE clause without WHERE keyword" }, window_mode = new { type = "string", description = "normal, hidden, icon, dialog, or Access enum integer" }, open_args = new { type = "string", description = "String argument accessible via Me.OpenArgs in the report" } }, required = new string[] { "report_name" } } },
                 new { name = "close_report", description = "Close a report in Access", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" } }, required = new string[] { "report_name" } } },
-                new { name = "run_macro", description = "Run an Access macro", inputSchema = new { type = "object", properties = new { macro_name = new { type = "string" } }, required = new string[] { "macro_name" } } },
+                new { name = "run_macro", description = "Run an Access macro using DoCmd.RunMacro with optional repeat control.", inputSchema = new { type = "object", properties = new { macro_name = new { type = "string" }, repeat_count = new { type = "integer", description = "Number of times to repeat the macro" }, repeat_expression = new { type = "string", description = "Expression that must evaluate to true for macro to continue repeating" } }, required = new string[] { "macro_name" } } },
                 new { name = "create_macro", description = "Create a macro from text representation", inputSchema = new { type = "object", properties = new { macro_name = new { type = "string" }, macro_data = new { type = "string" } }, required = new string[] { "macro_name", "macro_data" } } },
                 new { name = "update_macro", description = "Update an existing macro from text representation", inputSchema = new { type = "object", properties = new { macro_name = new { type = "string" }, macro_data = new { type = "string" } }, required = new string[] { "macro_name", "macro_data" } } },
                 new { name = "export_macro_to_text", description = "Export a macro to text format", inputSchema = new { type = "object", properties = new { macro_name = new { type = "string" } }, required = new string[] { "macro_name" } } },
@@ -503,7 +503,13 @@ class Program
                 new { name = "split_database", description = "Split the current database into a frontend (forms/queries/reports) and backend (tables). Exports all local tables to a backend database and creates links.", inputSchema = new { type = "object", properties = new { backend_database_path = new { type = "string", description = "Path for the backend database containing the tables" } }, required = new string[] { "backend_database_path" } } },
                 new { name = "set_table_custom_property", description = "Set a custom DAO property on a table. Creates the property if it does not exist.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string", description = "Name of the table" }, property_name = new { type = "string", description = "Name of the property" }, value = new { type = "string", description = "Value to set" }, dao_type = new { type = "integer", description = "DAO data type constant (10=dbText, 12=dbMemo). Auto-detected if omitted." } }, required = new string[] { "table_name", "property_name", "value" } } },
                 new { name = "get_table_custom_property", description = "Read a custom DAO property from a table.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string", description = "Name of the table" }, property_name = new { type = "string", description = "Name of the property to read" } }, required = new string[] { "table_name", "property_name" } } },
-                new { name = "add_calculated_field", description = "Add a calculated field to a table using a DAO Expression. The field value is computed from other fields.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string", description = "Name of the table" }, field_name = new { type = "string", description = "Name of the calculated field" }, expression = new { type = "string", description = "Access expression (e.g. [Price]*[Quantity])" }, result_type = new { type = "string", description = "Result data type: double (default), single, long, currency, text, boolean, datetime" } }, required = new string[] { "table_name", "field_name", "expression" } } }
+                new { name = "add_calculated_field", description = "Add a calculated field to a table using a DAO Expression. The field value is computed from other fields.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string", description = "Name of the table" }, field_name = new { type = "string", description = "Name of the calculated field" }, expression = new { type = "string", description = "Access expression (e.g. [Price]*[Quantity])" }, result_type = new { type = "string", description = "Result data type: double (default), single, long, currency, text, boolean, datetime" } }, required = new string[] { "table_name", "field_name", "expression" } } },
+                new { name = "execute_action_query", description = "Execute a saved action query (INSERT/UPDATE/DELETE/make-table) via DAO QueryDef.Execute with dbFailOnError+dbSeeChanges. Preferred over run_sql for ODBC linked tables.", inputSchema = new { type = "object", properties = new { query_name = new { type = "string", description = "Name of the saved action query" }, options = new { type = "integer", description = "DAO execute options bitmask. Default: 640 (dbFailOnError=128 + dbSeeChanges=512)" } }, required = new string[] { "query_name" } } },
+                new { name = "get_subdatasheet_properties", description = "Get subdatasheet properties (SubdatasheetName, Height, Expanded, LinkChildFields, LinkMasterFields) for a table.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
+                new { name = "set_subdatasheet_properties", description = "Set subdatasheet properties on a table. Controls which child table/query appears as an expandable subdatasheet.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, subdatasheet_name = new { type = "string", description = "Table or query name for subdatasheet, or '[None]' to remove" }, subdatasheet_height = new { type = "integer", description = "Height in twips (0 = expand to show all)" }, subdatasheet_expanded = new { type = "boolean", description = "Whether subdatasheet is expanded by default" }, link_child_fields = new { type = "string", description = "Field(s) in the child table that link to the master" }, link_master_fields = new { type = "string", description = "Field(s) in the master table that link to the child" } }, required = new string[] { "table_name" } } },
+                new { name = "set_field_append_only", description = "Set AppendOnly property on a Memo/Long Text field for audit trail. When enabled, Access keeps a history of all changes to the field.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, append_only = new { type = "boolean", description = "True to enable append-only (audit trail), false to disable" } }, required = new string[] { "table_name", "field_name", "append_only" } } },
+                new { name = "reset_autonumber", description = "Reset AutoNumber seed on a table column. Next inserted row will use the specified seed value.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, column_name = new { type = "string", description = "Name of the AutoNumber column" }, new_seed = new { type = "integer", description = "New starting value for the AutoNumber" } }, required = new string[] { "table_name", "column_name", "new_seed" } } },
+                new { name = "follow_hyperlink", description = "Open a URL or file path using Access Application.FollowHyperlink. Launches the default browser or application.", inputSchema = new { type = "object", properties = new { address = new { type = "string", description = "URL or file path to open" }, sub_address = new { type = "string", description = "Named location within the document (e.g., bookmark)" }, new_window = new { type = "boolean", description = "Whether to open in a new window" } }, required = new string[] { "address" } } }
             }
         };
     }
@@ -855,6 +861,12 @@ class Program
             "set_table_custom_property" => HandleSetTableCustomProperty(accessService, toolArguments),
             "get_table_custom_property" => HandleGetTableCustomProperty(accessService, toolArguments),
             "add_calculated_field" => HandleAddCalculatedField(accessService, toolArguments),
+            "execute_action_query" => HandleExecuteActionQuery(accessService, toolArguments),
+            "get_subdatasheet_properties" => HandleGetSubdatasheetProperties(accessService, toolArguments),
+            "set_subdatasheet_properties" => HandleSetSubdatasheetProperties(accessService, toolArguments),
+            "set_field_append_only" => HandleSetFieldAppendOnly(accessService, toolArguments),
+            "reset_autonumber" => HandleResetAutoNumber(accessService, toolArguments),
+            "follow_hyperlink" => HandleFollowHyperlink(accessService, toolArguments),
             _ => new { success = false, error = $"Unknown tool: {toolName}" }
         };
     }
@@ -4344,12 +4356,13 @@ class Program
                 return columnsError;
 
             var unique = GetOptionalBool(arguments, "unique", false);
-            accessService.CreateIndex(tableName, indexName, columns, unique);
-            return new { success = true, message = $"Created index {indexName}", index_name = indexName };
+            var ignoreNulls = GetOptionalBool(arguments, "ignore_nulls", false);
+            accessService.CreateIndex(tableName, indexName, columns, unique, ignoreNulls);
+            return new { success = true, message = $"Created index {indexName}", index_name = indexName, ignore_nulls = ignoreNulls };
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("create_index", ex);
         }
     }
 
@@ -4453,16 +4466,37 @@ class Program
     {
         try
         {
-            var formName = arguments.GetProperty("form_name").GetString();
-            if (string.IsNullOrEmpty(formName))
-                return new { success = false, error = "Form name is required" };
-                
-            accessService.OpenForm(formName);
-            return new { success = true, message = $"Opened form {formName}" };
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var formNameError))
+                return formNameError;
+
+            _ = TryGetOptionalString(arguments, "view", out var view);
+            _ = TryGetOptionalString(arguments, "filter_name", out var filterName);
+            _ = TryGetOptionalString(arguments, "where_condition", out var whereCondition);
+            _ = TryGetOptionalString(arguments, "data_mode", out var dataMode);
+            _ = TryGetOptionalString(arguments, "window_mode", out var windowMode);
+            _ = TryGetOptionalString(arguments, "open_args", out var openArgs);
+
+            accessService.OpenForm(
+                formName,
+                string.IsNullOrWhiteSpace(view) ? null : view,
+                string.IsNullOrWhiteSpace(filterName) ? null : filterName,
+                string.IsNullOrWhiteSpace(whereCondition) ? null : whereCondition,
+                string.IsNullOrWhiteSpace(dataMode) ? null : dataMode,
+                string.IsNullOrWhiteSpace(windowMode) ? null : windowMode,
+                string.IsNullOrWhiteSpace(openArgs) ? null : openArgs);
+
+            return new
+            {
+                success = true,
+                form_name = formName,
+                view = string.IsNullOrWhiteSpace(view) ? null : view,
+                data_mode = string.IsNullOrWhiteSpace(dataMode) ? null : dataMode,
+                window_mode = string.IsNullOrWhiteSpace(windowMode) ? null : windowMode
+            };
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("open_form", ex);
         }
     }
 
@@ -5246,16 +5280,34 @@ class Program
     {
         try
         {
-            var reportName = arguments.GetProperty("report_name").GetString();
-            if (string.IsNullOrEmpty(reportName))
-                return new { success = false, error = "Report name is required" };
+            if (!TryGetRequiredString(arguments, "report_name", out var reportName, out var reportNameError))
+                return reportNameError;
 
-            accessService.OpenReport(reportName);
-            return new { success = true, message = $"Opened report {reportName}" };
+            _ = TryGetOptionalString(arguments, "view", out var view);
+            _ = TryGetOptionalString(arguments, "filter_name", out var filterName);
+            _ = TryGetOptionalString(arguments, "where_condition", out var whereCondition);
+            _ = TryGetOptionalString(arguments, "window_mode", out var windowMode);
+            _ = TryGetOptionalString(arguments, "open_args", out var openArgs);
+
+            accessService.OpenReport(
+                reportName,
+                string.IsNullOrWhiteSpace(view) ? null : view,
+                string.IsNullOrWhiteSpace(filterName) ? null : filterName,
+                string.IsNullOrWhiteSpace(whereCondition) ? null : whereCondition,
+                string.IsNullOrWhiteSpace(windowMode) ? null : windowMode,
+                string.IsNullOrWhiteSpace(openArgs) ? null : openArgs);
+
+            return new
+            {
+                success = true,
+                report_name = reportName,
+                view = string.IsNullOrWhiteSpace(view) ? null : view,
+                window_mode = string.IsNullOrWhiteSpace(windowMode) ? null : windowMode
+            };
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("open_report", ex);
         }
     }
 
@@ -5283,12 +5335,20 @@ class Program
             if (!TryGetRequiredString(arguments, "macro_name", out var macroName, out var macroNameError))
                 return macroNameError;
 
-            accessService.RunMacro(macroName);
+            if (!TryGetOptionalInt(arguments, "repeat_count", out var repeatCount, out var repeatCountError))
+                return repeatCountError;
+            _ = TryGetOptionalString(arguments, "repeat_expression", out var repeatExpression);
+
+            accessService.RunMacro(
+                macroName,
+                repeatCount,
+                string.IsNullOrWhiteSpace(repeatExpression) ? null : repeatExpression);
+
             return new { success = true, message = $"Ran macro {macroName}", macro_name = macroName };
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("run_macro", ex);
         }
     }
 
@@ -7459,6 +7519,138 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("add_calculated_field", ex);
+        }
+    }
+
+    static object HandleExecuteActionQuery(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "query_name", out var queryName, out var queryNameError))
+                return queryNameError;
+
+            if (!TryGetOptionalInt(arguments, "options", out var options, out var optionsError))
+                return optionsError;
+
+            var recordsAffected = accessService.ExecuteActionQuery(queryName, options);
+            return new { success = true, query_name = queryName, records_affected = recordsAffected, options = options ?? 640 };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("execute_action_query", ex);
+        }
+    }
+
+    static object HandleGetSubdatasheetProperties(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+
+            var result = accessService.GetSubdatasheetProperties(tableName);
+            return new { success = true, table_name = result.TableName, subdatasheet_name = result.SubdatasheetName, subdatasheet_height = result.SubdatasheetHeight, subdatasheet_expanded = result.SubdatasheetExpanded, link_child_fields = result.LinkChildFields, link_master_fields = result.LinkMasterFields };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_subdatasheet_properties", ex);
+        }
+    }
+
+    static object HandleSetSubdatasheetProperties(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+
+            _ = TryGetOptionalString(arguments, "subdatasheet_name", out var subdatasheetName);
+            if (!TryGetOptionalInt(arguments, "subdatasheet_height", out var subdatasheetHeight, out var heightError))
+                return heightError;
+            if (!TryGetOptionalBoolNullable(arguments, "subdatasheet_expanded", out var subdatasheetExpanded, out var expandedError))
+                return expandedError;
+            _ = TryGetOptionalString(arguments, "link_child_fields", out var linkChildFields);
+            _ = TryGetOptionalString(arguments, "link_master_fields", out var linkMasterFields);
+
+            accessService.SetSubdatasheetProperties(
+                tableName,
+                string.IsNullOrWhiteSpace(subdatasheetName) ? null : subdatasheetName,
+                subdatasheetHeight,
+                subdatasheetExpanded,
+                string.IsNullOrWhiteSpace(linkChildFields) ? null : linkChildFields,
+                string.IsNullOrWhiteSpace(linkMasterFields) ? null : linkMasterFields);
+
+            return new { success = true, message = $"Set subdatasheet properties on {tableName}", table_name = tableName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_subdatasheet_properties", ex);
+        }
+    }
+
+    static object HandleSetFieldAppendOnly(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "field_name", out var fieldName, out var fieldNameError))
+                return fieldNameError;
+
+            var appendOnly = GetOptionalBool(arguments, "append_only", true);
+
+            accessService.SetFieldAppendOnly(tableName, fieldName, appendOnly);
+            return new { success = true, message = $"Set AppendOnly={appendOnly} on {tableName}.{fieldName}", table_name = tableName, field_name = fieldName, append_only = appendOnly };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_field_append_only", ex);
+        }
+    }
+
+    static object HandleResetAutoNumber(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "column_name", out var columnName, out var columnNameError))
+                return columnNameError;
+            if (!TryGetOptionalInt(arguments, "new_seed", out var newSeedNullable, out var newSeedError))
+                return newSeedError;
+            if (!newSeedNullable.HasValue)
+                return new { success = false, error = "new_seed is required" };
+
+            accessService.ResetAutoNumber(tableName, columnName, newSeedNullable.Value);
+            return new { success = true, message = $"Reset AutoNumber on {tableName}.{columnName} to {newSeedNullable.Value}", table_name = tableName, column_name = columnName, new_seed = newSeedNullable.Value };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("reset_autonumber", ex);
+        }
+    }
+
+    static object HandleFollowHyperlink(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "address", out var address, out var addressError))
+                return addressError;
+
+            _ = TryGetOptionalString(arguments, "sub_address", out var subAddress);
+            if (!TryGetOptionalBoolNullable(arguments, "new_window", out var newWindow, out var newWindowError))
+                return newWindowError;
+
+            accessService.FollowHyperlink(
+                address,
+                string.IsNullOrWhiteSpace(subAddress) ? null : subAddress,
+                newWindow);
+
+            return new { success = true, message = $"Followed hyperlink: {address}", address };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("follow_hyperlink", ex);
         }
     }
 

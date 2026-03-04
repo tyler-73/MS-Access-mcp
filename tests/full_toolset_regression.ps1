@@ -6044,6 +6044,225 @@ foreach ($id in ($phase5Labels.Keys | Sort-Object)) {
     }
 }
 
+Write-Host ""
+Write-Host "=== Feature Gap Phase 6A: Enhanced Existing Tools (IDs 1161-1175) ==="
+Cleanup-AccessArtifacts -DbPath $DatabasePath
+$p6aCalls = New-Object 'System.Collections.Generic.List[object]'
+Add-ToolCall -Calls $p6aCalls -Id 1161 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
+Add-ToolCall -Calls $p6aCalls -Id 1162 -Name "create_table" -Arguments @{
+    table_name = "mcp_p6a_test"
+    fields = @(
+        @{ name = "id"; type = "COUNTER"; size = 0; required = $false; allow_zero_length = $false },
+        @{ name = "name"; type = "TEXT"; size = 50; required = $false; allow_zero_length = $true },
+        @{ name = "status"; type = "TEXT"; size = 20; required = $false; allow_zero_length = $true }
+    )
+}
+Add-ToolCall -Calls $p6aCalls -Id 1163 -Name "create_index" -Arguments @{
+    table_name = "mcp_p6a_test"
+    index_name = "idx_p6a_status"
+    columns = @("status")
+    ignore_nulls = $true
+}
+Add-ToolCall -Calls $p6aCalls -Id 1164 -Name "get_indexes" -Arguments @{ table_name = "mcp_p6a_test" }
+$p6aMacroData = @'
+Version =196611
+ColumnsShown =8
+Begin
+    Action ="Beep"
+End
+'@
+Add-ToolCall -Calls $p6aCalls -Id 1165 -Name "create_macro" -Arguments @{
+    macro_name = "mcp_p6a_macro"
+    macro_data = $p6aMacroData
+}
+Add-ToolCall -Calls $p6aCalls -Id 1166 -Name "run_macro" -Arguments @{
+    macro_name = "mcp_p6a_macro"
+    repeat_count = 1
+}
+Add-ToolCall -Calls $p6aCalls -Id 1167 -Name "delete_macro" -Arguments @{ macro_name = "mcp_p6a_macro" }
+Add-ToolCall -Calls $p6aCalls -Id 1168 -Name "delete_index" -Arguments @{ table_name = "mcp_p6a_test"; index_name = "idx_p6a_status" }
+Add-ToolCall -Calls $p6aCalls -Id 1169 -Name "delete_table" -Arguments @{ table_name = "mcp_p6a_test" }
+
+$p6aResponses = Invoke-McpBatch -ExePath $ServerExe -Calls $p6aCalls -ClientName "full-regression-phase6a" -ClientVersion "1.0"
+$p6aLabels = @{
+    1161 = "p6a_connect"
+    1162 = "p6a_create_table"
+    1163 = "p6a_create_index_ignore_nulls"
+    1164 = "p6a_get_indexes"
+    1165 = "p6a_create_macro"
+    1166 = "p6a_run_macro_repeat"
+    1167 = "p6a_delete_macro"
+    1168 = "p6a_delete_index"
+    1169 = "p6a_delete_table"
+}
+
+foreach ($id in ($p6aLabels.Keys | Sort-Object)) {
+    $label = $p6aLabels[$id]
+    $decoded = Decode-McpResult -Response $p6aResponses[[int]$id]
+
+    if ($null -eq $decoded) {
+        $failed++
+        Write-Host ('{0}: FAIL missing-response' -f $label)
+        continue
+    }
+    if ($decoded.success -ne $true) {
+        $failed++
+        Write-Host ('{0}: FAIL {1}' -f $label, $decoded.error)
+        continue
+    }
+
+    $p6aFailed = $false
+    switch ($label) {
+        "p6a_get_indexes" {
+            $idxNames = @($decoded.indexes | ForEach-Object { $_.name }) -join ","
+            if ($idxNames -notmatch "idx_p6a_status") {
+                $failed++
+                $p6aFailed = $true
+                Write-Host ('{0}: FAIL index idx_p6a_status not found in: {1}' -f $label, $idxNames)
+            }
+        }
+    }
+
+    if (-not $p6aFailed) {
+        Write-Host ('{0}: OK' -f $label)
+    }
+}
+
+Write-Host ""
+Write-Host "=== Feature Gap Phase 6B: New DAO/COM Tools (IDs 1176-1195) ==="
+Cleanup-AccessArtifacts -DbPath $DatabasePath
+$p6bCalls = New-Object 'System.Collections.Generic.List[object]'
+Add-ToolCall -Calls $p6bCalls -Id 1176 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
+Add-ToolCall -Calls $p6bCalls -Id 1177 -Name "create_table" -Arguments @{
+    table_name = "mcp_p6b_parent"
+    fields = @(
+        @{ name = "id"; type = "COUNTER"; size = 0; required = $false; allow_zero_length = $false },
+        @{ name = "name"; type = "TEXT"; size = 50; required = $false; allow_zero_length = $true }
+    )
+}
+Add-ToolCall -Calls $p6bCalls -Id 1178 -Name "create_table" -Arguments @{
+    table_name = "mcp_p6b_child"
+    fields = @(
+        @{ name = "id"; type = "COUNTER"; size = 0; required = $false; allow_zero_length = $false },
+        @{ name = "parent_id"; type = "LONG"; size = 0; required = $false; allow_zero_length = $false },
+        @{ name = "notes"; type = "MEMO"; size = 0; required = $false; allow_zero_length = $true }
+    )
+}
+Add-ToolCall -Calls $p6bCalls -Id 1179 -Name "create_query" -Arguments @{
+    query_name = "mcp_p6b_delete_q"
+    sql = "DELETE FROM mcp_p6b_child WHERE [id] < 0"
+}
+Add-ToolCall -Calls $p6bCalls -Id 1180 -Name "execute_action_query" -Arguments @{
+    query_name = "mcp_p6b_delete_q"
+}
+Add-ToolCall -Calls $p6bCalls -Id 1181 -Name "set_subdatasheet_properties" -Arguments @{
+    table_name = "mcp_p6b_parent"
+    subdatasheet_name = "mcp_p6b_child"
+    link_child_fields = "parent_id"
+    link_master_fields = "id"
+    subdatasheet_height = 0
+    subdatasheet_expanded = $false
+}
+Add-ToolCall -Calls $p6bCalls -Id 1182 -Name "get_subdatasheet_properties" -Arguments @{
+    table_name = "mcp_p6b_parent"
+}
+Add-ToolCall -Calls $p6bCalls -Id 1183 -Name "set_subdatasheet_properties" -Arguments @{
+    table_name = "mcp_p6b_parent"
+    subdatasheet_name = "[None]"
+}
+Add-ToolCall -Calls $p6bCalls -Id 1184 -Name "reset_autonumber" -Arguments @{
+    table_name = "mcp_p6b_child"
+    column_name = "id"
+    new_seed = 1000
+}
+Add-ToolCall -Calls $p6bCalls -Id 1185 -Name "execute_sql" -Arguments @{
+    sql = "INSERT INTO mcp_p6b_child (parent_id, notes) VALUES (1, 'seed test')"
+}
+Add-ToolCall -Calls $p6bCalls -Id 1186 -Name "execute_sql" -Arguments @{
+    sql = "SELECT id FROM mcp_p6b_child WHERE notes='seed test'"
+}
+Add-ToolCall -Calls $p6bCalls -Id 1187 -Name "set_field_append_only" -Arguments @{
+    table_name = "mcp_p6b_child"
+    field_name = "notes"
+    append_only = $true
+}
+Add-ToolCall -Calls $p6bCalls -Id 1188 -Name "set_field_append_only" -Arguments @{
+    table_name = "mcp_p6b_child"
+    field_name = "notes"
+    append_only = $false
+}
+Add-ToolCall -Calls $p6bCalls -Id 1189 -Name "delete_query" -Arguments @{ query_name = "mcp_p6b_delete_q" }
+Add-ToolCall -Calls $p6bCalls -Id 1190 -Name "delete_table" -Arguments @{ table_name = "mcp_p6b_child" }
+Add-ToolCall -Calls $p6bCalls -Id 1191 -Name "delete_table" -Arguments @{ table_name = "mcp_p6b_parent" }
+
+$p6bResponses = Invoke-McpBatch -ExePath $ServerExe -Calls $p6bCalls -ClientName "full-regression-phase6b" -ClientVersion "1.0"
+$p6bLabels = @{
+    1176 = "p6b_connect"
+    1177 = "p6b_create_parent"
+    1178 = "p6b_create_child"
+    1179 = "p6b_create_action_query"
+    1180 = "p6b_execute_action_query"
+    1181 = "p6b_set_subdatasheet"
+    1182 = "p6b_get_subdatasheet"
+    1183 = "p6b_reset_subdatasheet"
+    1184 = "p6b_reset_autonumber"
+    1185 = "p6b_insert_after_reset"
+    1186 = "p6b_verify_autonumber"
+    1187 = "p6b_set_append_only_true"
+    1188 = "p6b_set_append_only_false"
+    1189 = "p6b_delete_query"
+    1190 = "p6b_delete_child"
+    1191 = "p6b_delete_parent"
+}
+
+foreach ($id in ($p6bLabels.Keys | Sort-Object)) {
+    $label = $p6bLabels[$id]
+    $decoded = Decode-McpResult -Response $p6bResponses[[int]$id]
+
+    if ($null -eq $decoded) {
+        $failed++
+        Write-Host ('{0}: FAIL missing-response' -f $label)
+        continue
+    }
+    # execute_sql SELECT returns isQuery=true, not success=true
+    if ($decoded.success -ne $true -and $decoded.isQuery -ne $true) {
+        $failed++
+        Write-Host ('{0}: FAIL {1}' -f $label, $decoded.error)
+        continue
+    }
+
+    $p6bFailed = $false
+    switch ($label) {
+        "p6b_get_subdatasheet" {
+            $sdsName = $decoded.subdatasheet_name
+            if ("$sdsName" -notmatch "mcp_p6b_child") {
+                $failed++
+                $p6bFailed = $true
+                Write-Host ('{0}: FAIL subdatasheet_name expected mcp_p6b_child, got: {1}' -f $label, $sdsName)
+            }
+        }
+        "p6b_verify_autonumber" {
+            $rows = @($decoded.rows)
+            if ($rows.Count -lt 1) {
+                $failed++
+                $p6bFailed = $true
+                Write-Host ('{0}: FAIL expected at least 1 row, got 0' -f $label)
+            } else {
+                $idVal = [int]($rows[0].id)
+                if ($idVal -lt 1000) {
+                    $failed++
+                    $p6bFailed = $true
+                    Write-Host ('{0}: FAIL expected id >= 1000, got {1}' -f $label, $idVal)
+                }
+            }
+        }
+    }
+
+    if (-not $p6bFailed) {
+        Write-Host ('{0}: OK' -f $label)
+    }
+}
+
 Write-Host "=== End Feature Gap Tests ==="
 Write-Host ""
 
