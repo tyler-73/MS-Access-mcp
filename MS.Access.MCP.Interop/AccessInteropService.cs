@@ -1753,7 +1753,10 @@ namespace MS.Access.MCP.Interop
                     ColumnWidths = SafeToString(GetDaoPropertyValue(field, "ColumnWidths")),
                     LimitToList = ToNullableBool(GetDaoPropertyValue(field, "LimitToList")),
                     AllowMultipleValues = ToNullableBool(GetDaoPropertyValue(field, "AllowMultipleValues")),
-                    DisplayControl = ToNullableInt(GetDaoPropertyValue(field, "DisplayControl"))
+                    DisplayControl = ToNullableInt(GetDaoPropertyValue(field, "DisplayControl")),
+                    Description = SafeToString(GetDaoPropertyValue(field, "Description")),
+                    Format = SafeToString(GetDaoPropertyValue(field, "Format")),
+                    DecimalPlaces = ToNullableInt(GetDaoPropertyValue(field, "DecimalPlaces"))
                 };
             },
             requireExclusive: false,
@@ -14141,6 +14144,229 @@ namespace MS.Access.MCP.Interop
             releaseOleDb: false);
         }
 
+        // ===== Phase 7A: Extended startup properties =====
+
+        public StartupPropertiesInfo GetStartupPropertiesExtended()
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+
+                return new StartupPropertiesInfo
+                {
+                    StartupForm = SafeToString(GetDaoPropertyValue(currentDb, "StartupForm")),
+                    AppTitle = SafeToString(GetDaoPropertyValue(currentDb, "AppTitle")),
+                    AppIcon = SafeToString(GetDaoPropertyValue(currentDb, "AppIcon")),
+                    AllowBypassKey = ToBool(GetDaoPropertyValue(currentDb, "AllowBypassKey"), true),
+                    AllowSpecialKeys = ToBool(GetDaoPropertyValue(currentDb, "AllowSpecialKeys"), true),
+                    AllowFullMenus = ToBool(GetDaoPropertyValue(currentDb, "AllowFullMenus"), true),
+                    AllowBuiltinToolbars = ToBool(GetDaoPropertyValue(currentDb, "AllowBuiltInToolbars"), true),
+                    AllowToolbarChanges = ToBool(GetDaoPropertyValue(currentDb, "AllowToolbarChanges"), true),
+                    AllowBreakIntoCode = ToBool(GetDaoPropertyValue(currentDb, "AllowBreakIntoCode"), true),
+                    AllowShortcutMenus = ToBool(GetDaoPropertyValue(currentDb, "AllowShortcutMenus"), true),
+                    UseAppIconForForms = ToBool(GetDaoPropertyValue(currentDb, "UseAppIconForForms"), false),
+                    StartupMenuBar = SafeToString(GetDaoPropertyValue(currentDb, "StartupMenuBar")),
+                    StartupShortcutMenuBar = SafeToString(GetDaoPropertyValue(currentDb, "StartupShortcutMenuBar")),
+                    RibbonName = SafeToString(GetDaoPropertyValue(currentDb, "RibbonName"))
+                };
+            },
+            requireExclusive: false,
+            releaseOleDb: false);
+        }
+
+        public void SetStartupPropertiesExtended(
+            string? startupForm = null, string? appTitle = null, string? appIcon = null,
+            bool? allowBypassKey = null, bool? allowSpecialKeys = null, bool? allowFullMenus = null,
+            bool? allowBuiltinToolbars = null, bool? allowToolbarChanges = null,
+            bool? allowBreakIntoCode = null, bool? allowShortcutMenus = null,
+            bool? useAppIconForForms = null, string? startupMenuBar = null,
+            string? startupShortcutMenuBar = null, string? ribbonName = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(accessApp =>
+            {
+                var currentDb = TryGetCurrentDb(accessApp)
+                    ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
+
+                if (startupForm != null)
+                    SetDaoPropertyValue(currentDb, "StartupForm", startupForm, daoType: 10, createIfMissing: true);
+                if (appTitle != null)
+                    SetDaoPropertyValue(currentDb, "AppTitle", appTitle, daoType: 10, createIfMissing: true);
+                if (appIcon != null)
+                    SetDaoPropertyValue(currentDb, "AppIcon", appIcon, daoType: 10, createIfMissing: true);
+                if (startupMenuBar != null)
+                    SetDaoPropertyValue(currentDb, "StartupMenuBar", startupMenuBar, daoType: 10, createIfMissing: true);
+                if (startupShortcutMenuBar != null)
+                    SetDaoPropertyValue(currentDb, "StartupShortcutMenuBar", startupShortcutMenuBar, daoType: 10, createIfMissing: true);
+                if (ribbonName != null)
+                    SetDaoPropertyValue(currentDb, "RibbonName", ribbonName, daoType: 10, createIfMissing: true);
+
+                if (allowBypassKey.HasValue)
+                    SetDaoPropertyValue(currentDb, "AllowBypassKey", allowBypassKey.Value, daoType: 1, createIfMissing: true);
+                if (allowSpecialKeys.HasValue)
+                    SetDaoPropertyValue(currentDb, "AllowSpecialKeys", allowSpecialKeys.Value, daoType: 1, createIfMissing: true);
+                if (allowFullMenus.HasValue)
+                    SetDaoPropertyValue(currentDb, "AllowFullMenus", allowFullMenus.Value, daoType: 1, createIfMissing: true);
+                if (allowBuiltinToolbars.HasValue)
+                    SetDaoPropertyValue(currentDb, "AllowBuiltInToolbars", allowBuiltinToolbars.Value, daoType: 1, createIfMissing: true);
+                if (allowToolbarChanges.HasValue)
+                    SetDaoPropertyValue(currentDb, "AllowToolbarChanges", allowToolbarChanges.Value, daoType: 1, createIfMissing: true);
+                if (allowBreakIntoCode.HasValue)
+                    SetDaoPropertyValue(currentDb, "AllowBreakIntoCode", allowBreakIntoCode.Value, daoType: 1, createIfMissing: true);
+                if (allowShortcutMenus.HasValue)
+                    SetDaoPropertyValue(currentDb, "AllowShortcutMenus", allowShortcutMenus.Value, daoType: 1, createIfMissing: true);
+                if (useAppIconForForms.HasValue)
+                    SetDaoPropertyValue(currentDb, "UseAppIconForForms", useAppIconForForms.Value, daoType: 1, createIfMissing: true);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        // ===== Phase 7B: Field property setters =====
+
+        public void SetFieldRequired(string tableName, string fieldName, bool required)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(fieldName)) throw new ArgumentException("Field name is required.", nameof(fieldName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var field = ResolveField(accessApp, tableName, fieldName);
+                SetDaoPropertyValue(field, "Required", required, daoType: 1, createIfMissing: false);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void SetFieldAllowZeroLength(string tableName, string fieldName, bool allowZeroLength)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(fieldName)) throw new ArgumentException("Field name is required.", nameof(fieldName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var field = ResolveField(accessApp, tableName, fieldName);
+                SetDaoPropertyValue(field, "AllowZeroLength", allowZeroLength, daoType: 1, createIfMissing: false);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void SetFieldFormat(string tableName, string fieldName, string format)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(fieldName)) throw new ArgumentException("Field name is required.", nameof(fieldName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var field = ResolveField(accessApp, tableName, fieldName);
+                SetDaoPropertyValue(field, "Format", format, daoType: 10, createIfMissing: true);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void SetFieldDecimalPlaces(string tableName, string fieldName, int decimalPlaces)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(fieldName)) throw new ArgumentException("Field name is required.", nameof(fieldName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var field = ResolveField(accessApp, tableName, fieldName);
+                SetDaoPropertyValue(field, "DecimalPlaces", (byte)decimalPlaces, daoType: 2, createIfMissing: true);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void SetFieldDescription(string tableName, string fieldName, string description)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+            if (string.IsNullOrWhiteSpace(fieldName)) throw new ArgumentException("Field name is required.", nameof(fieldName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var field = ResolveField(accessApp, tableName, fieldName);
+                SetDaoPropertyValue(field, "Description", description, daoType: 12, createIfMissing: true);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        // ===== Phase 7C: Create blank form/report =====
+
+        public string CreateBlankForm(string? formName = null, string? recordSource = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var form = accessApp.CreateForm();
+                var temporaryName = SafeToString(TryGetDynamicProperty(form, "Name"))
+                    ?? throw new InvalidOperationException("Failed to create form.");
+
+                if (!string.IsNullOrWhiteSpace(recordSource))
+                {
+                    try { form.RecordSource = recordSource.Trim(); } catch { }
+                }
+
+                accessApp.DoCmd.Close(2, temporaryName, 1); // acForm=2, acSaveYes=1
+
+                var finalName = formName?.Trim();
+                if (!string.IsNullOrWhiteSpace(finalName) && !string.Equals(finalName, temporaryName, StringComparison.OrdinalIgnoreCase))
+                {
+                    TryDeleteObject(accessApp, 2, finalName);
+                    accessApp.DoCmd.Rename(finalName, 2, temporaryName);
+                    return finalName;
+                }
+
+                return temporaryName;
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public string CreateBlankReport(string? reportName = null, string? recordSource = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var report = accessApp.CreateReport();
+                var temporaryName = SafeToString(TryGetDynamicProperty(report, "Name"))
+                    ?? throw new InvalidOperationException("Failed to create report.");
+
+                if (!string.IsNullOrWhiteSpace(recordSource))
+                {
+                    try { report.RecordSource = recordSource.Trim(); } catch { }
+                }
+
+                accessApp.DoCmd.Close(3, temporaryName, 1); // acReport=3, acSaveYes=1
+
+                var finalName = reportName?.Trim();
+                if (!string.IsNullOrWhiteSpace(finalName) && !string.Equals(finalName, temporaryName, StringComparison.OrdinalIgnoreCase))
+                {
+                    TryDeleteObject(accessApp, 3, finalName);
+                    accessApp.DoCmd.Rename(finalName, 3, temporaryName);
+                    return finalName;
+                }
+
+                return temporaryName;
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
     #endregion
 
     } // end class AccessInteropService
@@ -14348,6 +14574,9 @@ namespace MS.Access.MCP.Interop
         public bool? LimitToList { get; set; }
         public bool? AllowMultipleValues { get; set; }
         public int? DisplayControl { get; set; }
+        public string? Description { get; set; }
+        public string? Format { get; set; }
+        public int? DecimalPlaces { get; set; }
     }
 
     public class FieldAttributesInfo
@@ -14405,6 +14634,17 @@ namespace MS.Access.MCP.Interop
         public string? StartupForm { get; set; }
         public string? AppTitle { get; set; }
         public string? AppIcon { get; set; }
+        public bool? AllowBypassKey { get; set; }
+        public bool? AllowSpecialKeys { get; set; }
+        public bool? AllowFullMenus { get; set; }
+        public bool? AllowBuiltinToolbars { get; set; }
+        public bool? AllowToolbarChanges { get; set; }
+        public bool? AllowBreakIntoCode { get; set; }
+        public bool? AllowShortcutMenus { get; set; }
+        public bool? UseAppIconForForms { get; set; }
+        public string? StartupMenuBar { get; set; }
+        public string? StartupShortcutMenuBar { get; set; }
+        public string? RibbonName { get; set; }
     }
 
     public class RibbonInfo

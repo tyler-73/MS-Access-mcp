@@ -509,7 +509,19 @@ class Program
                 new { name = "set_subdatasheet_properties", description = "Set subdatasheet properties on a table. Controls which child table/query appears as an expandable subdatasheet.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, subdatasheet_name = new { type = "string", description = "Table or query name for subdatasheet, or '[None]' to remove" }, subdatasheet_height = new { type = "integer", description = "Height in twips (0 = expand to show all)" }, subdatasheet_expanded = new { type = "boolean", description = "Whether subdatasheet is expanded by default" }, link_child_fields = new { type = "string", description = "Field(s) in the child table that link to the master" }, link_master_fields = new { type = "string", description = "Field(s) in the master table that link to the child" } }, required = new string[] { "table_name" } } },
                 new { name = "set_field_append_only", description = "Set AppendOnly property on a Memo/Long Text field for audit trail. When enabled, Access keeps a history of all changes to the field.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, append_only = new { type = "boolean", description = "True to enable append-only (audit trail), false to disable" } }, required = new string[] { "table_name", "field_name", "append_only" } } },
                 new { name = "reset_autonumber", description = "Reset AutoNumber seed on a table column. Next inserted row will use the specified seed value.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, column_name = new { type = "string", description = "Name of the AutoNumber column" }, new_seed = new { type = "integer", description = "New starting value for the AutoNumber" } }, required = new string[] { "table_name", "column_name", "new_seed" } } },
-                new { name = "follow_hyperlink", description = "Open a URL or file path using Access Application.FollowHyperlink. Launches the default browser or application.", inputSchema = new { type = "object", properties = new { address = new { type = "string", description = "URL or file path to open" }, sub_address = new { type = "string", description = "Named location within the document (e.g., bookmark)" }, new_window = new { type = "boolean", description = "Whether to open in a new window" } }, required = new string[] { "address" } } }
+                new { name = "follow_hyperlink", description = "Open a URL or file path using Access Application.FollowHyperlink. Launches the default browser or application.", inputSchema = new { type = "object", properties = new { address = new { type = "string", description = "URL or file path to open" }, sub_address = new { type = "string", description = "Named location within the document (e.g., bookmark)" }, new_window = new { type = "boolean", description = "Whether to open in a new window" } }, required = new string[] { "address" } } },
+                // Phase 7A: Extended startup properties
+                new { name = "get_startup_properties_extended", description = "Get all application startup/security properties including AllowBypassKey, AllowSpecialKeys, AllowFullMenus, AllowBuiltinToolbars, AllowToolbarChanges, AllowBreakIntoCode, AllowShortcutMenus, UseAppIconForForms, StartupMenuBar, StartupShortcutMenuBar, RibbonName.", inputSchema = new { type = "object", properties = new { } } },
+                new { name = "set_startup_properties_extended", description = "Set application startup/security properties for deployment lockdown. All parameters are optional; only specified values are changed.", inputSchema = new { type = "object", properties = new { startup_form = new { type = "string" }, app_title = new { type = "string" }, app_icon = new { type = "string" }, allow_bypass_key = new { type = "boolean", description = "Allow Shift key to bypass startup options" }, allow_special_keys = new { type = "boolean", description = "Allow F11, Ctrl+Break, Ctrl+G" }, allow_full_menus = new { type = "boolean", description = "Allow full menu bar" }, allow_builtin_toolbars = new { type = "boolean", description = "Allow built-in toolbars" }, allow_toolbar_changes = new { type = "boolean", description = "Allow toolbar customization" }, allow_break_into_code = new { type = "boolean", description = "Allow breaking into VBA code" }, allow_shortcut_menus = new { type = "boolean", description = "Allow right-click shortcut menus" }, use_app_icon_for_forms = new { type = "boolean", description = "Use application icon for form/report icons" }, startup_menu_bar = new { type = "string", description = "Custom startup menu bar name" }, startup_shortcut_menu_bar = new { type = "string", description = "Custom startup shortcut menu bar" }, ribbon_name = new { type = "string", description = "Default custom ribbon name" } } } },
+                // Phase 7B: Field property setters
+                new { name = "set_field_required", description = "Set whether a field is required (cannot be Null).", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, required = new { type = "boolean" } }, required = new string[] { "table_name", "field_name", "required" } } },
+                new { name = "set_field_allow_zero_length", description = "Set whether a text field allows zero-length strings.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, allow_zero_length = new { type = "boolean" } }, required = new string[] { "table_name", "field_name", "allow_zero_length" } } },
+                new { name = "set_field_format", description = "Set display format for a field (e.g., 'Currency', 'Short Date', 'Yes/No', '0.00').", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, format = new { type = "string", description = "Format string (e.g., 'Currency', 'Short Date', '0.00%')" } }, required = new string[] { "table_name", "field_name", "format" } } },
+                new { name = "set_field_decimal_places", description = "Set decimal places for a numeric field. Use 255 for Auto.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, decimal_places = new { type = "integer", description = "Number of decimal places (0-15, or 255 for Auto)" } }, required = new string[] { "table_name", "field_name", "decimal_places" } } },
+                new { name = "set_field_description", description = "Set description text for a field (shown in status bar and design view).", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, description = new { type = "string" } }, required = new string[] { "table_name", "field_name", "description" } } },
+                // Phase 7C: Create blank form/report
+                new { name = "create_form", description = "Create a new blank form. Optionally specify a name and record source.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name for the form (auto-generated if omitted)" }, record_source = new { type = "string", description = "Table or query name to bind as record source" } } } },
+                new { name = "create_report", description = "Create a new blank report. Optionally specify a name and record source.", inputSchema = new { type = "object", properties = new { report_name = new { type = "string", description = "Name for the report (auto-generated if omitted)" }, record_source = new { type = "string", description = "Table or query name to bind as record source" } } } }
             }
         };
     }
@@ -867,6 +879,15 @@ class Program
             "set_field_append_only" => HandleSetFieldAppendOnly(accessService, toolArguments),
             "reset_autonumber" => HandleResetAutoNumber(accessService, toolArguments),
             "follow_hyperlink" => HandleFollowHyperlink(accessService, toolArguments),
+            "get_startup_properties_extended" => HandleGetStartupPropertiesExtended(accessService, toolArguments),
+            "set_startup_properties_extended" => HandleSetStartupPropertiesExtended(accessService, toolArguments),
+            "set_field_required" => HandleSetFieldRequired(accessService, toolArguments),
+            "set_field_allow_zero_length" => HandleSetFieldAllowZeroLength(accessService, toolArguments),
+            "set_field_format" => HandleSetFieldFormat(accessService, toolArguments),
+            "set_field_decimal_places" => HandleSetFieldDecimalPlaces(accessService, toolArguments),
+            "set_field_description" => HandleSetFieldDescription(accessService, toolArguments),
+            "create_form" => HandleCreateForm(accessService, toolArguments),
+            "create_report" => HandleCreateReport(accessService, toolArguments),
             _ => new { success = false, error = $"Unknown tool: {toolName}" }
         };
     }
@@ -7651,6 +7672,209 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("follow_hyperlink", ex);
+        }
+    }
+
+    // ===== Phase 7A: Extended startup properties =====
+
+    static object HandleGetStartupPropertiesExtended(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var props = accessService.GetStartupPropertiesExtended();
+            return new { success = true, props };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_startup_properties_extended", ex);
+        }
+    }
+
+    static object HandleSetStartupPropertiesExtended(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            var hasStartupForm = TryGetOptionalString(arguments, "startup_form", out var startupForm);
+            var hasAppTitle = TryGetOptionalString(arguments, "app_title", out var appTitle);
+            var hasAppIcon = TryGetOptionalString(arguments, "app_icon", out var appIcon);
+            var hasStartupMenuBar = TryGetOptionalString(arguments, "startup_menu_bar", out var startupMenuBar);
+            var hasStartupShortcutMenuBar = TryGetOptionalString(arguments, "startup_shortcut_menu_bar", out var startupShortcutMenuBar);
+            var hasRibbonName = TryGetOptionalString(arguments, "ribbon_name", out var ribbonName);
+
+            TryGetOptionalBoolNullable(arguments, "allow_bypass_key", out var allowBypassKey, out _);
+            TryGetOptionalBoolNullable(arguments, "allow_special_keys", out var allowSpecialKeys, out _);
+            TryGetOptionalBoolNullable(arguments, "allow_full_menus", out var allowFullMenus, out _);
+            TryGetOptionalBoolNullable(arguments, "allow_builtin_toolbars", out var allowBuiltinToolbars, out _);
+            TryGetOptionalBoolNullable(arguments, "allow_toolbar_changes", out var allowToolbarChanges, out _);
+            TryGetOptionalBoolNullable(arguments, "allow_break_into_code", out var allowBreakIntoCode, out _);
+            TryGetOptionalBoolNullable(arguments, "allow_shortcut_menus", out var allowShortcutMenus, out _);
+            TryGetOptionalBoolNullable(arguments, "use_app_icon_for_forms", out var useAppIconForForms, out _);
+
+            accessService.SetStartupPropertiesExtended(
+                hasStartupForm ? startupForm : null,
+                hasAppTitle ? appTitle : null,
+                hasAppIcon ? appIcon : null,
+                allowBypassKey, allowSpecialKeys, allowFullMenus,
+                allowBuiltinToolbars, allowToolbarChanges,
+                allowBreakIntoCode, allowShortcutMenus,
+                useAppIconForForms,
+                hasStartupMenuBar ? startupMenuBar : null,
+                hasStartupShortcutMenuBar ? startupShortcutMenuBar : null,
+                hasRibbonName ? ribbonName : null);
+
+            return new { success = true, message = "Startup properties updated" };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_startup_properties_extended", ex);
+        }
+    }
+
+    // ===== Phase 7B: Field property setters =====
+
+    static object HandleSetFieldRequired(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "field_name", out var fieldName, out var fieldNameError))
+                return fieldNameError;
+            if (!TryGetOptionalBoolNullable(arguments, "required", out var requiredVal, out var requiredError))
+                return requiredError;
+            if (!requiredVal.HasValue)
+                return new { success = false, error = "required is required" };
+
+            accessService.SetFieldRequired(tableName, fieldName, requiredVal.Value);
+            return new { success = true, table_name = tableName, field_name = fieldName, required = requiredVal.Value };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_field_required", ex);
+        }
+    }
+
+    static object HandleSetFieldAllowZeroLength(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "field_name", out var fieldName, out var fieldNameError))
+                return fieldNameError;
+            if (!TryGetOptionalBoolNullable(arguments, "allow_zero_length", out var allowZeroLength, out var azlError))
+                return azlError;
+            if (!allowZeroLength.HasValue)
+                return new { success = false, error = "allow_zero_length is required" };
+
+            accessService.SetFieldAllowZeroLength(tableName, fieldName, allowZeroLength.Value);
+            return new { success = true, table_name = tableName, field_name = fieldName, allow_zero_length = allowZeroLength.Value };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_field_allow_zero_length", ex);
+        }
+    }
+
+    static object HandleSetFieldFormat(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "field_name", out var fieldName, out var fieldNameError))
+                return fieldNameError;
+            if (!TryGetRequiredString(arguments, "format", out var format, out var formatError))
+                return formatError;
+
+            accessService.SetFieldFormat(tableName, fieldName, format);
+            return new { success = true, table_name = tableName, field_name = fieldName, format };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_field_format", ex);
+        }
+    }
+
+    static object HandleSetFieldDecimalPlaces(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "field_name", out var fieldName, out var fieldNameError))
+                return fieldNameError;
+            if (!TryGetOptionalInt(arguments, "decimal_places", out var decimalPlaces, out var decimalError))
+                return decimalError;
+            if (!decimalPlaces.HasValue)
+                return new { success = false, error = "decimal_places is required" };
+
+            accessService.SetFieldDecimalPlaces(tableName, fieldName, decimalPlaces.Value);
+            return new { success = true, table_name = tableName, field_name = fieldName, decimal_places = decimalPlaces.Value };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_field_decimal_places", ex);
+        }
+    }
+
+    static object HandleSetFieldDescription(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+            if (!TryGetRequiredString(arguments, "field_name", out var fieldName, out var fieldNameError))
+                return fieldNameError;
+            if (!TryGetRequiredString(arguments, "description", out var description, out var descriptionError))
+                return descriptionError;
+
+            accessService.SetFieldDescription(tableName, fieldName, description);
+            return new { success = true, table_name = tableName, field_name = fieldName, description };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("set_field_description", ex);
+        }
+    }
+
+    // ===== Phase 7C: Create blank form/report =====
+
+    static object HandleCreateForm(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            _ = TryGetOptionalString(arguments, "form_name", out var formName);
+            _ = TryGetOptionalString(arguments, "record_source", out var recordSource);
+
+            var name = accessService.CreateBlankForm(
+                string.IsNullOrWhiteSpace(formName) ? null : formName,
+                string.IsNullOrWhiteSpace(recordSource) ? null : recordSource);
+
+            return new { success = true, message = $"Created form: {name}", form_name = name };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("create_form", ex);
+        }
+    }
+
+    static object HandleCreateReport(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            _ = TryGetOptionalString(arguments, "report_name", out var reportName);
+            _ = TryGetOptionalString(arguments, "record_source", out var recordSource);
+
+            var name = accessService.CreateBlankReport(
+                string.IsNullOrWhiteSpace(reportName) ? null : reportName,
+                string.IsNullOrWhiteSpace(recordSource) ? null : recordSource);
+
+            return new { success = true, message = $"Created report: {name}", report_name = name };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("create_report", ex);
         }
     }
 

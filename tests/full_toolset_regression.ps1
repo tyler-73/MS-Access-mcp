@@ -6263,6 +6263,155 @@ foreach ($id in ($p6bLabels.Keys | Sort-Object)) {
     }
 }
 
+Write-Host ""
+Write-Host "=== Feature Gap Phase 7: Startup Props, Field Setters, Create Form/Report (IDs 1201-1230) ==="
+Cleanup-AccessArtifacts -DbPath $DatabasePath
+$p7Calls = New-Object 'System.Collections.Generic.List[object]'
+Add-ToolCall -Calls $p7Calls -Id 1201 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
+# Create test table with varied field types
+Add-ToolCall -Calls $p7Calls -Id 1202 -Name "create_table" -Arguments @{
+    table_name = "mcp_p7_test"
+    fields = @(
+        @{ name = "id"; type = "COUNTER"; size = 0; required = $false; allow_zero_length = $false },
+        @{ name = "name"; type = "TEXT"; size = 50; required = $false; allow_zero_length = $true },
+        @{ name = "price"; type = "CURRENCY"; size = 0; required = $false; allow_zero_length = $false },
+        @{ name = "notes"; type = "MEMO"; size = 0; required = $false; allow_zero_length = $true }
+    )
+}
+# 7A: startup properties
+Add-ToolCall -Calls $p7Calls -Id 1203 -Name "set_startup_properties_extended" -Arguments @{
+    allow_bypass_key = $false
+    allow_special_keys = $false
+    allow_break_into_code = $false
+}
+Add-ToolCall -Calls $p7Calls -Id 1204 -Name "get_startup_properties_extended" -Arguments @{}
+Add-ToolCall -Calls $p7Calls -Id 1205 -Name "set_startup_properties_extended" -Arguments @{
+    allow_bypass_key = $true
+    allow_special_keys = $true
+    allow_break_into_code = $true
+}
+# 7B: field property setters
+Add-ToolCall -Calls $p7Calls -Id 1206 -Name "set_field_required" -Arguments @{
+    table_name = "mcp_p7_test"; field_name = "name"; required = $true
+}
+Add-ToolCall -Calls $p7Calls -Id 1207 -Name "set_field_allow_zero_length" -Arguments @{
+    table_name = "mcp_p7_test"; field_name = "name"; allow_zero_length = $false
+}
+Add-ToolCall -Calls $p7Calls -Id 1208 -Name "set_field_format" -Arguments @{
+    table_name = "mcp_p7_test"; field_name = "price"; format = "Currency"
+}
+Add-ToolCall -Calls $p7Calls -Id 1209 -Name "set_field_decimal_places" -Arguments @{
+    table_name = "mcp_p7_test"; field_name = "price"; decimal_places = 2
+}
+Add-ToolCall -Calls $p7Calls -Id 1210 -Name "set_field_description" -Arguments @{
+    table_name = "mcp_p7_test"; field_name = "name"; description = "Employee full name"
+}
+Add-ToolCall -Calls $p7Calls -Id 1211 -Name "get_field_properties" -Arguments @{
+    table_name = "mcp_p7_test"; field_name = "name"
+}
+# 7C: create form/report
+Add-ToolCall -Calls $p7Calls -Id 1212 -Name "create_form" -Arguments @{
+    form_name = "mcp_p7_form"; record_source = "mcp_p7_test"
+}
+Add-ToolCall -Calls $p7Calls -Id 1213 -Name "create_report" -Arguments @{
+    report_name = "mcp_p7_report"; record_source = "mcp_p7_test"
+}
+Add-ToolCall -Calls $p7Calls -Id 1214 -Name "get_forms" -Arguments @{}
+Add-ToolCall -Calls $p7Calls -Id 1215 -Name "get_reports" -Arguments @{}
+# Cleanup
+Add-ToolCall -Calls $p7Calls -Id 1216 -Name "delete_form" -Arguments @{ form_name = "mcp_p7_form" }
+Add-ToolCall -Calls $p7Calls -Id 1217 -Name "delete_report" -Arguments @{ report_name = "mcp_p7_report" }
+# Restore field defaults before deleting table
+Add-ToolCall -Calls $p7Calls -Id 1218 -Name "set_field_required" -Arguments @{
+    table_name = "mcp_p7_test"; field_name = "name"; required = $false
+}
+Add-ToolCall -Calls $p7Calls -Id 1219 -Name "delete_table" -Arguments @{ table_name = "mcp_p7_test" }
+
+$p7Responses = Invoke-McpBatch -ExePath $ServerExe -Calls $p7Calls -ClientName "full-regression-phase7" -ClientVersion "1.0"
+$p7Labels = @{
+    1201 = "p7_connect"
+    1202 = "p7_create_table"
+    1203 = "p7_set_startup_lockdown"
+    1204 = "p7_get_startup_props"
+    1205 = "p7_restore_startup_defaults"
+    1206 = "p7_set_field_required"
+    1207 = "p7_set_field_azl"
+    1208 = "p7_set_field_format"
+    1209 = "p7_set_field_decimal"
+    1210 = "p7_set_field_description"
+    1211 = "p7_get_field_properties"
+    1212 = "p7_create_form"
+    1213 = "p7_create_report"
+    1214 = "p7_get_forms"
+    1215 = "p7_get_reports"
+    1216 = "p7_delete_form"
+    1217 = "p7_delete_report"
+    1218 = "p7_restore_required"
+    1219 = "p7_delete_table"
+}
+
+foreach ($id in ($p7Labels.Keys | Sort-Object)) {
+    $label = $p7Labels[$id]
+    $decoded = Decode-McpResult -Response $p7Responses[[int]$id]
+
+    if ($null -eq $decoded) {
+        $failed++
+        Write-Host ('{0}: FAIL missing-response' -f $label)
+        continue
+    }
+    if ($decoded.success -ne $true) {
+        $failed++
+        Write-Host ('{0}: FAIL {1}' -f $label, $decoded.error)
+        continue
+    }
+
+    $p7Failed = $false
+    switch ($label) {
+        "p7_get_startup_props" {
+            $bypass = $decoded.props.allowBypassKey
+            if ($bypass -ne $false) {
+                $failed++
+                $p7Failed = $true
+                Write-Host ('{0}: FAIL expected allowBypassKey=false, got {1}' -f $label, $bypass)
+            }
+        }
+        "p7_get_field_properties" {
+            $req = $decoded.properties.required
+            $desc = $decoded.properties.description
+            if ($req -ne $true) {
+                $failed++
+                $p7Failed = $true
+                Write-Host ('{0}: FAIL expected required=true, got {1}' -f $label, $req)
+            }
+            if ("$desc" -ne "Employee full name") {
+                $failed++
+                $p7Failed = $true
+                Write-Host ('{0}: FAIL expected description="Employee full name", got {1}' -f $label, $desc)
+            }
+        }
+        "p7_get_forms" {
+            $formNames = @($decoded.forms | ForEach-Object { $_.name }) -join ","
+            if ($formNames -notmatch "mcp_p7_form") {
+                $failed++
+                $p7Failed = $true
+                Write-Host ('{0}: FAIL mcp_p7_form not found in: {1}' -f $label, $formNames)
+            }
+        }
+        "p7_get_reports" {
+            $reportNames = @($decoded.reports | ForEach-Object { $_.name }) -join ","
+            if ($reportNames -notmatch "mcp_p7_report") {
+                $failed++
+                $p7Failed = $true
+                Write-Host ('{0}: FAIL mcp_p7_report not found in: {1}' -f $label, $reportNames)
+            }
+        }
+    }
+
+    if (-not $p7Failed) {
+        Write-Host ('{0}: OK' -f $label)
+    }
+}
+
 Write-Host "=== End Feature Gap Tests ==="
 Write-Host ""
 
