@@ -537,7 +537,12 @@ class Program
                 new { name = "create_report", description = "Create a new blank report. Optionally specify a name and record source.", inputSchema = new { type = "object", properties = new { report_name = new { type = "string", description = "Name for the report (auto-generated if omitted)" }, record_source = new { type = "string", description = "Table or query name to bind as record source" } } } },
                 // Phase 8
                 new { name = "get_form_runtime_state", description = "Get runtime state of an open form: filter, order, allow edits, current record, dirty flag, etc.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string" } }, required = new string[] { "form_name" } } },
-                new { name = "set_report_sorting", description = "Set OrderBy and OrderByOn on a report at design time.", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" }, order_by = new { type = "string", description = "SQL ORDER BY clause (e.g. \"[LastName] ASC, [FirstName] ASC\")" }, order_by_on = new { type = "boolean", description = "Whether the OrderBy is active" } }, required = new string[] { "report_name" } } }
+                new { name = "set_report_sorting", description = "Set OrderBy and OrderByOn on a report at design time.", inputSchema = new { type = "object", properties = new { report_name = new { type = "string" }, order_by = new { type = "string", description = "SQL ORDER BY clause (e.g. \"[LastName] ASC, [FirstName] ASC\")" }, order_by_on = new { type = "boolean", description = "Whether the OrderBy is active" } }, required = new string[] { "report_name" } } },
+                // Phase 9
+                new { name = "recordset_seek", description = "Index-based lookup on a table-type recordset (much faster than Find for indexed fields). Sets the Index property then calls Seek.", inputSchema = new { type = "object", properties = new { recordset_id = new { type = "string", description = "The recordset handle ID (must be opened with type=1 for table-type)" }, index_name = new { type = "string", description = "Name of the index to use (e.g. 'PrimaryKey')" }, key_values = new { type = "array", items = new { }, description = "Array of key values to seek (matches index columns in order)" }, comparison = new { type = "string", @enum = new[] { "=", "<", ">", "<=", ">=" }, description = "Comparison operator (default '=')" } }, required = new string[] { "recordset_id", "index_name", "key_values" } } },
+                new { name = "recordset_clone", description = "Create an independent clone of an open recordset. The clone shares the same data but has its own current position.", inputSchema = new { type = "object", properties = new { recordset_id = new { type = "string", description = "The recordset handle ID to clone" } }, required = new string[] { "recordset_id" } } },
+                new { name = "control_set_zorder", description = "Change the z-order of a control on a form or report (bring to front or send to back) in design view.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string", @enum = new[] { "form", "report" }, description = "Type of object containing the control" }, object_name = new { type = "string", description = "Name of the form or report" }, control_name = new { type = "string", description = "Name of the control to reorder" }, position = new { type = "string", @enum = new[] { "front", "back" }, description = "Target z-order position" } }, required = new string[] { "object_type", "object_name", "control_name", "position" } } },
+                new { name = "get_tab_control_pages", description = "Enumerate pages in a TabControl on a form, returning name, caption, index, visibility, enabled state, and control count for each page.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the form containing the tab control" }, control_name = new { type = "string", description = "Name of the tab control" } }, required = new string[] { "form_name", "control_name" } } }
             }
         };
     }
@@ -906,6 +911,11 @@ class Program
             "create_report" => HandleCreateReport(accessService, toolArguments),
             "get_form_runtime_state" => HandleGetFormRuntimeState(accessService, toolArguments),
             "set_report_sorting" => HandleSetReportSorting(accessService, toolArguments),
+            // Phase 9
+            "recordset_seek" => HandleRecordsetSeek(accessService, toolArguments),
+            "recordset_clone" => HandleRecordsetClone(accessService, toolArguments),
+            "control_set_zorder" => HandleControlSetZOrder(accessService, toolArguments),
+            "get_tab_control_pages" => HandleGetTabControlPages(accessService, toolArguments),
             _ => new { success = false, error = $"Unknown tool: {toolName}" }
         };
     }
@@ -7966,6 +7976,102 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("set_report_sorting", ex);
+        }
+    }
+
+    // ===== Phase 9: High & Medium Value Feature Gaps =====
+
+    static object HandleRecordsetSeek(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "recordset_id", out var id, out var idError))
+                return idError;
+            if (!TryGetRequiredString(arguments, "index_name", out var indexName, out var indexError))
+                return indexError;
+
+            // Parse key_values array
+            if (!arguments.TryGetProperty("key_values", out var keyValuesElement) || keyValuesElement.ValueKind != JsonValueKind.Array)
+                return new { success = false, error = "key_values is required and must be an array" };
+
+            var keyValues = new List<object>();
+            foreach (var item in keyValuesElement.EnumerateArray())
+            {
+                keyValues.Add(item.ValueKind switch
+                {
+                    JsonValueKind.String => (object)item.GetString()!,
+                    JsonValueKind.Number => item.TryGetInt64(out var l) ? (object)(int)l : item.GetDouble(),
+                    JsonValueKind.True => true,
+                    JsonValueKind.False => false,
+                    _ => item.GetRawText()
+                });
+            }
+
+            _ = TryGetOptionalString(arguments, "comparison", out var comparison);
+            if (string.IsNullOrWhiteSpace(comparison)) comparison = "=";
+
+            var result = accessService.RecordsetSeek(id, indexName, keyValues.ToArray(), comparison);
+            var noMatch = result.ContainsKey("__noMatch") && result["__noMatch"] is true;
+            result.Remove("__noMatch");
+
+            return new { success = true, found = !noMatch, recordset_id = id, index_name = indexName, comparison, record = noMatch ? null : result };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("recordset_seek", ex);
+        }
+    }
+
+    static object HandleRecordsetClone(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "recordset_id", out var id, out var idError))
+                return idError;
+            var cloneId = accessService.RecordsetClone(id);
+            return new { success = true, recordset_id = id, clone_id = cloneId };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("recordset_clone", ex);
+        }
+    }
+
+    static object HandleControlSetZOrder(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "object_type", out var objectType, out var otError))
+                return otError;
+            if (!TryGetRequiredString(arguments, "object_name", out var objectName, out var onError))
+                return onError;
+            if (!TryGetRequiredString(arguments, "control_name", out var controlName, out var cnError))
+                return cnError;
+            if (!TryGetRequiredString(arguments, "position", out var position, out var posError))
+                return posError;
+            accessService.ControlSetZOrder(objectType, objectName, controlName, position);
+            return new { success = true, message = $"Control '{controlName}' z-order set to '{position}' on {objectType} '{objectName}'" };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("control_set_zorder", ex);
+        }
+    }
+
+    static object HandleGetTabControlPages(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "form_name", out var formName, out var fnError))
+                return fnError;
+            if (!TryGetRequiredString(arguments, "control_name", out var controlName, out var cnError))
+                return cnError;
+            var pages = accessService.GetTabControlPages(formName, controlName);
+            return new { success = true, form_name = formName, control_name = controlName, page_count = pages.Count, pages };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_tab_control_pages", ex);
         }
     }
 

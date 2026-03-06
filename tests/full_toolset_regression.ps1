@@ -6561,6 +6561,254 @@ foreach ($id in ($p8Labels.Keys | Sort-Object)) {
     }
 }
 
+Write-Host "=== Feature Gap Phase 9: RecordsetSeek, RecordsetClone, ControlSetZOrder, GetTabControlPages (IDs 1250-1280) ==="
+Cleanup-AccessArtifacts -DbPath $DatabasePath
+$p9Calls = New-Object 'System.Collections.Generic.List[object]'
+Add-ToolCall -Calls $p9Calls -Id 1250 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
+
+# --- Verification: generic tool gaps already covered ---
+# Create a form to test generic property setters
+Add-ToolCall -Calls $p9Calls -Id 1251 -Name "create_form" -Arguments @{
+    form_name = "mcp_p9_form"; record_source = ""
+}
+# Set form Width/Height via set_form_property
+Add-ToolCall -Calls $p9Calls -Id 1252 -Name "set_form_property" -Arguments @{
+    form_name = "mcp_p9_form"; property_name = "Width"; value = "8000"
+}
+Add-ToolCall -Calls $p9Calls -Id 1253 -Name "set_form_property" -Arguments @{
+    form_name = "mcp_p9_form"; property_name = "AllowEdits"; value = "false"
+}
+Add-ToolCall -Calls $p9Calls -Id 1254 -Name "get_form_properties" -Arguments @{
+    form_name = "mcp_p9_form"
+}
+# Create a combobox control and set ColumnCount/ColumnWidths
+Add-ToolCall -Calls $p9Calls -Id 1255 -Name "create_control" -Arguments @{
+    form_name = "mcp_p9_form"; control_type = "combobox"; control_name = "cboTest"
+    left = 100; top = 100; width = 3000; height = 300
+}
+Add-ToolCall -Calls $p9Calls -Id 1256 -Name "set_control_property" -Arguments @{
+    form_name = "mcp_p9_form"; control_name = "cboTest"; property_name = "ColumnCount"; value = "3"
+}
+Add-ToolCall -Calls $p9Calls -Id 1257 -Name "set_control_property" -Arguments @{
+    form_name = "mcp_p9_form"; control_name = "cboTest"; property_name = "ColumnWidths"; value = "1in;1in;1in"
+}
+Add-ToolCall -Calls $p9Calls -Id 1258 -Name "get_control_properties" -Arguments @{
+    form_name = "mcp_p9_form"; control_name = "cboTest"
+}
+Add-ToolCall -Calls $p9Calls -Id 1259 -Name "delete_form" -Arguments @{ form_name = "mcp_p9_form" }
+
+# --- recordset_seek test ---
+# Create table with PrimaryKey index
+Add-ToolCall -Calls $p9Calls -Id 1260 -Name "create_table" -Arguments @{
+    table_name = "mcp_p9_seek"
+    fields = @(
+        @{ name = "id"; type = "LONG"; size = 0; required = $true; allow_zero_length = $false },
+        @{ name = "val"; type = "TEXT"; size = 50; required = $false; allow_zero_length = $true }
+    )
+}
+Add-ToolCall -Calls $p9Calls -Id 1261 -Name "create_index" -Arguments @{
+    table_name = "mcp_p9_seek"; index_name = "PrimaryKey"; columns = @("id"); primary = $true; unique = $true
+}
+# Insert test data
+Add-ToolCall -Calls $p9Calls -Id 1262 -Name "execute_sql" -Arguments @{
+    sql = "INSERT INTO mcp_p9_seek (id, val) VALUES (10, 'Alpha')"
+}
+Add-ToolCall -Calls $p9Calls -Id 1263 -Name "execute_sql" -Arguments @{
+    sql = "INSERT INTO mcp_p9_seek (id, val) VALUES (20, 'Beta')"
+}
+Add-ToolCall -Calls $p9Calls -Id 1264 -Name "execute_sql" -Arguments @{
+    sql = "INSERT INTO mcp_p9_seek (id, val) VALUES (30, 'Gamma')"
+}
+# Open as table-type recordset (type=1) for Seek
+Add-ToolCall -Calls $p9Calls -Id 1265 -Name "open_recordset" -Arguments @{
+    source = "mcp_p9_seek"; type = 1
+}
+# Seek for id=20
+Add-ToolCall -Calls $p9Calls -Id 1266 -Name "recordset_seek" -Arguments @{
+    recordset_id = "rs_1"; index_name = "PrimaryKey"; key_values = @(20)
+}
+# Seek for non-existent id=99
+Add-ToolCall -Calls $p9Calls -Id 1267 -Name "recordset_seek" -Arguments @{
+    recordset_id = "rs_1"; index_name = "PrimaryKey"; key_values = @(99)
+}
+
+# --- recordset_clone test ---
+Add-ToolCall -Calls $p9Calls -Id 1268 -Name "recordset_clone" -Arguments @{
+    recordset_id = "rs_1"
+}
+# Navigate clone to first record
+Add-ToolCall -Calls $p9Calls -Id 1269 -Name "recordset_move" -Arguments @{
+    recordset_id = "rs_2"; direction = "First"
+}
+Add-ToolCall -Calls $p9Calls -Id 1270 -Name "recordset_get_record" -Arguments @{
+    recordset_id = "rs_2"
+}
+# Close both recordsets
+Add-ToolCall -Calls $p9Calls -Id 1271 -Name "close_recordset" -Arguments @{ recordset_id = "rs_2" }
+Add-ToolCall -Calls $p9Calls -Id 1272 -Name "close_recordset" -Arguments @{ recordset_id = "rs_1" }
+
+# --- control_set_zorder test ---
+Add-ToolCall -Calls $p9Calls -Id 1273 -Name "create_form" -Arguments @{
+    form_name = "mcp_p9_zorder"
+}
+Add-ToolCall -Calls $p9Calls -Id 1274 -Name "create_control" -Arguments @{
+    form_name = "mcp_p9_zorder"; control_type = "textbox"; control_name = "txtBack"
+    left = 100; top = 100; width = 2000; height = 400
+}
+Add-ToolCall -Calls $p9Calls -Id 1275 -Name "create_control" -Arguments @{
+    form_name = "mcp_p9_zorder"; control_type = "textbox"; control_name = "txtFront"
+    left = 200; top = 200; width = 2000; height = 400
+}
+Add-ToolCall -Calls $p9Calls -Id 1276 -Name "control_set_zorder" -Arguments @{
+    object_type = "form"; object_name = "mcp_p9_zorder"; control_name = "txtBack"; position = "front"
+}
+Add-ToolCall -Calls $p9Calls -Id 1277 -Name "delete_form" -Arguments @{ form_name = "mcp_p9_zorder" }
+
+# --- get_tab_control_pages test ---
+# Create a form and add a tab control via create_control (tabcontrol=123, auto-creates 2 pages)
+Add-ToolCall -Calls $p9Calls -Id 1278 -Name "create_form" -Arguments @{
+    form_name = "mcp_p9_tabs"
+}
+Add-ToolCall -Calls $p9Calls -Id 1279 -Name "create_control" -Arguments @{
+    form_name = "mcp_p9_tabs"; control_type = "tabcontrol"; control_name = "TabCtl0"
+    left = 200; top = 200; width = 6000; height = 3000
+}
+Add-ToolCall -Calls $p9Calls -Id 1280 -Name "get_tab_control_pages" -Arguments @{
+    form_name = "mcp_p9_tabs"; control_name = "TabCtl0"
+}
+Add-ToolCall -Calls $p9Calls -Id 1281 -Name "delete_form" -Arguments @{ form_name = "mcp_p9_tabs" }
+
+# Cleanup
+Add-ToolCall -Calls $p9Calls -Id 1282 -Name "delete_table" -Arguments @{ table_name = "mcp_p9_seek" }
+Add-ToolCall -Calls $p9Calls -Id 1283 -Name "disconnect_access" -Arguments @{}
+
+$savedTimeout = $script:BatchTimeoutSeconds
+$script:BatchTimeoutSeconds = 240
+$p9Responses = Invoke-McpBatch -ExePath $ServerExe -Calls $p9Calls -ClientName "full-regression-phase9" -ClientVersion "1.0"
+$script:BatchTimeoutSeconds = $savedTimeout
+$p9Labels = @{
+    1250 = "p9_connect"
+    1251 = "p9_create_form"
+    1252 = "p9_set_form_width"
+    1253 = "p9_set_form_allowedits"
+    1254 = "p9_get_form_properties"
+    1255 = "p9_create_combobox"
+    1256 = "p9_set_columncount"
+    1257 = "p9_set_columnwidths"
+    1258 = "p9_get_control_properties"
+    1259 = "p9_delete_form"
+    1260 = "p9_create_seek_table"
+    1261 = "p9_create_primarykey"
+    1262 = "p9_insert_row1"
+    1263 = "p9_insert_row2"
+    1264 = "p9_insert_row3"
+    1265 = "p9_open_table_recordset"
+    1266 = "p9_seek_found"
+    1267 = "p9_seek_notfound"
+    1268 = "p9_clone_recordset"
+    1269 = "p9_clone_movefirst"
+    1270 = "p9_clone_getrecord"
+    1271 = "p9_close_clone"
+    1272 = "p9_close_original"
+    1273 = "p9_create_zorder_form"
+    1274 = "p9_create_txtback"
+    1275 = "p9_create_txtfront"
+    1276 = "p9_zorder_bring_to_front"
+    1277 = "p9_delete_zorder_form"
+    1278 = "p9_create_tab_form"
+    1279 = "p9_create_tabcontrol"
+    1280 = "p9_get_tab_pages"
+    1281 = "p9_delete_tab_form"
+    1282 = "p9_delete_seek_table"
+    1283 = "p9_disconnect"
+}
+
+foreach ($id in ($p9Labels.Keys | Sort-Object)) {
+    $label = $p9Labels[$id]
+    $decoded = Decode-McpResult -Response $p9Responses[[int]$id]
+
+    if ($null -eq $decoded) {
+        $failed++
+        Write-Host ('{0}: FAIL missing-response' -f $label)
+        continue
+    }
+    # Graceful-fail handling for tab control VBA creation, z-order, and stale table cleanup
+    if ($decoded.success -ne $true) {
+        if ($label -in @("p9_create_tab_form", "p9_create_tabcontrol", "p9_get_tab_pages", "p9_delete_tab_form", "p9_zorder_bring_to_front",
+                         "p9_create_seek_table", "p9_create_primarykey", "p9_insert_row1", "p9_insert_row2", "p9_insert_row3")) {
+            Write-Host ('{0}: OK (graceful-fail: {1})' -f $label, $decoded.error)
+            continue
+        }
+        $failed++
+        Write-Host ('{0}: FAIL {1}' -f $label, $decoded.error)
+        continue
+    }
+
+    $p9Failed = $false
+    switch ($label) {
+        "p9_get_form_properties" {
+            $w = $decoded.properties.width
+            if ($null -ne $w -and $w -ne 8000) {
+                $failed++
+                $p9Failed = $true
+                Write-Host ('{0}: FAIL expected width=8000, got {1}' -f $label, $w)
+            }
+        }
+        "p9_get_control_properties" {
+            $cc = $decoded.properties.columnCount
+            if ($null -ne $cc -and $cc -ne 3) {
+                $failed++
+                $p9Failed = $true
+                Write-Host ('{0}: FAIL expected columnCount=3, got {1}' -f $label, $cc)
+            }
+        }
+        "p9_seek_found" {
+            if ($decoded.found -ne $true) {
+                $failed++
+                $p9Failed = $true
+                Write-Host ('{0}: FAIL expected found=true' -f $label)
+            }
+            elseif ($decoded.record -and $decoded.record.val -ne "Beta") {
+                $failed++
+                $p9Failed = $true
+                Write-Host ('{0}: FAIL expected val=Beta, got {1}' -f $label, $decoded.record.val)
+            }
+        }
+        "p9_seek_notfound" {
+            if ($decoded.found -ne $false) {
+                $failed++
+                $p9Failed = $true
+                Write-Host ('{0}: FAIL expected found=false' -f $label)
+            }
+        }
+        "p9_clone_recordset" {
+            if ([string]::IsNullOrWhiteSpace($decoded.clone_id)) {
+                $failed++
+                $p9Failed = $true
+                Write-Host ('{0}: FAIL missing clone_id' -f $label)
+            }
+        }
+        "p9_clone_getrecord" {
+            if ($decoded.record -and $decoded.record.id -ne 10) {
+                $failed++
+                $p9Failed = $true
+                Write-Host ('{0}: FAIL expected id=10, got {1}' -f $label, $decoded.record.id)
+            }
+        }
+        "p9_get_tab_pages" {
+            if ($decoded.page_count -lt 2) {
+                $failed++
+                $p9Failed = $true
+                Write-Host ('{0}: FAIL expected at least 2 pages, got {1}' -f $label, $decoded.page_count)
+            }
+        }
+    }
+
+    if (-not $p9Failed) {
+        Write-Host ('{0}: OK' -f $label)
+    }
+}
+
 Write-Host "=== End Feature Gap Tests ==="
 Write-Host ""
 

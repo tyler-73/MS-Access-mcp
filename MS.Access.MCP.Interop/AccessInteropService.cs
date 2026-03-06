@@ -8133,6 +8133,84 @@ namespace MS.Access.MCP.Interop
             return newId;
         }
 
+        public Dictionary<string, object?> RecordsetSeek(string recordsetId, string indexName, object[] keyValues, string comparison = "=")
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            // Get the source table from the stored recordset's Name property
+            var storedRs = GetRecordset(recordsetId);
+            string? sourceName = null;
+            try { sourceName = (string)TryGetDynamicProperty(storedRs, "Name"); } catch { }
+            if (string.IsNullOrWhiteSpace(sourceName))
+                throw new InvalidOperationException("Cannot determine source table name from recordset for Seek operation");
+
+            var record = new Dictionary<string, object?>();
+            bool noMatch = true;
+
+            // Open a fresh table-type recordset via C# dynamic dispatch (same mechanism as OpenRecordset).
+            // Must use dynamic dispatch (not NewLateBinding.LateCall) for Seek — LateCall doesn't
+            // properly marshal the variadic key parameters to COM.
+            ExecuteComOperation(app =>
+            {
+                dynamic db = app.CurrentDb();
+                // Refresh to ensure DAO sees indexes/data created via OleDb
+                try { db.TableDefs.Refresh(); } catch { }
+
+                // dbOpenTable=1, no options=0
+                dynamic seekRs = db.OpenRecordset(sourceName, 1, 0);
+                try
+                {
+                    seekRs.Index = indexName;
+
+                    // Call Seek with explicit argument spreading (DAO Seek takes up to 13 key params)
+                    switch (keyValues.Length)
+                    {
+                        case 1: seekRs.Seek(comparison, keyValues[0]); break;
+                        case 2: seekRs.Seek(comparison, keyValues[0], keyValues[1]); break;
+                        case 3: seekRs.Seek(comparison, keyValues[0], keyValues[1], keyValues[2]); break;
+                        case 4: seekRs.Seek(comparison, keyValues[0], keyValues[1], keyValues[2], keyValues[3]); break;
+                        default: seekRs.Seek(comparison, keyValues[0]); break;
+                    }
+
+                    noMatch = (bool)seekRs.NoMatch;
+
+                    if (!noMatch)
+                    {
+                        dynamic fields = seekRs.Fields;
+                        int fieldCount = fields.Count;
+                        for (int i = 0; i < fieldCount; i++)
+                        {
+                            dynamic field = fields[i];
+                            string name = field.Name;
+                            object? value = field.Value;
+                            if (value is DBNull) value = null;
+                            record[name] = value;
+                        }
+                    }
+                }
+                finally
+                {
+                    try { seekRs.Close(); } catch { }
+                    try { Marshal.ReleaseComObject(seekRs); } catch { }
+                }
+            }, requireExclusive: false, releaseOleDb: false);
+
+            record["__noMatch"] = noMatch;
+            return record;
+        }
+
+        public string RecordsetClone(string recordsetId)
+        {
+            if (_openRecordsets.Count >= MaxOpenRecordsets)
+                throw new InvalidOperationException($"Maximum open recordsets ({MaxOpenRecordsets}) reached");
+
+            var rs = GetRecordset(recordsetId);
+            dynamic cloneRs = rs.Clone();
+            var newId = $"rs_{++_recordsetCounter}";
+            _openRecordsets[newId] = cloneRs;
+            return newId;
+        }
+
         #endregion
 
         #region 12. XML/Data Exchange & Printer Management
@@ -8514,6 +8592,125 @@ namespace MS.Access.MCP.Interop
                 result = new { isCompiled, brokenReferences = brokenRefs, brokenReferenceCount = brokenRefs.Count };
             }, requireExclusive: false, releaseOleDb: false);
             return result!;
+        }
+
+        public void ControlSetZOrder(string objectType, string objectName, string controlName, string position)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            ExecuteComOperation(app =>
+            {
+                // acForm=2, acReport=3
+                int objType = objectType.ToLowerInvariant() switch
+                {
+                    "form" => 2,
+                    "report" => 3,
+                    _ => throw new ArgumentException($"Invalid object type: {objectType}. Use 'form' or 'report'.")
+                };
+                // Open in design view (acViewDesign=1)
+                if (objType == 2)
+                    app.DoCmd.OpenForm(objectName, 1);
+                else
+                    app.DoCmd.OpenReport(objectName, 1);
+
+                // Get the object reference
+                dynamic obj;
+                if (objType == 2)
+                {
+                    var forms = TryGetDynamicProperty(app, "Forms");
+                    obj = TryGetDynamicProperty(forms, "Item", objectName);
+                }
+                else
+                {
+                    var reports = TryGetDynamicProperty(app, "Reports");
+                    obj = TryGetDynamicProperty(reports, "Item", objectName);
+                }
+
+                var controls = TryGetDynamicProperty(obj, "Controls");
+                var control = TryGetDynamicProperty(controls, "Item", controlName);
+
+                // Select the control in design view, then use RunCommand to change z-order
+                // acCmdSendToBack=37, acCmdBringToFront=52
+                app.DoCmd.SelectObject(objType, objectName);
+
+                // In design view, use .InSelection to mark the control as selected
+                try
+                {
+                    int controlCount = (int)TryGetDynamicProperty(controls, "Count");
+                    for (int i = 0; i < controlCount; i++)
+                    {
+                        try { controls[i].InSelection = false; } catch { }
+                    }
+                }
+                catch { }
+                control.InSelection = true;
+
+                int cmd = position.ToLowerInvariant() switch
+                {
+                    "front" => 52,   // acCmdBringToFront
+                    "back" => 37,    // acCmdSendToBack
+                    _ => throw new ArgumentException($"Invalid position: {position}. Use 'front' or 'back'.")
+                };
+                app.DoCmd.RunCommand(cmd);
+
+                // Save and close
+                app.DoCmd.Close(objType, objectName, 1); // acSaveYes=1
+            }, requireExclusive: false, releaseOleDb: false);
+        }
+
+        public List<Dictionary<string, object?>> GetTabControlPages(string formName, string controlName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+
+            var pages = new List<Dictionary<string, object?>>();
+            ExecuteComOperation(app =>
+            {
+                // Open form in design view (acDesign=1)
+                app.DoCmd.OpenForm(formName, 1);
+
+                var forms = TryGetDynamicProperty(app, "Forms");
+                var form = TryGetDynamicProperty(forms, "Item", formName);
+                var controls = TryGetDynamicProperty(form, "Controls");
+                var tabControl = TryGetDynamicProperty(controls, "Item", controlName);
+
+                // Iterate Pages collection
+                var pagesCollection = TryGetDynamicProperty(tabControl, "Pages");
+                int pageCount = (int)TryGetDynamicProperty(pagesCollection, "Count");
+
+                for (int i = 0; i < pageCount; i++)
+                {
+                    var page = pagesCollection[i];
+                    var pageInfo = new Dictionary<string, object?>
+                    {
+                        ["name"] = (string)TryGetDynamicProperty(page, "Name"),
+                        ["caption"] = TryGetDynamicProperty(page, "Caption")?.ToString() ?? "",
+                        ["pageIndex"] = i,
+                        ["visible"] = TryGetDynamicPropertySafe(page, "Visible", true),
+                        ["enabled"] = TryGetDynamicPropertySafe(page, "Enabled", true),
+                    };
+                    // Count controls on this page
+                    try
+                    {
+                        var pageControls = TryGetDynamicProperty(page, "Controls");
+                        pageInfo["controlCount"] = (int)TryGetDynamicProperty(pageControls, "Count");
+                    }
+                    catch
+                    {
+                        pageInfo["controlCount"] = 0;
+                    }
+                    pages.Add(pageInfo);
+                }
+
+                // Close form without saving
+                app.DoCmd.Close(2, formName, 2); // acSaveNo=2
+            }, requireExclusive: false, releaseOleDb: false);
+            return pages;
+        }
+
+        private object? TryGetDynamicPropertySafe(dynamic obj, string propName, object? defaultValue)
+        {
+            try { return TryGetDynamicProperty(obj, propName); }
+            catch { return defaultValue; }
         }
 
         #endregion
@@ -12700,6 +12897,9 @@ namespace MS.Access.MCP.Interop
                 "combobox" => 111,
                 "subform" => 112,
                 "togglebutton" => 122,
+                "tabcontrol" => 123,
+                "page" => 124,
+                "pagebreak" => 118,
                 _ => 109 // default to TextBox
             };
         }
