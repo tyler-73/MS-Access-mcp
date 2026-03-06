@@ -58,7 +58,8 @@ class Program
 
                     object result = method switch
                     {
-                        "initialize" => HandleInitialize(),
+                        "initialize" => HandleInitialize(safeParams),
+                        "ping" => new { },
                         "tools/list" => HandleToolsList(),
                         "tools/call" => WrapCallToolResult(HandleToolsCall(accessService, safeParams)),
                         "resources/list" => HandleResourcesList(accessService),
@@ -145,22 +146,34 @@ class Program
         }
     }
 
-    static object HandleInitialize()
+    static readonly string[] SupportedProtocolVersions = { "2025-11-25", "2024-11-05" };
+
+    static object HandleInitialize(JsonElement parameters)
     {
+        // Version negotiation: echo client's version if supported, otherwise return our latest.
+        var negotiatedVersion = SupportedProtocolVersions[0]; // default to latest
+        if (parameters.TryGetProperty("protocolVersion", out var clientVersion))
+        {
+            var requested = clientVersion.GetString();
+            if (requested != null && SupportedProtocolVersions.Contains(requested))
+                negotiatedVersion = requested;
+        }
+
         return new
         {
-            protocolVersion = "2024-11-05",
+            protocolVersion = negotiatedVersion,
             capabilities = new
             {
                 tools = new { },
                 resources = new { listChanged = true },
                 prompts = new { },
-                logging = new { }
+                logging = new { },
+                completions = new { }
             },
             serverInfo = new
             {
                 name = "Access MCP Server",
-                version = "1.0.1"
+                version = "2.0.0"
             }
         };
     }
