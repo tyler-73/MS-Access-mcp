@@ -704,6 +704,7 @@ $tempNavXmlPath = Join-Path ([System.IO.Path]::GetTempPath()) "mcp_nav_$suffix.x
 $tempXmlDataPath = Join-Path ([System.IO.Path]::GetTempPath()) "mcp_export_$suffix.xml"
 $fieldMetaTableName = "MCP_FieldMeta_$suffix"
 $vbaModuleName2 = "MCP_VbaMod2_$suffix"
+$vbaProcName = "TestProc_$suffix"
 $podbcTableName = "MCP_Podbc_$suffix"
 $condFmtFormName = "MCP_CondFmt_Form_$suffix"
 $condFmtTableName = "MCP_CondFmt_$suffix"
@@ -3407,13 +3408,13 @@ Add-ToolCall -Calls $vbaCalls -Id 803 -Name "get_module_declarations" -Arguments
 Add-ToolCall -Calls $vbaCalls -Id 804 -Name "insert_lines" -Arguments @{
     module_name = $vbaModuleName2
     line_number = 3
-    code        = "Public Sub TestProc()`r`n    Debug.Print ""hello""`r`nEnd Sub"
+    code        = "Public Sub $vbaProcName()`r`n    Debug.Print ""hello""`r`nEnd Sub"
 }
 Add-ToolCall -Calls $vbaCalls -Id 805 -Name "list_procedures" -Arguments @{ module_name = $vbaModuleName2 }
 Add-ToolCall -Calls $vbaCalls -Id 806 -Name "list_all_procedures" -Arguments @{}
 Add-ToolCall -Calls $vbaCalls -Id 807 -Name "get_procedure_code" -Arguments @{
     module_name    = $vbaModuleName2
-    procedure_name = "TestProc"
+    procedure_name = $vbaProcName
 }
 Add-ToolCall -Calls $vbaCalls -Id 808 -Name "find_text_in_module" -Arguments @{
     module_name = $vbaModuleName2
@@ -3438,9 +3439,9 @@ Add-ToolCall -Calls $vbaCalls -Id 811 -Name "insert_lines" -Arguments @{
     line_number = 4
     code        = "    Dim x As Long"
 }
-# run_vba_procedure: run our TestProc (it is a Sub that does Dim x -- harmless)
+# run_vba_procedure: use unique proc name (suffix-based) to avoid ambiguity with orphaned modules
 Add-ToolCall -Calls $vbaCalls -Id 812 -Name "run_vba_procedure" -Arguments @{
-    procedure_name = "TestProc"
+    procedure_name = $vbaProcName
 }
 # execute_vba: use Application.Eval-compatible expression; simple arithmetic works
 Add-ToolCall -Calls $vbaCalls -Id 813 -Name "execute_vba" -Arguments @{
@@ -3531,12 +3532,12 @@ foreach ($id in ($vbaIdLabels.Keys | Sort-Object)) {
             $procs = @($decoded.procedures)
             $matched = $procs | Where-Object {
                 $pName = if ($null -ne $_.Name) { $_.Name } elseif ($null -ne $_.name) { $_.name } elseif ($null -ne $_.procedure_name) { $_.procedure_name } else { "" }
-                $pName -eq "TestProc"
+                $pName -eq $vbaProcName
             }
             if (@($matched).Count -eq 0) {
                 $failed++
                 $switchFailed = $true
-                Write-Host ('{0}: FAIL expected TestProc in procedures list' -f $label)
+                Write-Host ('{0}: FAIL expected {1} in procedures list' -f $label, $vbaProcName)
             }
         }
         "vba_list_all_procedures" {
@@ -3550,10 +3551,10 @@ foreach ($id in ($vbaIdLabels.Keys | Sort-Object)) {
         }
         "vba_get_procedure_code" {
             $code = if ($null -ne $decoded.procedure_code) { $decoded.procedure_code } else { "" }
-            if ($code -notmatch "TestProc") {
+            if ($code -notmatch $vbaProcName) {
                 $failed++
                 $switchFailed = $true
-                Write-Host ('{0}: FAIL expected procedure_code to contain TestProc' -f $label)
+                Write-Host ('{0}: FAIL expected procedure_code to contain {1}' -f $label, $vbaProcName)
             }
         }
         "vba_find_text_in_module" {

@@ -390,6 +390,9 @@ namespace MS.Access.MCP.Interop
                     if (currentDb == null)
                         return list;
 
+                    // Refresh so DAO sees relationships created via OleDb DDL
+                    try { currentDb.Relations.Refresh(); } catch { }
+
                     var relationCollection = TryGetDynamicProperty(currentDb, "Relations");
                     if (relationCollection == null)
                         return list;
@@ -493,24 +496,44 @@ namespace MS.Access.MCP.Interop
                 ? BuildRelationshipName(tableName, fieldName, foreignTableName, foreignFieldName)
                 : relationshipName;
 
-            ExecuteComOperation(accessApp =>
-            {
-                var currentDb = TryGetCurrentDb(accessApp)
-                    ?? throw new InvalidOperationException("Failed to get current DAO database.");
+            // Close ALL SQL connections so ACE engine flushes metadata to disk,
+            // then force the Access Application's ACE/DAO engine to release read
+            // locks and refresh its entire cache from the file. This ensures DAO
+            // can see tables/indexes created via OleDb DDL.
+            CloseSqlConnections();
 
-                CreateRelationshipInternal(
-                    currentDb,
-                    effectiveRelationshipName!,
-                    tableName,
-                    fieldName,
-                    foreignTableName,
-                    foreignFieldName,
-                    enforceIntegrity,
-                    cascadeUpdate,
-                    cascadeDelete);
-            },
-            requireExclusive: false,
-            releaseOleDb: false);
+            try
+            {
+                ExecuteComOperation(accessApp =>
+                {
+                    // dbRefreshCache=8: force ACE engine to release all read locks
+                    // and refresh cache from disk (most thorough cache invalidation)
+                    try { accessApp.DBEngine.Idle(8); } catch { }
+
+                    var currentDb = TryGetCurrentDb(accessApp)
+                        ?? throw new InvalidOperationException("Failed to get current DAO database.");
+
+                    try { currentDb.TableDefs.Refresh(); } catch { }
+
+                    CreateRelationshipInternal(
+                        currentDb,
+                        effectiveRelationshipName!,
+                        tableName,
+                        fieldName,
+                        foreignTableName,
+                        foreignFieldName,
+                        enforceIntegrity,
+                        cascadeUpdate,
+                        cascadeDelete);
+                },
+                requireExclusive: false,
+                releaseOleDb: false);
+            }
+            finally
+            {
+                // Re-establish SQL connection
+                try { EnsureOleDbConnection(); } catch { }
+            }
 
             return effectiveRelationshipName!;
         }
@@ -536,6 +559,9 @@ namespace MS.Access.MCP.Interop
             {
                 var currentDb = TryGetCurrentDb(accessApp)
                     ?? throw new InvalidOperationException("Failed to get current DAO database.");
+
+                // Refresh so DAO sees relationships created via OleDb DDL
+                try { currentDb.Relations.Refresh(); } catch { }
 
                 if (!DeleteRelationshipInternal(currentDb, relationshipName))
                     throw new InvalidOperationException($"Relationship not found: {relationshipName}");
@@ -566,6 +592,9 @@ namespace MS.Access.MCP.Interop
             {
                 var currentDb = TryGetCurrentDb(accessApp)
                     ?? throw new InvalidOperationException("Failed to get current DAO database.");
+
+                // Refresh so DAO sees relationships created via OleDb DDL
+                try { currentDb.Relations.Refresh(); } catch { }
 
                 if (!DeleteRelationshipInternal(currentDb, relationshipName))
                     throw new InvalidOperationException($"Relationship not found: {relationshipName}");
@@ -5420,12 +5449,59 @@ namespace MS.Access.MCP.Interop
 
             return ExecuteComOperation(accessApp =>
             {
-                var invocation = new List<object?> { procedureName.Trim() };
+                var name = procedureName.Trim();
+
+                // Force VBA project compilation before attempting Run —
+                // VBE-created modules may not be in the procedure index until compiled.
+                try { InvokeDynamicMethod(accessApp.DoCmd, "RunCommand", 504); } catch { } // acCmdCompileAllModules
+
+                var invocation = new List<object?> { name };
                 if (args != null && args.Count > 0)
                     invocation.AddRange(args);
 
-                var result = InvokeDynamicMethod(accessApp, "Run", invocation.ToArray());
-                return result == null ? null : NormalizeValue(result);
+                try
+                {
+                    var result = InvokeDynamicMethod(accessApp, "Run", invocation.ToArray());
+                    return result == null ? null : NormalizeValue(result);
+                }
+                catch (Exception ex) when (ContainsText(ex, "find the procedure"))
+                {
+                    // Application.Run failed — try Eval as fallback.
+                    // Eval runs in VBA context and may resolve procedures that COM-invoked Run cannot.
+                    string evalExpr;
+                    if (args == null || args.Count == 0)
+                    {
+                        evalExpr = name + "()";
+                    }
+                    else
+                    {
+                        var argParts = new List<string>();
+                        argParts.Add("\"" + name.Replace("\"", "\"\"") + "\"");
+                        foreach (var arg in args)
+                        {
+                            if (arg == null)
+                                argParts.Add("Null");
+                            else if (arg is string s)
+                                argParts.Add("\"" + s.Replace("\"", "\"\"") + "\"");
+                            else if (arg is bool b)
+                                argParts.Add(b ? "True" : "False");
+                            else
+                                argParts.Add(Convert.ToString(arg, System.Globalization.CultureInfo.InvariantCulture) ?? "Null");
+                        }
+                        evalExpr = "Application.Run(" + string.Join(",", argParts) + ")";
+                    }
+
+                    try
+                    {
+                        var fallbackResult = InvokeDynamicMethod(accessApp, "Eval", evalExpr);
+                        return fallbackResult == null ? null : NormalizeValue(fallbackResult);
+                    }
+                    catch
+                    {
+                        // Eval also failed — throw the original Application.Run error
+                        throw;
+                    }
+                }
             },
             requireExclusive: false,
             releaseOleDb: false);
@@ -11098,6 +11174,17 @@ namespace MS.Access.MCP.Interop
             {
                 Console.Error.WriteLine($"[VBE] Compact & repair failed: {ex.Message}");
             }
+        }
+
+        /// <summary>Recursively checks if any exception in the chain contains the given text.</summary>
+        private static bool ContainsText(Exception ex, string text)
+        {
+            for (var e = ex; e != null; e = e.InnerException)
+            {
+                if (e.Message.Contains(text, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
         }
 
         private static bool IsVbeFileNotFoundError(Exception ex)
