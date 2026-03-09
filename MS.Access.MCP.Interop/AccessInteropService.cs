@@ -5507,10 +5507,11 @@ namespace MS.Access.MCP.Interop
             releaseOleDb: false);
         }
 
-        public void CreateModule(string moduleName, string? projectName = null)
+        public void CreateModule(string moduleName, string? projectName = null, int componentType = 1)
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
             if (string.IsNullOrWhiteSpace(moduleName)) throw new ArgumentException("moduleName is required.", nameof(moduleName));
+            if (componentType != 1 && componentType != 2) throw new ArgumentException("componentType must be 1 (Standard) or 2 (Class).", nameof(componentType));
 
             ExecuteComOperation(accessApp =>
             {
@@ -5519,7 +5520,7 @@ namespace MS.Access.MCP.Interop
                 if (FindVbComponent(project, moduleName) != null)
                     throw new InvalidOperationException($"VBA module already exists: {moduleName}");
 
-                var component = InvokeDynamicMethod(project.VBComponents, "Add", 1)
+                var component = InvokeDynamicMethod(project.VBComponents, "Add", componentType)
                     ?? throw new InvalidOperationException("Failed to create VBA module.");
                 SetDynamicProperty(component, "Name", moduleName);
                 TrySaveModule(accessApp, moduleName);
@@ -14960,6 +14961,26 @@ namespace MS.Access.MCP.Interop
                     SetDaoPropertyValue(tableDef, "LinkChildFields", linkChildFields, daoType: 10, createIfMissing: true);
                 if (linkMasterFields != null)
                     SetDaoPropertyValue(tableDef, "LinkMasterFields", linkMasterFields, daoType: 10, createIfMissing: true);
+            },
+            requireExclusive: true,
+            releaseOleDb: true);
+        }
+
+        public void ResetSubdatasheetProperties(string tableName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required.", nameof(tableName));
+
+            ExecuteComOperation(accessApp =>
+            {
+                var tableDef = FindTableDefWithRetry(accessApp, tableName)
+                    ?? throw new InvalidOperationException($"Table not found: {tableName}");
+
+                SetDaoPropertyValue(tableDef, "SubdatasheetName", "[Auto]", daoType: 10, createIfMissing: true);
+                SetDaoPropertyValue(tableDef, "LinkChildFields", "", daoType: 10, createIfMissing: true);
+                SetDaoPropertyValue(tableDef, "LinkMasterFields", "", daoType: 10, createIfMissing: true);
+                SetDaoPropertyValue(tableDef, "SubdatasheetHeight", 0, daoType: 4, createIfMissing: true);
+                SetDaoPropertyValue(tableDef, "SubdatasheetExpanded", false, daoType: 1, createIfMissing: true);
             },
             requireExclusive: true,
             releaseOleDb: true);

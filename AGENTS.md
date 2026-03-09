@@ -29,7 +29,7 @@ This is a .NET 8 (x64-only, Windows) MCP server using custom JSON-RPC over stdio
 - Do NOT change the JsonRpcResponse/JsonRpcRequest/JsonRpcErrorResponse classes
 - Keep the same coding style — no extra usings, no external packages, no async interop
 
-## Current Coverage (310 tools, 100% of practical Access COM/DAO surface)
+## Current Coverage (359 tools, 100% of practical Access COM/DAO surface)
 
 All COM-accessible, non-deprecated features that a developer working with Access through
 an MCP server would reasonably use. Excluded: deprecated replication, user-level security
@@ -54,8 +54,10 @@ AccessError, BuildCriteria, Screen object (ActiveForm/ActiveReport/ActiveControl
 object visibility (SetHiddenAttribute/GetHiddenAttribute), CurrentObjectName/Type, CurrentUser,
 Application.Visible, hWndAccessApp, form runtime methods (Recalc/Refresh/Requery/Undo/SetFocus,
 Dirty/NewRecord/Bookmark/CurrentView/OpenArgs/Painting), DAO Recordset operations (open/close,
-move/find, get record/rows, add/edit/delete, count/bookmark/filter+sort with handle tracking),
+move/find/seek, get record/rows, add/edit/delete, count/bookmark/filter+sort, clone),
 XML exchange (ExportXML/ImportXML/TransformXML, NavigationPane XML), printer management
 (set default/form/report printer, list printers), database engine info, control methods
-(SetFocus/Requery/Undo, ComboBox.Dropdown, ListBox AddItem/RemoveItem/GetItems),
-AccessObject metadata (DateCreated/DateModified, IsLoaded), IsCompiled + broken references.
+(SetFocus/Requery/Undo, ComboBox.Dropdown, ListBox AddItem/RemoveItem/GetItems, ZOrder),
+AccessObject metadata (DateCreated/DateModified, IsLoaded), IsCompiled + broken references,
+TabControl page enumeration, object/table dependency analysis, record source field resolution,
+cross-module VBA find/replace, subdatasheet property reset, class module creation.

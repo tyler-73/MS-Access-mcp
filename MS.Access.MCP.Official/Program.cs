@@ -369,7 +369,7 @@ class Program
                 new { name = "compile_vba", description = "Compile VBA code", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "execute_vba", description = "Evaluate a VBA expression using Application.Eval. WARNING: This can execute arbitrary VBA code and should only be used with trusted input.", inputSchema = new { type = "object", properties = new { expression = new { type = "string" } }, required = new string[] { "expression" } } },
                 new { name = "run_vba_procedure", description = "Run a named VBA Sub/Function using Application.Run.", inputSchema = new { type = "object", properties = new { procedure_name = new { type = "string" }, args = new { type = "array" } }, required = new string[] { "procedure_name" } } },
-                new { name = "create_module", description = "Create a new standard VBA module.", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" } }, required = new string[] { "module_name" } } },
+                new { name = "create_module", description = "Create a new VBA module (standard or class).", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" }, module_type = new { type = "string", description = "Module type: 'Standard' (default) or 'Class'", @enum = new string[] { "Standard", "Class" } } }, required = new string[] { "module_name" } } },
                 new { name = "delete_module", description = "Delete a VBA module.", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" } }, required = new string[] { "module_name" } } },
                 new { name = "rename_module", description = "Rename a VBA module.", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" }, new_module_name = new { type = "string" } }, required = new string[] { "module_name", "new_module_name" } } },
                 new { name = "get_compilation_errors", description = "Compile VBA and return any compilation errors.", inputSchema = new { type = "object", properties = new { } } },
@@ -520,6 +520,7 @@ class Program
                 new { name = "execute_action_query", description = "Execute a saved action query (INSERT/UPDATE/DELETE/make-table) via DAO QueryDef.Execute with dbFailOnError+dbSeeChanges. Preferred over run_sql for ODBC linked tables.", inputSchema = new { type = "object", properties = new { query_name = new { type = "string", description = "Name of the saved action query" }, options = new { type = "integer", description = "DAO execute options bitmask. Default: 640 (dbFailOnError=128 + dbSeeChanges=512)" } }, required = new string[] { "query_name" } } },
                 new { name = "get_subdatasheet_properties", description = "Get subdatasheet properties (SubdatasheetName, Height, Expanded, LinkChildFields, LinkMasterFields) for a table.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
                 new { name = "set_subdatasheet_properties", description = "Set subdatasheet properties on a table. Controls which child table/query appears as an expandable subdatasheet.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, subdatasheet_name = new { type = "string", description = "Table or query name for subdatasheet, or '[None]' to remove" }, subdatasheet_height = new { type = "integer", description = "Height in twips (0 = expand to show all)" }, subdatasheet_expanded = new { type = "boolean", description = "Whether subdatasheet is expanded by default" }, link_child_fields = new { type = "string", description = "Field(s) in the child table that link to the master" }, link_master_fields = new { type = "string", description = "Field(s) in the master table that link to the child" } }, required = new string[] { "table_name" } } },
+                new { name = "reset_subdatasheet_properties", description = "Reset subdatasheet properties on a table to defaults: SubdatasheetName='[Auto]', LinkChildFields='', LinkMasterFields='', SubdatasheetHeight=0, SubdatasheetExpanded=false.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" } }, required = new string[] { "table_name" } } },
                 new { name = "set_field_append_only", description = "Set AppendOnly property on a Memo/Long Text field for audit trail. When enabled, Access keeps a history of all changes to the field.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, field_name = new { type = "string" }, append_only = new { type = "boolean", description = "True to enable append-only (audit trail), false to disable" } }, required = new string[] { "table_name", "field_name", "append_only" } } },
                 new { name = "reset_autonumber", description = "Reset AutoNumber seed on a table column. Next inserted row will use the specified seed value.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string" }, column_name = new { type = "string", description = "Name of the AutoNumber column" }, new_seed = new { type = "integer", description = "New starting value for the AutoNumber" } }, required = new string[] { "table_name", "column_name", "new_seed" } } },
                 new { name = "follow_hyperlink", description = "Open a URL or file path using Access Application.FollowHyperlink. Launches the default browser or application.", inputSchema = new { type = "object", properties = new { address = new { type = "string", description = "URL or file path to open" }, sub_address = new { type = "string", description = "Named location within the document (e.g., bookmark)" }, new_window = new { type = "boolean", description = "Whether to open in a new window" } }, required = new string[] { "address" } } },
@@ -902,6 +903,7 @@ class Program
             "execute_action_query" => HandleExecuteActionQuery(accessService, toolArguments),
             "get_subdatasheet_properties" => HandleGetSubdatasheetProperties(accessService, toolArguments),
             "set_subdatasheet_properties" => HandleSetSubdatasheetProperties(accessService, toolArguments),
+            "reset_subdatasheet_properties" => HandleResetSubdatasheetProperties(accessService, toolArguments),
             "set_field_append_only" => HandleSetFieldAppendOnly(accessService, toolArguments),
             "reset_autonumber" => HandleResetAutoNumber(accessService, toolArguments),
             "follow_hyperlink" => HandleFollowHyperlink(accessService, toolArguments),
@@ -4784,8 +4786,10 @@ class Program
                 return moduleNameError;
 
             _ = TryGetOptionalString(arguments, "project_name", out var projectName);
-            accessService.CreateModule(moduleName, string.IsNullOrWhiteSpace(projectName) ? null : projectName);
-            return new { success = true, module_name = moduleName };
+            _ = TryGetOptionalString(arguments, "module_type", out var moduleTypeStr);
+            var componentType = string.Equals(moduleTypeStr, "Class", StringComparison.OrdinalIgnoreCase) ? 2 : 1;
+            accessService.CreateModule(moduleName, string.IsNullOrWhiteSpace(projectName) ? null : projectName, componentType);
+            return new { success = true, module_name = moduleName, module_type = componentType == 2 ? "Class" : "Standard" };
         }
         catch (Exception ex)
         {
@@ -7662,6 +7666,22 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("set_subdatasheet_properties", ex);
+        }
+    }
+
+    static object HandleResetSubdatasheetProperties(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tableNameError))
+                return tableNameError;
+
+            accessService.ResetSubdatasheetProperties(tableName);
+            return new { success = true, message = $"Reset subdatasheet properties to defaults on {tableName}", table_name = tableName };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("reset_subdatasheet_properties", ex);
         }
     }
 

@@ -1,6 +1,6 @@
 # Microsoft Access MCP Server
 
-A comprehensive Model Context Protocol (MCP) server providing **350 tools** that cover 100% of the practical Microsoft Access COM/DAO automation surface. Works with Claude Desktop, Claude Code, VS Code (GitHub Copilot), and any MCP-compatible client.
+A comprehensive Model Context Protocol (MCP) server providing **359 tools** that cover 100% of the practical Microsoft Access COM/DAO automation surface. Works with Claude Desktop, Claude Code, VS Code (GitHub Copilot), and any MCP-compatible client.
 
 ## Overview
 
@@ -233,9 +233,9 @@ Add to `.vscode/mcp.json` in your workspace:
 - The server auto-discovers databases: pass `database_path` to `connect_access`, set the `ACCESS_DATABASE_PATH` env var, or place a `.accdb` file in your Documents folder.
 - `repair-and-verify-access-mcp.ps1 -UpdateClaudeConfig` updates either `mcpServers.access-mcp-server.command` or `mcpServers.access-mcp.command` (whichever exists) and fails fast if neither key is present.
 
-## Available Tools (350)
+## Available Tools (359)
 
-The server exposes 350 tools covering the full practical Access COM/DAO surface. Below is a summary by category — run `tools/list` for the complete schema with argument definitions.
+The server exposes 359 tools covering the full practical Access COM/DAO surface. Below is a summary by category — run `tools/list` for the complete schema with argument definitions.
 
 ### Connection & Database Lifecycle
 `connect_access`, `disconnect_access`, `is_connected`, `close_access`, `close_database`, `launch_access`, `create_database`, `backup_database`, `compact_repair_database`
@@ -265,7 +265,7 @@ The server exposes 350 tools covering the full practical Access COM/DAO surface.
 `create_report`, `delete_report`, `get_reports`, `open_report` (full params), `close_report`, `get_report_controls`, `get_report_control_properties`, `set_report_control_property`, `get_report_grouping`, `set_report_grouping`, `delete_report_grouping`, `get_report_sorting`, `set_report_sorting`, `output_to`, `print_out`, `get_active_report`
 
 ### DAO Recordsets
-`open_recordset`, `close_recordset`, `recordset_get_rows`, `recordset_get_record`, `recordset_add_record`, `recordset_delete_record`, `recordset_edit_record`, `recordset_count`, `recordset_find`, `recordset_move`, `recordset_bookmark`, `recordset_filter_sort`
+`open_recordset`, `close_recordset`, `recordset_get_rows`, `recordset_get_record`, `recordset_add_record`, `recordset_delete_record`, `recordset_edit_record`, `recordset_count`, `recordset_find`, `recordset_move`, `recordset_bookmark`, `recordset_filter_sort`, `recordset_seek`, `recordset_clone`
 
 ### VBA & Modules
 `get_vba_code`, `set_vba_code`, `compile_vba`, `is_vba_compiled`, `add_vba_procedure`, `run_vba_procedure`, `execute_vba`, `get_vba_projects`, `get_vba_references`, `add_vba_reference`, `remove_vba_reference`, `create_module`, `delete_module`, `rename_module`, `get_modules`, `get_module_info`, `get_module_declarations`, `list_procedures`, `list_all_procedures`, `get_procedure_code`, `find_text_in_module`, `insert_lines`, `delete_lines`, `replace_line`, `get_compilation_errors`, `export_all_vba`, `get_vba_project_properties`, `set_vba_project_properties`
@@ -311,6 +311,12 @@ The server exposes 350 tools covering the full practical Access COM/DAO surface.
 
 ### Subdatasheet Properties
 `get_subdatasheet_properties`, `set_subdatasheet_properties`, `reset_subdatasheet_properties`
+
+### Controls
+`control_set_focus`, `control_requery`, `control_undo`, `combobox_dropdown`, `listbox_add_item`, `listbox_remove_item`, `listbox_get_items`, `control_set_zorder`, `get_tab_control_pages`
+
+### Analysis & Dependencies
+`get_object_dependencies`, `get_table_dependencies`, `get_record_source_fields`, `find_and_replace_in_vba`
 
 ### Miscellaneous
 `access_error`, `build_criteria`, `set_hidden_attribute`, `get_hidden_attribute`, `get_access_hwnd`, `set_access_visible`, `reset_autonumber`, `get_object_events`, `set_object_event`, `find_duplicate_records`, `check_referential_integrity`, `list_odbc_data_sources`, `domain_aggregate`
@@ -492,7 +498,7 @@ The server implements the MCP JSON-RPC stdio transport directly (no external MCP
 ### Key Features
 
 - **Full COM/DAO Interop**: Late-binding access to the complete Access object model
-- **350 Tools**: Covers connection, DDL, DML, forms, reports, VBA, macros, recordsets, properties, attachments, navigation groups, conditional formatting, data macros, security, printing, and more
+- **359 Tools**: Covers connection, DDL, DML, forms, reports, VBA, macros, recordsets, properties, attachments, navigation groups, conditional formatting, data macros, security, printing, and more
 - **Exclusive Mode**: Automatic exclusive DB access for DDL operations with process lifecycle management
 - **Dialog Dismisser**: Background thread auto-dismisses modal Access/VBA dialogs during batch operations
 - **MCP Resources**: 10 read-only resources (connection status, tables, queries, relationships, etc.)

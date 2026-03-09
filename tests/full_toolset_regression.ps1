@@ -7066,6 +7066,149 @@ foreach ($id in ($p10Labels.Keys | Sort-Object)) {
     }
 }
 
+Write-Host "=== Feature Gap Phase 11: Polish & Housekeeping (IDs 1321-1330) ==="
+Cleanup-AccessArtifacts -DbPath $DatabasePath
+$p11Calls = New-Object 'System.Collections.Generic.List[object]'
+Add-ToolCall $p11Calls 1321 "connect_access" @{ database_path = $DatabasePath }
+Add-ToolCall $p11Calls 1322 "create_table" @{ table_name = "mcp_p11_sds"; fields = @(@{ name = "ID"; type = "AUTOINCREMENT" }, @{ name = "Name"; type = "TEXT(100)" }) }
+Add-ToolCall $p11Calls 1323 "set_subdatasheet_properties" @{ table_name = "mcp_p11_sds"; subdatasheet_name = "mcp_p11_sds"; subdatasheet_height = 300; subdatasheet_expanded = $true; link_child_fields = "ID"; link_master_fields = "ID" }
+Add-ToolCall $p11Calls 1324 "reset_subdatasheet_properties" @{ table_name = "mcp_p11_sds" }
+Add-ToolCall $p11Calls 1325 "get_subdatasheet_properties" @{ table_name = "mcp_p11_sds" }
+Add-ToolCall $p11Calls 1326 "create_module" @{ module_name = "MCP_P11_ClassTest"; module_type = "Class" }
+Add-ToolCall $p11Calls 1327 "get_module_info" @{ module_name = "MCP_P11_ClassTest" }
+Add-ToolCall $p11Calls 1328 "delete_module" @{ module_name = "MCP_P11_ClassTest" }
+Add-ToolCall $p11Calls 1329 "delete_table" @{ table_name = "mcp_p11_sds" }
+Add-ToolCall $p11Calls 1330 "disconnect_access" @{}
+
+$savedTimeout = $script:BatchTimeoutSeconds
+$script:BatchTimeoutSeconds = 300
+$p11Responses = Invoke-McpBatch -ExePath $ServerExe -Calls $p11Calls -ClientName "full-regression-phase11" -ClientVersion "1.0"
+$script:BatchTimeoutSeconds = $savedTimeout
+
+$p11Labels = @{
+    1321 = "p11_connect"
+    1322 = "p11_create_table"
+    1323 = "p11_set_sds_props"
+    1324 = "p11_reset_sds_props"
+    1325 = "p11_get_sds_props"
+    1326 = "p11_create_class_module"
+    1327 = "p11_get_module_info"
+    1328 = "p11_delete_module"
+    1329 = "p11_delete_table"
+    1330 = "p11_disconnect"
+}
+
+$p11Failed = $false
+foreach ($id in ($p11Labels.Keys | Sort-Object)) {
+    $label = $p11Labels[$id]
+    $decoded = Decode-McpResult -Response $p11Responses[[int]$id]
+
+    if ($null -eq $decoded) {
+        $failed++
+        $p11Failed = $true
+        Write-Host ('{0}: FAIL missing-response' -f $label)
+        continue
+    }
+
+    # Setup/cleanup steps: just check success (graceful-fail for create_table in case leftover exists)
+    if ($id -in @(1321, 1328, 1329, 1330)) {
+        if ($decoded.success -ne $true) {
+            $failed++
+            $p11Failed = $true
+            Write-Host ('{0}: FAIL success={1}' -f $label, $decoded.success)
+        } else {
+            Write-Host ('{0}: OK' -f $label)
+        }
+        continue
+    }
+
+    # create_table and set_sds_props are setup - graceful-fail if table already exists
+    if ($id -in @(1322, 1323)) {
+        if ($decoded.success -ne $true) {
+            $failMsg = if ($decoded.error_message) { $decoded.error_message } elseif ($decoded.message) { $decoded.message } else { "setup step failed" }
+            Write-Host ('{0}: OK (graceful-fail: {1})' -f $label, $failMsg)
+        } else {
+            Write-Host ('{0}: OK' -f $label)
+        }
+        continue
+    }
+
+    switch ($label) {
+        "p11_reset_sds_props" {
+            if ($decoded.success -ne $true) {
+                $failed++
+                $p11Failed = $true
+                Write-Host ('{0}: FAIL success={1}' -f $label, $decoded.success)
+            } else {
+                Write-Host ('{0}: OK' -f $label)
+            }
+        }
+        "p11_get_sds_props" {
+            $p11StepFailed = $false
+            if ($decoded.subdatasheet_name -ne "[Auto]") {
+                $failed++
+                $p11StepFailed = $true
+                $p11Failed = $true
+                Write-Host ('{0}: FAIL expected SubdatasheetName=[Auto], got {1}' -f $label, $decoded.subdatasheet_name)
+            }
+            if ($decoded.subdatasheet_height -ne 0) {
+                $failed++
+                $p11StepFailed = $true
+                $p11Failed = $true
+                Write-Host ('{0}: FAIL expected SubdatasheetHeight=0, got {1}' -f $label, $decoded.subdatasheet_height)
+            }
+            if ($decoded.subdatasheet_expanded -ne $false) {
+                $failed++
+                $p11StepFailed = $true
+                $p11Failed = $true
+                Write-Host ('{0}: FAIL expected SubdatasheetExpanded=false, got {1}' -f $label, $decoded.subdatasheet_expanded)
+            }
+            if (-not $p11StepFailed) {
+                Write-Host ('{0}: OK' -f $label)
+            }
+        }
+        "p11_create_class_module" {
+            $p11StepFailed = $false
+            if ($decoded.success -ne $true) {
+                $failed++
+                $p11StepFailed = $true
+                $p11Failed = $true
+                Write-Host ('{0}: FAIL success={1}' -f $label, $decoded.success)
+            }
+            if ($decoded.module_type -ne "Class") {
+                $failed++
+                $p11StepFailed = $true
+                $p11Failed = $true
+                Write-Host ('{0}: FAIL expected module_type=Class, got {1}' -f $label, $decoded.module_type)
+            }
+            if (-not $p11StepFailed) {
+                Write-Host ('{0}: OK' -f $label)
+            }
+        }
+        "p11_get_module_info" {
+            $p11StepFailed = $false
+            $mi = $decoded.module_info
+            if ($null -eq $mi) {
+                $failed++
+                $p11StepFailed = $true
+                $p11Failed = $true
+                Write-Host ('{0}: FAIL no module_info in response' -f $label)
+            } else {
+                # VBE type 2 = ClassModule, mapped to "ClassModule" string
+                if ($mi.moduleType -ne "ClassModule") {
+                    $failed++
+                    $p11StepFailed = $true
+                    $p11Failed = $true
+                    Write-Host ('{0}: FAIL expected moduleType=ClassModule, got {1}' -f $label, $mi.moduleType)
+                }
+            }
+            if (-not $p11StepFailed) {
+                Write-Host ('{0}: OK' -f $label)
+            }
+        }
+    }
+}
+
 Write-Host "=== End Feature Gap Tests ==="
 Write-Host ""
 
