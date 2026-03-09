@@ -14928,11 +14928,11 @@ namespace MS.Access.MCP.Interop
                 return new SubdatasheetPropertiesInfo
                 {
                     TableName = SafeToString(TryGetDynamicProperty(tableDef, "Name")) ?? tableName,
-                    SubdatasheetName = SafeToString(GetDaoPropertyValue(tableDef, "SubdatasheetName")),
-                    SubdatasheetHeight = ToNullableInt(GetDaoPropertyValue(tableDef, "SubdatasheetHeight")),
-                    SubdatasheetExpanded = ToNullableBool(GetDaoPropertyValue(tableDef, "SubdatasheetExpanded")),
-                    LinkChildFields = SafeToString(GetDaoPropertyValue(tableDef, "LinkChildFields")),
-                    LinkMasterFields = SafeToString(GetDaoPropertyValue(tableDef, "LinkMasterFields"))
+                    SubdatasheetName = SafeToString(GetDaoPropertyValue(tableDef, "SubdatasheetName")) ?? "[Auto]",
+                    SubdatasheetHeight = ToNullableInt(GetDaoPropertyValue(tableDef, "SubdatasheetHeight")) ?? 0,
+                    SubdatasheetExpanded = ToNullableBool(GetDaoPropertyValue(tableDef, "SubdatasheetExpanded")) ?? false,
+                    LinkChildFields = SafeToString(GetDaoPropertyValue(tableDef, "LinkChildFields")) ?? "",
+                    LinkMasterFields = SafeToString(GetDaoPropertyValue(tableDef, "LinkMasterFields")) ?? ""
                 };
             },
             requireExclusive: false,
@@ -14976,11 +14976,23 @@ namespace MS.Access.MCP.Interop
                 var tableDef = FindTableDefWithRetry(accessApp, tableName)
                     ?? throw new InvalidOperationException($"Table not found: {tableName}");
 
+                // Delete user-defined subdatasheet properties; when absent, DAO uses built-in defaults:
+                // SubdatasheetName="[Auto]", LinkChildFields="", LinkMasterFields="",
+                // SubdatasheetHeight=0, SubdatasheetExpanded=false
+                var propsToDelete = new[] { "SubdatasheetName", "LinkChildFields", "LinkMasterFields",
+                                            "SubdatasheetHeight", "SubdatasheetExpanded" };
+                var properties = TryGetDynamicProperty(tableDef, "Properties");
+                if (properties != null)
+                {
+                    foreach (var propName in propsToDelete)
+                    {
+                        try { InvokeDynamicMethod(properties, "Delete", propName); }
+                        catch { /* Property may not exist — that's fine, defaults already apply */ }
+                    }
+                }
+
+                // Re-create SubdatasheetName with explicit "[Auto]" so get_subdatasheet_properties returns it
                 SetDaoPropertyValue(tableDef, "SubdatasheetName", "[Auto]", daoType: 10, createIfMissing: true);
-                SetDaoPropertyValue(tableDef, "LinkChildFields", "", daoType: 10, createIfMissing: true);
-                SetDaoPropertyValue(tableDef, "LinkMasterFields", "", daoType: 10, createIfMissing: true);
-                SetDaoPropertyValue(tableDef, "SubdatasheetHeight", 0, daoType: 4, createIfMissing: true);
-                SetDaoPropertyValue(tableDef, "SubdatasheetExpanded", false, daoType: 1, createIfMissing: true);
             },
             requireExclusive: true,
             releaseOleDb: true);

@@ -4251,9 +4251,9 @@ class Program
                 {
                     Name = fieldElement.GetProperty("name").GetString() ?? "",
                     Type = fieldElement.GetProperty("type").GetString() ?? "",
-                    Size = fieldElement.GetProperty("size").GetInt32(),
-                    Required = fieldElement.GetProperty("required").GetBoolean(),
-                    AllowZeroLength = fieldElement.GetProperty("allow_zero_length").GetBoolean()
+                    Size = fieldElement.TryGetProperty("size", out var sizeEl) ? sizeEl.GetInt32() : 0,
+                    Required = fieldElement.TryGetProperty("required", out var reqEl) ? reqEl.GetBoolean() : false,
+                    AllowZeroLength = fieldElement.TryGetProperty("allow_zero_length", out var azlEl) ? azlEl.GetBoolean() : false
                 });
             }
 
