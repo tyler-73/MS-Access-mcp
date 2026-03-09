@@ -13860,7 +13860,7 @@ namespace MS.Access.MCP.Interop
                         {
                             try
                             {
-                                code = SafeToString(InvokeDynamicMethod(codeModule, "Lines", 1, lineCount));
+                                code = SafeToString(TryGetDynamicProperty(codeModule, "Lines", 1, lineCount));
                             }
                             catch { }
                         }
@@ -13889,6 +13889,519 @@ namespace MS.Access.MCP.Interop
             },
             requireExclusive: false,
             releaseOleDb: false);
+        }
+
+        // ── Phase 10: Analysis & Dependency Tools ────────────────────────────────
+
+        // ── Tool: get_object_dependencies ────────────────────────────────────────
+        public ObjectDependencyInfo GetObjectDependencies(string objectType, string objectName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(objectName)) throw new ArgumentException("objectName is required.", nameof(objectName));
+
+            // Map string type to acObjectType constant
+            int acObjType = objectType.ToLowerInvariant() switch
+            {
+                "table" => 0,    // acTable
+                "query" => 1,    // acQuery
+                "form" => 2,     // acForm
+                "report" => 3,   // acReport
+                _ => throw new ArgumentException($"Invalid object_type: {objectType}. Use 'table', 'query', 'form', or 'report'.")
+            };
+
+            return ExecuteComOperation(accessApp =>
+            {
+                var result = new ObjectDependencyInfo
+                {
+                    ObjectName = objectName,
+                    ObjectType = objectType
+                };
+
+                try
+                {
+                    dynamic depInfo = accessApp.Application.GetDependencyInfo(acObjType, objectName);
+
+                    // Iterate Dependants (objects that depend on this one)
+                    try
+                    {
+                        foreach (var dep in depInfo.Dependants)
+                        {
+                            result.Dependants.Add(new DependencyEntry
+                            {
+                                Name = SafeToString(TryGetDynamicProperty(dep, "Name")),
+                                Type = MapAcObjectTypeToString(ToInt32(TryGetDynamicProperty(dep, "Type")))
+                            });
+                        }
+                    }
+                    catch { }
+
+                    // Iterate Dependencies (objects this one depends on)
+                    try
+                    {
+                        foreach (var dep in depInfo.Dependencies)
+                        {
+                            result.Dependencies.Add(new DependencyEntry
+                            {
+                                Name = SafeToString(TryGetDynamicProperty(dep, "Name")),
+                                Type = MapAcObjectTypeToString(ToInt32(TryGetDynamicProperty(dep, "Type")))
+                            });
+                        }
+                    }
+                    catch { }
+                }
+                catch (Exception ex)
+                {
+                    var msg = ex.Message;
+                    if (msg.Contains("Name AutoCorrect", StringComparison.OrdinalIgnoreCase) ||
+                        msg.Contains("Track name", StringComparison.OrdinalIgnoreCase) ||
+                        msg.Contains("dependency", StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new InvalidOperationException(
+                            "Name AutoCorrect must be enabled for dependency tracking. " +
+                            "Enable it via File > Options > Current Database > Name AutoCorrect Options.", ex);
+                    }
+                    throw;
+                }
+
+                return result;
+            }, requireExclusive: false, releaseOleDb: false);
+        }
+
+        private static string MapAcObjectTypeToString(int acType)
+        {
+            return acType switch
+            {
+                0 => "table",
+                1 => "query",
+                2 => "form",
+                3 => "report",
+                4 => "macro",
+                5 => "module",
+                _ => $"unknown({acType})"
+            };
+        }
+
+        // ── Tool: get_table_dependencies ─────────────────────────────────────────
+        public TableDependencyInfo GetTableDependencies(string tableName)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("tableName is required.", nameof(tableName));
+
+            var result = new TableDependencyInfo { TableName = tableName };
+
+            // All scanning in a single COM session to avoid COM lifecycle issues
+            ExecuteComOperation<object?>(accessApp =>
+            {
+                // Scan queries via DAO QueryDefs (avoids OleDb fallback which lacks SQL)
+                try
+                {
+                    var currentDb = TryGetCurrentDb(accessApp);
+                    if (currentDb != null)
+                    {
+                        var queryDefs = TryGetDynamicProperty(currentDb, "QueryDefs");
+                        if (queryDefs != null)
+                        {
+                            foreach (var queryDef in queryDefs)
+                            {
+                                try
+                                {
+                                    var queryName = SafeToString(TryGetDynamicProperty(queryDef, "Name"));
+                                    if (string.IsNullOrWhiteSpace(queryName) || queryName.StartsWith("~", StringComparison.Ordinal))
+                                        continue;
+
+                                    var sql = SafeToString(TryGetDynamicProperty(queryDef, "SQL")) ?? "";
+                                    if (!string.IsNullOrEmpty(sql) &&
+                                        sql.Contains(tableName, StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        var idx = sql.IndexOf(tableName, StringComparison.OrdinalIgnoreCase);
+                                        var start = Math.Max(0, idx - 30);
+                                        var end = Math.Min(sql.Length, idx + tableName.Length + 30);
+                                        var excerpt = sql.Substring(start, end - start).Trim();
+                                        if (start > 0) excerpt = "..." + excerpt;
+                                        if (end < sql.Length) excerpt += "...";
+
+                                        result.Queries.Add(new TableDependencyQueryRef
+                                        {
+                                            Name = queryName,
+                                            SqlExcerpt = excerpt
+                                        });
+                                    }
+                                }
+                                catch { }
+                            }
+                        }
+                    }
+                }
+                catch { }
+
+                // Scan forms
+                try
+                {
+                    foreach (var formObj in accessApp.CurrentProject.AllForms)
+                    {
+                        string formName = (string)formObj.Name;
+                        try
+                        {
+                            accessApp.DoCmd.OpenForm(formName, 1); // acDesign=1
+                            var forms = TryGetDynamicProperty(accessApp, "Forms");
+                            var form = TryGetDynamicProperty(forms, "Item", formName);
+
+                            var recordSource = SafeToString(TryGetDynamicPropertySafe(form, "RecordSource", ""));
+                            if (!string.IsNullOrEmpty(recordSource) &&
+                                recordSource.Contains(tableName, StringComparison.OrdinalIgnoreCase))
+                            {
+                                result.Forms.Add(new TableDependencyRef
+                                {
+                                    Name = formName,
+                                    ReferenceType = "RecordSource"
+                                });
+                            }
+                            else
+                            {
+                                bool found = false;
+                                try
+                                {
+                                    var controls = TryGetDynamicProperty(form, "Controls");
+                                    int count = (int)TryGetDynamicProperty(controls, "Count");
+                                    for (int i = 0; i < count && !found; i++)
+                                    {
+                                        try
+                                        {
+                                            var ctl = controls[i];
+                                            var ctlSrc = SafeToString(TryGetDynamicPropertySafe(ctl, "ControlSource", ""));
+                                            var rowSrc = SafeToString(TryGetDynamicPropertySafe(ctl, "RowSource", ""));
+                                            if ((!string.IsNullOrEmpty(ctlSrc) && ctlSrc.Contains(tableName, StringComparison.OrdinalIgnoreCase)) ||
+                                                (!string.IsNullOrEmpty(rowSrc) && rowSrc.Contains(tableName, StringComparison.OrdinalIgnoreCase)))
+                                            {
+                                                result.Forms.Add(new TableDependencyRef
+                                                {
+                                                    Name = formName,
+                                                    ReferenceType = "ControlSource/RowSource"
+                                                });
+                                                found = true;
+                                            }
+                                        }
+                                        catch { }
+                                    }
+                                }
+                                catch { }
+                            }
+
+                            accessApp.DoCmd.Close(2, formName, 2); // acForm=2, acSaveNo=2
+                        }
+                        catch
+                        {
+                            try { accessApp.DoCmd.Close(2, formName, 2); } catch { }
+                        }
+                    }
+                }
+                catch { }
+
+                // Scan reports
+                try
+                {
+                    foreach (var reportObj in accessApp.CurrentProject.AllReports)
+                    {
+                        string reportName = (string)reportObj.Name;
+                        try
+                        {
+                            accessApp.DoCmd.OpenReport(reportName, 1); // acDesign=1
+                            var reports = TryGetDynamicProperty(accessApp, "Reports");
+                            var report = TryGetDynamicProperty(reports, "Item", reportName);
+
+                            var recordSource = SafeToString(TryGetDynamicPropertySafe(report, "RecordSource", ""));
+                            if (!string.IsNullOrEmpty(recordSource) &&
+                                recordSource.Contains(tableName, StringComparison.OrdinalIgnoreCase))
+                            {
+                                result.Reports.Add(new TableDependencyRef
+                                {
+                                    Name = reportName,
+                                    ReferenceType = "RecordSource"
+                                });
+                            }
+                            else
+                            {
+                                bool found = false;
+                                try
+                                {
+                                    var controls = TryGetDynamicProperty(report, "Controls");
+                                    int count = (int)TryGetDynamicProperty(controls, "Count");
+                                    for (int i = 0; i < count && !found; i++)
+                                    {
+                                        try
+                                        {
+                                            var ctl = controls[i];
+                                            var ctlSrc = SafeToString(TryGetDynamicPropertySafe(ctl, "ControlSource", ""));
+                                            var rowSrc = SafeToString(TryGetDynamicPropertySafe(ctl, "RowSource", ""));
+                                            if ((!string.IsNullOrEmpty(ctlSrc) && ctlSrc.Contains(tableName, StringComparison.OrdinalIgnoreCase)) ||
+                                                (!string.IsNullOrEmpty(rowSrc) && rowSrc.Contains(tableName, StringComparison.OrdinalIgnoreCase)))
+                                            {
+                                                result.Reports.Add(new TableDependencyRef
+                                                {
+                                                    Name = reportName,
+                                                    ReferenceType = "ControlSource/RowSource"
+                                                });
+                                                found = true;
+                                            }
+                                        }
+                                        catch { }
+                                    }
+                                }
+                                catch { }
+                            }
+
+                            accessApp.DoCmd.Close(3, reportName, 2); // acReport=3, acSaveNo=2
+                        }
+                        catch
+                        {
+                            try { accessApp.DoCmd.Close(3, reportName, 2); } catch { }
+                        }
+                    }
+                }
+                catch { }
+
+                return null;
+            }, requireExclusive: false, releaseOleDb: false);
+
+            return result;
+        }
+
+        // ── Tool: get_record_source_fields ───────────────────────────────────────
+        public RecordSourceFieldInfo GetRecordSourceFields(string source, string? sourceType = null)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(source)) throw new ArgumentException("source is required.", nameof(source));
+
+            return ExecuteComOperation(accessApp =>
+            {
+                dynamic db = accessApp.CurrentDb();
+                var result = new RecordSourceFieldInfo { Source = source };
+
+                // Auto-detect source type if not specified
+                string resolvedType = sourceType?.ToLowerInvariant() ?? "";
+                if (string.IsNullOrEmpty(resolvedType))
+                {
+                    // Try TableDefs first
+                    try
+                    {
+                        dynamic td = db.TableDefs[source];
+                        var _ = td.Name; // Force access to verify it exists
+                        resolvedType = "table";
+                    }
+                    catch
+                    {
+                        // Try QueryDefs
+                        try
+                        {
+                            dynamic qd = db.QueryDefs[source];
+                            var _ = qd.Name;
+                            resolvedType = "query";
+                        }
+                        catch
+                        {
+                            resolvedType = "sql";
+                        }
+                    }
+                }
+
+                result.SourceType = resolvedType;
+
+                dynamic? fieldsSource = null;
+                dynamic? rsToClose = null;
+
+                try
+                {
+                    switch (resolvedType)
+                    {
+                        case "table":
+                            fieldsSource = db.TableDefs[source].Fields;
+                            break;
+                        case "query":
+                            fieldsSource = db.QueryDefs[source].Fields;
+                            break;
+                        case "sql":
+                        default:
+                            // Open a snapshot recordset to get field metadata
+                            rsToClose = db.OpenRecordset(source, 4, 0); // dbOpenSnapshot=4
+                            fieldsSource = rsToClose.Fields;
+                            break;
+                    }
+
+                    if (fieldsSource != null)
+                    {
+                        int fieldCount = fieldsSource.Count;
+                        for (int i = 0; i < fieldCount; i++)
+                        {
+                            dynamic field = fieldsSource[i];
+                            result.Fields.Add(new RecordSourceField
+                            {
+                                Name = (string)field.Name,
+                                Type = MapDaoFieldType(ToInt32(field.Type)),
+                                Size = ToInt32(field.Size),
+                                Required = ToBool(field.Required)
+                            });
+                        }
+                    }
+                }
+                finally
+                {
+                    if (rsToClose != null)
+                    {
+                        try { rsToClose.Close(); } catch { }
+                        try { Marshal.ReleaseComObject(rsToClose); } catch { }
+                    }
+                }
+
+                return result;
+            }, requireExclusive: false, releaseOleDb: false);
+        }
+
+        private static string MapDaoFieldType(int daoType)
+        {
+            return daoType switch
+            {
+                1 => "Boolean",
+                2 => "Byte",
+                3 => "Integer",
+                4 => "Long",
+                5 => "Currency",
+                6 => "Single",
+                7 => "Double",
+                8 => "Date/Time",
+                9 => "Binary",
+                10 => "Text",
+                11 => "Long Binary (OLE Object)",
+                12 => "Memo",
+                15 => "GUID",
+                16 => "Big Integer",
+                20 => "Decimal",
+                101 => "Attachment",
+                102 => "Complex Byte",
+                103 => "Complex Integer",
+                104 => "Complex Long",
+                105 => "Complex Single",
+                106 => "Complex Double",
+                107 => "Complex GUID",
+                108 => "Complex Decimal",
+                109 => "Complex Text",
+                _ => $"Unknown({daoType})"
+            };
+        }
+
+        private static bool ToBool(dynamic value)
+        {
+            try { return (bool)value; }
+            catch { return false; }
+        }
+
+        // ── Tool: find_and_replace_in_vba ────────────────────────────────────────
+        public VbaFindReplaceResult FindAndReplaceInVba(string findText, string? replaceText = null,
+            bool caseSensitive = false, bool wholeWord = false, bool previewOnly = true)
+        {
+            if (!IsConnected) throw new InvalidOperationException("Not connected to database");
+            if (string.IsNullOrWhiteSpace(findText)) throw new ArgumentException("findText is required.", nameof(findText));
+
+            // Do everything in a single COM session — search and replace together
+            return ExecuteComOperation(accessApp =>
+            {
+                var result = new VbaFindReplaceResult();
+                var comp = caseSensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+
+                var vbe = AccessVbeWithRetry(accessApp);
+                var projects = TryGetDynamicProperty(vbe, "VBProjects");
+                if (projects == null) return result;
+
+                foreach (var project in projects)
+                {
+                    try
+                    {
+                        var components = TryGetDynamicProperty(project, "VBComponents");
+                        if (components == null) continue;
+
+                        foreach (var component in components)
+                        {
+                            try
+                            {
+                                var compName = SafeToString(TryGetDynamicProperty(component, "Name"));
+                                var codeModule = TryGetDynamicProperty(component, "CodeModule");
+                                if (codeModule == null) continue;
+
+                                var lineCount = ToInt32(TryGetDynamicProperty(codeModule, "CountOfLines"));
+                                if (lineCount <= 0) continue;
+
+                                // Read all code at once, then search line by line
+                                // Lines is an indexed property, not a method — use TryGetDynamicProperty
+                                string allCode;
+                                try
+                                {
+                                    allCode = SafeToString(TryGetDynamicProperty(codeModule, "Lines", 1, lineCount));
+                                }
+                                catch { continue; }
+
+                                if (string.IsNullOrEmpty(allCode)) continue;
+
+                                var lines = allCode.Replace("\r\n", "\n").Split('\n');
+                                for (int i = 0; i < lines.Length; i++)
+                                {
+                                    var lineText = lines[i];
+                                    int lineNum = i + 1;
+
+                                    bool matches = false;
+                                    if (wholeWord)
+                                    {
+                                        int idx = lineText.IndexOf(findText, comp);
+                                        while (idx >= 0)
+                                        {
+                                            bool leftBound = idx == 0 || (!char.IsLetterOrDigit(lineText[idx - 1]) && lineText[idx - 1] != '_');
+                                            bool rightBound = idx + findText.Length >= lineText.Length ||
+                                                (!char.IsLetterOrDigit(lineText[idx + findText.Length]) && lineText[idx + findText.Length] != '_');
+                                            if (leftBound && rightBound) { matches = true; break; }
+                                            idx = lineText.IndexOf(findText, idx + 1, comp);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        matches = lineText.Contains(findText, comp);
+                                    }
+
+                                    if (matches)
+                                    {
+                                        result.MatchesFound++;
+                                        var detail = new VbaFindReplaceDetail
+                                        {
+                                            Module = compName,
+                                            Line = lineNum,
+                                            OldText = lineText
+                                        };
+
+                                        if (!string.IsNullOrEmpty(replaceText))
+                                        {
+                                            string newLine = lineText.Replace(findText, replaceText, comp);
+                                            detail.NewText = newLine;
+
+                                            if (!previewOnly)
+                                            {
+                                                try
+                                                {
+                                                    InvokeDynamicMethod(codeModule, "ReplaceLine", lineNum, newLine);
+                                                    result.ReplacementsMade++;
+                                                }
+                                                catch { }
+                                            }
+                                        }
+
+                                        result.Details.Add(detail);
+                                    }
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+                    catch { }
+                }
+
+                return result;
+            }, requireExclusive: false, releaseOleDb: false);
         }
 
         // ── Tool: check_referential_integrity ───────────────────────────────────
@@ -15783,6 +16296,72 @@ namespace MS.Access.MCP.Interop
         public bool? SubdatasheetExpanded { get; set; }
         public string? LinkChildFields { get; set; }
         public string? LinkMasterFields { get; set; }
+    }
+
+    // ── Phase 10: Analysis & Dependency Tool Result Types ──────────────────
+
+    public class ObjectDependencyInfo
+    {
+        public string ObjectName { get; set; } = "";
+        public string ObjectType { get; set; } = "";
+        public List<DependencyEntry> Dependants { get; set; } = new();
+        public List<DependencyEntry> Dependencies { get; set; } = new();
+    }
+
+    public class DependencyEntry
+    {
+        public string Name { get; set; } = "";
+        public string Type { get; set; } = "";
+    }
+
+    public class TableDependencyInfo
+    {
+        public string TableName { get; set; } = "";
+        public List<TableDependencyRef> Forms { get; set; } = new();
+        public List<TableDependencyRef> Reports { get; set; } = new();
+        public List<TableDependencyQueryRef> Queries { get; set; } = new();
+    }
+
+    public class TableDependencyRef
+    {
+        public string Name { get; set; } = "";
+        public string ReferenceType { get; set; } = "";
+    }
+
+    public class TableDependencyQueryRef
+    {
+        public string Name { get; set; } = "";
+        public string SqlExcerpt { get; set; } = "";
+    }
+
+    public class RecordSourceFieldInfo
+    {
+        public string Source { get; set; } = "";
+        public string SourceType { get; set; } = "";
+        public List<RecordSourceField> Fields { get; set; } = new();
+    }
+
+    public class RecordSourceField
+    {
+        public string Name { get; set; } = "";
+        public string Type { get; set; } = "";
+        public int Size { get; set; }
+        public bool Required { get; set; }
+    }
+
+    public class VbaFindReplaceResult
+    {
+        public int MatchesFound { get; set; }
+        public int ReplacementsMade { get; set; }
+        public List<VbaFindReplaceDetail> Details { get; set; } = new();
+    }
+
+    public class VbaFindReplaceDetail
+    {
+        public string Module { get; set; } = "";
+        public int Line { get; set; }
+        public string OldText { get; set; } = "";
+        public string? NewText { get; set; }
     }
 
     #endregion

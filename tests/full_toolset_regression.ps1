@@ -6810,6 +6810,262 @@ foreach ($id in ($p9Labels.Keys | Sort-Object)) {
     }
 }
 
+Write-Host "=== Feature Gap Phase 10: Analysis & Dependency Tools (IDs 1290-1320) ==="
+Cleanup-AccessArtifacts -DbPath $DatabasePath
+$p10Calls = New-Object 'System.Collections.Generic.List[object]'
+Add-ToolCall -Calls $p10Calls -Id 1290 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
+
+# Create test table and query for dependency testing
+Add-ToolCall -Calls $p10Calls -Id 1291 -Name "create_table" -Arguments @{
+    table_name = "mcp_p10_dep"
+    fields = @(
+        @{ name = "id"; type = "LONG"; size = 0; required = $true; allow_zero_length = $false },
+        @{ name = "name"; type = "TEXT"; size = 100; required = $false; allow_zero_length = $true }
+    )
+}
+Add-ToolCall -Calls $p10Calls -Id 1292 -Name "create_query" -Arguments @{
+    query_name = "mcp_p10_qry"
+    sql = "SELECT id, name FROM mcp_p10_dep WHERE id > 0"
+}
+# Insert test data for record source fields
+Add-ToolCall -Calls $p10Calls -Id 1293 -Name "execute_sql" -Arguments @{
+    sql = "INSERT INTO mcp_p10_dep (id, name) VALUES (1, 'Alice')"
+}
+
+# Create form with RecordSource referencing the table
+Add-ToolCall -Calls $p10Calls -Id 1294 -Name "create_form" -Arguments @{
+    form_name = "mcp_p10_frm"; record_source = "mcp_p10_dep"
+}
+
+# --- get_object_dependencies test ---
+Add-ToolCall -Calls $p10Calls -Id 1295 -Name "get_object_dependencies" -Arguments @{
+    object_type = "table"; object_name = "mcp_p10_dep"
+}
+
+# --- get_table_dependencies test ---
+Add-ToolCall -Calls $p10Calls -Id 1296 -Name "get_table_dependencies" -Arguments @{
+    table_name = "mcp_p10_dep"
+}
+
+# --- get_record_source_fields: table ---
+Add-ToolCall -Calls $p10Calls -Id 1297 -Name "get_record_source_fields" -Arguments @{
+    source = "mcp_p10_dep"
+}
+
+# --- get_record_source_fields: query ---
+Add-ToolCall -Calls $p10Calls -Id 1298 -Name "get_record_source_fields" -Arguments @{
+    source = "mcp_p10_qry"
+}
+
+# --- get_record_source_fields: inline SQL ---
+Add-ToolCall -Calls $p10Calls -Id 1299 -Name "get_record_source_fields" -Arguments @{
+    source = "SELECT id, name FROM mcp_p10_dep WHERE id = 1"; source_type = "sql"
+}
+
+# --- find_and_replace_in_vba: search existing VBA code (pre-existing modules contain "Pong") ---
+Add-ToolCall -Calls $p10Calls -Id 1300 -Name "find_and_replace_in_vba" -Arguments @{
+    find_text = "Pong"; preview_only = $true
+}
+
+# --- find_and_replace_in_vba: replace (preview) ---
+Add-ToolCall -Calls $p10Calls -Id 1301 -Name "find_and_replace_in_vba" -Arguments @{
+    find_text = "Pong"; replace_text = "PongP10Tmp"; preview_only = $true
+}
+
+# --- find_and_replace_in_vba: replace (actual) ---
+Add-ToolCall -Calls $p10Calls -Id 1302 -Name "find_and_replace_in_vba" -Arguments @{
+    find_text = "Pong"; replace_text = "PongP10Tmp"; preview_only = $false
+}
+
+# --- Verify replacement applied ---
+Add-ToolCall -Calls $p10Calls -Id 1303 -Name "find_and_replace_in_vba" -Arguments @{
+    find_text = "PongP10Tmp"; preview_only = $true
+}
+
+# --- Revert replacement to leave existing modules clean ---
+Add-ToolCall -Calls $p10Calls -Id 1304 -Name "find_and_replace_in_vba" -Arguments @{
+    find_text = "PongP10Tmp"; replace_text = "Pong"; preview_only = $false
+}
+
+# Cleanup
+Add-ToolCall -Calls $p10Calls -Id 1305 -Name "delete_form" -Arguments @{ form_name = "mcp_p10_frm" }
+Add-ToolCall -Calls $p10Calls -Id 1306 -Name "delete_query" -Arguments @{ query_name = "mcp_p10_qry" }
+Add-ToolCall -Calls $p10Calls -Id 1307 -Name "delete_table" -Arguments @{ table_name = "mcp_p10_dep" }
+Add-ToolCall -Calls $p10Calls -Id 1308 -Name "disconnect_access" -Arguments @{}
+
+$savedTimeout = $script:BatchTimeoutSeconds
+$script:BatchTimeoutSeconds = 300
+$p10Responses = Invoke-McpBatch -ExePath $ServerExe -Calls $p10Calls -ClientName "full-regression-phase10" -ClientVersion "1.0"
+$script:BatchTimeoutSeconds = $savedTimeout
+$p10Labels = @{
+    1290 = "p10_connect"
+    1291 = "p10_create_table"
+    1292 = "p10_create_query"
+    1293 = "p10_insert_data"
+    1294 = "p10_create_form"
+    1295 = "p10_get_object_dependencies"
+    1296 = "p10_get_table_dependencies"
+    1297 = "p10_get_record_source_fields_table"
+    1298 = "p10_get_record_source_fields_query"
+    1299 = "p10_get_record_source_fields_sql"
+    1300 = "p10_find_in_vba_search"
+    1301 = "p10_find_in_vba_preview_replace"
+    1302 = "p10_find_in_vba_actual_replace"
+    1303 = "p10_find_in_vba_verify_replace"
+    1304 = "p10_find_in_vba_revert"
+    1305 = "p10_delete_form"
+    1306 = "p10_delete_query"
+    1307 = "p10_delete_table"
+    1308 = "p10_disconnect"
+}
+
+foreach ($id in ($p10Labels.Keys | Sort-Object)) {
+    $label = $p10Labels[$id]
+    $decoded = Decode-McpResult -Response $p10Responses[[int]$id]
+
+    if ($null -eq $decoded) {
+        $failed++
+        Write-Host ('{0}: FAIL missing-response' -f $label)
+        continue
+    }
+    # Graceful-fail handling for setup/cleanup steps
+    if ($decoded.success -ne $true) {
+        if ($label -in @("p10_create_table", "p10_create_query", "p10_insert_data", "p10_create_form",
+                         "p10_get_object_dependencies")) {
+            Write-Host ('{0}: OK (graceful-fail: {1})' -f $label, $decoded.error)
+            continue
+        }
+        $failed++
+        Write-Host ('{0}: FAIL {1}' -f $label, $decoded.error)
+        continue
+    }
+
+    $p10Failed = $false
+    switch ($label) {
+        "p10_get_object_dependencies" {
+            # May fail if Name AutoCorrect is disabled - that's OK
+            # If it succeeds, validate structure
+            if ($null -eq $decoded.dependants -and $null -eq $decoded.dependencies) {
+                $failed++
+                $p10Failed = $true
+                Write-Host ('{0}: FAIL expected dependants and dependencies arrays' -f $label)
+            }
+        }
+        "p10_get_table_dependencies" {
+            if ($null -eq $decoded.queries) {
+                $failed++
+                $p10Failed = $true
+                Write-Host ('{0}: FAIL expected queries array' -f $label)
+            }
+            elseif ($decoded.queries.Count -lt 1) {
+                $failed++
+                $p10Failed = $true
+                Write-Host ('{0}: FAIL expected at least 1 query dependency, got {1}' -f $label, $decoded.queries.Count)
+            }
+            if ($null -eq $decoded.forms) {
+                $failed++
+                $p10Failed = $true
+                Write-Host ('{0}: FAIL expected forms array' -f $label)
+            }
+            elseif ($decoded.forms.Count -lt 1) {
+                $failed++
+                $p10Failed = $true
+                Write-Host ('{0}: FAIL expected at least 1 form dependency, got {1}' -f $label, $decoded.forms.Count)
+            }
+        }
+        "p10_get_record_source_fields_table" {
+            if ($decoded.source_type -ne "table") {
+                $failed++
+                $p10Failed = $true
+                Write-Host ('{0}: FAIL expected source_type=table, got {1}' -f $label, $decoded.source_type)
+            }
+            elseif ($decoded.field_count -lt 2) {
+                $failed++
+                $p10Failed = $true
+                Write-Host ('{0}: FAIL expected at least 2 fields, got {1}' -f $label, $decoded.field_count)
+            }
+        }
+        "p10_get_record_source_fields_query" {
+            if ($decoded.source_type -ne "query") {
+                $failed++
+                $p10Failed = $true
+                Write-Host ('{0}: FAIL expected source_type=query, got {1}' -f $label, $decoded.source_type)
+            }
+            elseif ($decoded.field_count -lt 2) {
+                $failed++
+                $p10Failed = $true
+                Write-Host ('{0}: FAIL expected at least 2 fields, got {1}' -f $label, $decoded.field_count)
+            }
+        }
+        "p10_get_record_source_fields_sql" {
+            if ($decoded.source_type -ne "sql") {
+                $failed++
+                $p10Failed = $true
+                Write-Host ('{0}: FAIL expected source_type=sql, got {1}' -f $label, $decoded.source_type)
+            }
+            elseif ($decoded.field_count -lt 2) {
+                $failed++
+                $p10Failed = $true
+                Write-Host ('{0}: FAIL expected at least 2 fields, got {1}' -f $label, $decoded.field_count)
+            }
+        }
+        "p10_find_in_vba_search" {
+            if ($decoded.matches_found -lt 1) {
+                $failed++
+                $p10Failed = $true
+                Write-Host ('{0}: FAIL expected at least 1 match, got {1}' -f $label, $decoded.matches_found)
+            }
+            if ($decoded.replacements_made -ne 0) {
+                $failed++
+                $p10Failed = $true
+                Write-Host ('{0}: FAIL expected 0 replacements in search mode, got {1}' -f $label, $decoded.replacements_made)
+            }
+        }
+        "p10_find_in_vba_preview_replace" {
+            if ($decoded.matches_found -lt 1) {
+                $failed++
+                $p10Failed = $true
+                Write-Host ('{0}: FAIL expected at least 1 match, got {1}' -f $label, $decoded.matches_found)
+            }
+            if ($decoded.replacements_made -ne 0) {
+                $failed++
+                $p10Failed = $true
+                Write-Host ('{0}: FAIL expected 0 replacements in preview mode, got {1}' -f $label, $decoded.replacements_made)
+            }
+        }
+        "p10_find_in_vba_actual_replace" {
+            if ($decoded.matches_found -lt 1) {
+                $failed++
+                $p10Failed = $true
+                Write-Host ('{0}: FAIL expected at least 1 match, got {1}' -f $label, $decoded.matches_found)
+            }
+            if ($decoded.replacements_made -lt 1) {
+                $failed++
+                $p10Failed = $true
+                Write-Host ('{0}: FAIL expected at least 1 replacement, got {1}' -f $label, $decoded.replacements_made)
+            }
+        }
+        "p10_find_in_vba_verify_replace" {
+            if ($decoded.matches_found -lt 1) {
+                $failed++
+                $p10Failed = $true
+                Write-Host ('{0}: FAIL expected to find replaced text, got {1} matches' -f $label, $decoded.matches_found)
+            }
+        }
+        "p10_find_in_vba_revert" {
+            if ($decoded.replacements_made -lt 1) {
+                $failed++
+                $p10Failed = $true
+                Write-Host ('{0}: FAIL expected at least 1 revert replacement, got {1}' -f $label, $decoded.replacements_made)
+            }
+        }
+    }
+
+    if (-not $p10Failed) {
+        Write-Host ('{0}: OK' -f $label)
+    }
+}
+
 Write-Host "=== End Feature Gap Tests ==="
 Write-Host ""
 

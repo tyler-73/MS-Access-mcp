@@ -542,7 +542,12 @@ class Program
                 new { name = "recordset_seek", description = "Index-based lookup on a table-type recordset (much faster than Find for indexed fields). Sets the Index property then calls Seek.", inputSchema = new { type = "object", properties = new { recordset_id = new { type = "string", description = "The recordset handle ID (must be opened with type=1 for table-type)" }, index_name = new { type = "string", description = "Name of the index to use (e.g. 'PrimaryKey')" }, key_values = new { type = "array", items = new { }, description = "Array of key values to seek (matches index columns in order)" }, comparison = new { type = "string", @enum = new[] { "=", "<", ">", "<=", ">=" }, description = "Comparison operator (default '=')" } }, required = new string[] { "recordset_id", "index_name", "key_values" } } },
                 new { name = "recordset_clone", description = "Create an independent clone of an open recordset. The clone shares the same data but has its own current position.", inputSchema = new { type = "object", properties = new { recordset_id = new { type = "string", description = "The recordset handle ID to clone" } }, required = new string[] { "recordset_id" } } },
                 new { name = "control_set_zorder", description = "Change the z-order of a control on a form or report (bring to front or send to back) in design view.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string", @enum = new[] { "form", "report" }, description = "Type of object containing the control" }, object_name = new { type = "string", description = "Name of the form or report" }, control_name = new { type = "string", description = "Name of the control to reorder" }, position = new { type = "string", @enum = new[] { "front", "back" }, description = "Target z-order position" } }, required = new string[] { "object_type", "object_name", "control_name", "position" } } },
-                new { name = "get_tab_control_pages", description = "Enumerate pages in a TabControl on a form, returning name, caption, index, visibility, enabled state, and control count for each page.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the form containing the tab control" }, control_name = new { type = "string", description = "Name of the tab control" } }, required = new string[] { "form_name", "control_name" } } }
+                new { name = "get_tab_control_pages", description = "Enumerate pages in a TabControl on a form, returning name, caption, index, visibility, enabled state, and control count for each page.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the form containing the tab control" }, control_name = new { type = "string", description = "Name of the tab control" } }, required = new string[] { "form_name", "control_name" } } },
+                // Phase 10: Analysis & Dependency Tools
+                new { name = "get_object_dependencies", description = "Get the dependency tree for a database object using Access's built-in dependency tracking. Shows which objects depend on this one (dependants) and which objects this one depends on (dependencies). Requires Name AutoCorrect to be enabled.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string", @enum = new[] { "table", "query", "form", "report" }, description = "Type of the database object" }, object_name = new { type = "string", description = "Name of the database object" } }, required = new string[] { "object_type", "object_name" } } },
+                new { name = "get_table_dependencies", description = "Scan all forms, reports, and queries to find which reference a given table. Works regardless of Name AutoCorrect setting by directly inspecting RecordSource, ControlSource, RowSource, and query SQL.", inputSchema = new { type = "object", properties = new { table_name = new { type = "string", description = "Name of the table to find dependencies for" } }, required = new string[] { "table_name" } } },
+                new { name = "get_record_source_fields", description = "Resolve the output columns of any record source (table name, query name, or inline SQL). Returns field name, type, size, and required status for each column.", inputSchema = new { type = "object", properties = new { source = new { type = "string", description = "Table name, query name, or inline SQL statement" }, source_type = new { type = "string", @enum = new[] { "table", "query", "sql" }, description = "Type of source. Auto-detected if omitted (checks TableDefs, then QueryDefs, then treats as SQL)." } }, required = new string[] { "source" } } },
+                new { name = "find_and_replace_in_vba", description = "Search (and optionally replace) text across all VBA modules in a single operation. Supports case-sensitive and whole-word matching. Default is preview-only mode.", inputSchema = new { type = "object", properties = new { find_text = new { type = "string", description = "Text to search for" }, replace_text = new { type = "string", description = "Replacement text. Omit to search only." }, case_sensitive = new { type = "boolean", description = "Case-sensitive matching (default false)" }, whole_word = new { type = "boolean", description = "Match whole words only (default false)" }, preview_only = new { type = "boolean", description = "If true (default), show matches without modifying code. Set to false to apply replacements." } }, required = new string[] { "find_text" } } }
             }
         };
     }
@@ -916,6 +921,11 @@ class Program
             "recordset_clone" => HandleRecordsetClone(accessService, toolArguments),
             "control_set_zorder" => HandleControlSetZOrder(accessService, toolArguments),
             "get_tab_control_pages" => HandleGetTabControlPages(accessService, toolArguments),
+            // Phase 10
+            "get_object_dependencies" => HandleGetObjectDependencies(accessService, toolArguments),
+            "get_table_dependencies" => HandleGetTableDependencies(accessService, toolArguments),
+            "get_record_source_fields" => HandleGetRecordSourceFields(accessService, toolArguments),
+            "find_and_replace_in_vba" => HandleFindAndReplaceInVba(accessService, toolArguments),
             _ => new { success = false, error = $"Unknown tool: {toolName}" }
         };
     }
@@ -8072,6 +8082,76 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("get_tab_control_pages", ex);
+        }
+    }
+
+    // ── Phase 10: Analysis & Dependency Tool Handlers ──────────────────────
+
+    static object HandleGetObjectDependencies(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "object_type", out var objectType, out var otError))
+                return otError;
+            if (!TryGetRequiredString(arguments, "object_name", out var objectName, out var onError))
+                return onError;
+            var result = accessService.GetObjectDependencies(objectType, objectName);
+            return new { success = true, object_name = result.ObjectName, object_type = result.ObjectType, dependants = result.Dependants, dependencies = result.Dependencies };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_object_dependencies", ex);
+        }
+    }
+
+    static object HandleGetTableDependencies(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "table_name", out var tableName, out var tnError))
+                return tnError;
+            var result = accessService.GetTableDependencies(tableName);
+            return new { success = true, table_name = result.TableName, forms = result.Forms, reports = result.Reports, queries = result.Queries };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_table_dependencies", ex);
+        }
+    }
+
+    static object HandleGetRecordSourceFields(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "source", out var source, out var srcError))
+                return srcError;
+            _ = TryGetOptionalString(arguments, "source_type", out var sourceType);
+            var result = accessService.GetRecordSourceFields(source, sourceType);
+            return new { success = true, source = result.Source, source_type = result.SourceType, field_count = result.Fields.Count, fields = result.Fields };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("get_record_source_fields", ex);
+        }
+    }
+
+    static object HandleFindAndReplaceInVba(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "find_text", out var findText, out var ftError))
+                return ftError;
+            _ = TryGetOptionalString(arguments, "replace_text", out var replaceText);
+            var caseSensitive = arguments.TryGetProperty("case_sensitive", out var cs) && cs.ValueKind == JsonValueKind.True;
+            var wholeWord = arguments.TryGetProperty("whole_word", out var ww) && ww.ValueKind == JsonValueKind.True;
+            var previewOnly = !arguments.TryGetProperty("preview_only", out var po) || po.ValueKind != JsonValueKind.False; // default true
+
+            var result = accessService.FindAndReplaceInVba(findText, replaceText, caseSensitive, wholeWord, previewOnly);
+            return new { success = true, matches_found = result.MatchesFound, replacements_made = result.ReplacementsMade, details = result.Details };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("find_and_replace_in_vba", ex);
         }
     }
 
