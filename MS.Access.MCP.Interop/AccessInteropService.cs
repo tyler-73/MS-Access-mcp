@@ -5130,19 +5130,24 @@ namespace MS.Access.MCP.Interop
 
             try
             {
-                var accessApp = EnsureAccessApplication(openCurrentDatabase: true);
-                foreach (var module in accessApp.CurrentProject.AllModules)
+                var result = WithDialogDismisser(() =>
                 {
-                    modules.Add(new ModuleInfo
+                    var accessApp = EnsureAccessApplication(openCurrentDatabase: true);
+                    var mods = new List<ModuleInfo>();
+                    foreach (var module in accessApp.CurrentProject.AllModules)
                     {
-                        Name = module.Name ?? "",
-                        FullName = module.FullName ?? module.Name ?? "",
-                        Type = "Module"
-                    });
-                }
+                        mods.Add(new ModuleInfo
+                        {
+                            Name = module.Name ?? "",
+                            FullName = module.FullName ?? module.Name ?? "",
+                            Type = "Module"
+                        });
+                    }
+                    return mods;
+                });
 
-                if (modules.Count > 0)
-                    return modules;
+                if (result.Count > 0)
+                    return result;
             }
             catch
             {
@@ -5262,32 +5267,37 @@ namespace MS.Access.MCP.Interop
 
             try
             {
-                var accessApp = EnsureAccessApplication(openCurrentDatabase: true);
-                EnsureVbeAccessEnabled();
-                var vbeForProjects = AccessVbeWithRetry(accessApp);
-                foreach (var project in vbeForProjects.VBProjects)
+                var result = WithDialogDismisser(() =>
                 {
-                    var modules = new List<VBAModuleInfo>();
-                    foreach (var component in project.VBComponents)
+                    var accessApp = EnsureAccessApplication(openCurrentDatabase: true);
+                    EnsureVbeAccessEnabled();
+                    var vbeForProjects = AccessVbeWithRetry(accessApp);
+                    var projs = new List<VBAProjectInfo>();
+                    foreach (var project in vbeForProjects.VBProjects)
                     {
-                        modules.Add(new VBAModuleInfo
+                        var modules = new List<VBAModuleInfo>();
+                        foreach (var component in project.VBComponents)
                         {
-                            Name = SafeToString(TryGetDynamicProperty(component, "Name")) ?? "",
-                            Type = MapVbComponentType(ToInt32(TryGetDynamicProperty(component, "Type"))),
-                            HasCode = ToInt32(TryGetDynamicProperty(TryGetDynamicProperty(component, "CodeModule"), "CountOfLines")) > 0
+                            modules.Add(new VBAModuleInfo
+                            {
+                                Name = SafeToString(TryGetDynamicProperty(component, "Name")) ?? "",
+                                Type = MapVbComponentType(ToInt32(TryGetDynamicProperty(component, "Type"))),
+                                HasCode = ToInt32(TryGetDynamicProperty(TryGetDynamicProperty(component, "CodeModule"), "CountOfLines")) > 0
+                            });
+                        }
+
+                        projs.Add(new VBAProjectInfo
+                        {
+                            Name = SafeToString(TryGetDynamicProperty(project, "Name")) ?? "VBAProject",
+                            Description = SafeToString(TryGetDynamicProperty(project, "Description")) ?? "",
+                            Modules = modules.OrderBy(m => m.Name, StringComparer.OrdinalIgnoreCase).ToList()
                         });
                     }
+                    return projs;
+                });
 
-                    projects.Add(new VBAProjectInfo
-                    {
-                        Name = SafeToString(TryGetDynamicProperty(project, "Name")) ?? "VBAProject",
-                        Description = SafeToString(TryGetDynamicProperty(project, "Description")) ?? "",
-                        Modules = modules.OrderBy(m => m.Name, StringComparer.OrdinalIgnoreCase).ToList()
-                    });
-                }
-
-                if (projects.Count > 0)
-                    return projects;
+                if (result.Count > 0)
+                    return result;
             }
             catch
             {
@@ -5329,17 +5339,20 @@ namespace MS.Access.MCP.Interop
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
             if (string.IsNullOrWhiteSpace(moduleName)) throw new ArgumentException("Module name is required", nameof(moduleName));
 
-            var accessApp = EnsureAccessApplication(openCurrentDatabase: true);
-            var component = FindOrCreateVbComponent(accessApp, projectName, moduleName, false)
-                ?? throw new InvalidOperationException($"VBA module '{moduleName}' was not found.");
-            var codeModule = TryGetDynamicProperty(component, "CodeModule")
-                ?? throw new InvalidOperationException($"Code module for '{moduleName}' is not accessible.");
+            return WithDialogDismisser(() =>
+            {
+                var accessApp = EnsureAccessApplication(openCurrentDatabase: true);
+                var component = FindOrCreateVbComponent(accessApp, projectName, moduleName, false)
+                    ?? throw new InvalidOperationException($"VBA module '{moduleName}' was not found.");
+                var codeModule = TryGetDynamicProperty(component, "CodeModule")
+                    ?? throw new InvalidOperationException($"Code module for '{moduleName}' is not accessible.");
 
-            var lineCount = ToInt32(TryGetDynamicProperty(codeModule, "CountOfLines"));
-            if (lineCount <= 0)
-                return string.Empty;
+                var lineCount = ToInt32(TryGetDynamicProperty(codeModule, "CountOfLines"));
+                if (lineCount <= 0)
+                    return string.Empty;
 
-            return SafeToString(TryGetDynamicProperty(codeModule, "Lines", 1, lineCount)) ?? string.Empty;
+                return SafeToString(TryGetDynamicProperty(codeModule, "Lines", 1, lineCount)) ?? string.Empty;
+            });
         }
 
         public void SetVBACode(string projectName, string moduleName, string code)
@@ -11062,7 +11075,7 @@ namespace MS.Access.MCP.Interop
                 {
                     polls++;
                     try { TryDismissVbeDialogs(); } catch { }
-                    dismissStop.Wait(500); // interruptible sleep
+                    dismissStop.Wait(200); // interruptible sleep — fast polling to dismiss VBE dialogs quickly
                 }
                 Console.Error.WriteLine($"[DLG] Dismisser thread stopped after {polls} polls");
             });
@@ -11105,8 +11118,8 @@ namespace MS.Access.MCP.Interop
                 }
                 catch (Exception ex) when (attempt < 2 && IsVbeFileNotFoundError(ex))
                 {
-                    // 0x800A0035 (CTL_E_FILENOTFOUND) during VBE operations indicates VBA project
-                    // corruption. On first hit, wait for dialog dismisser and retry on same instance.
+                    // 0x800A0035 (CTL_E_FILENOTFOUND) during VBE operations indicates broken VBA
+                    // references. On first hit, wait for dialog dismisser and retry on same instance.
                     // If that fails, compact & repair the database to fix the corruption, then retry.
                     lastError = ex;
                     if (attempt == 0)
@@ -11127,6 +11140,16 @@ namespace MS.Access.MCP.Interop
                 }
             }
 
+            // After exhausting all retries, fully reset Access AND close OleDb connections to
+            // ensure clean state for subsequent calls. Without this, broken VBE state causes
+            // "exclusive access" errors in later operations.
+            if (lastError != null && IsVbeFileNotFoundError(lastError))
+            {
+                Console.Error.WriteLine("[VBE] Resetting Access after exhausted VBE retries to ensure clean state");
+                try { CloseSqlConnections(); } catch { }
+                try { ResetAccessApplication(); } catch { }
+            }
+
             throw lastError ?? new InvalidOperationException("COM operation failed.");
         }
 
@@ -11139,8 +11162,10 @@ namespace MS.Access.MCP.Interop
 
             try
             {
-                // Close Access completely
-                ResetAccessApplication();
+                // Close Access with acQuitSaveNone (2) to prevent "Save As" dialogs
+                // that would create orphan modules. Since we're about to compact & repair,
+                // any unsaved VBA state will be rebuilt from the clean compacted database.
+                ResetAccessApplication(quitOption: 2);
 
                 // Wait for file locks to release
                 Thread.Sleep(2000);
@@ -11190,9 +11215,10 @@ namespace MS.Access.MCP.Interop
 
         private static bool IsVbeFileNotFoundError(Exception ex)
         {
-            if (ex is COMException comEx && unchecked((uint)comEx.ErrorCode) == 0x800A0035)
-                return true;
-            if (unchecked((uint)ex.HResult) == 0x800A0035)
+            var code = ex is COMException comEx ? unchecked((uint)comEx.ErrorCode) : unchecked((uint)ex.HResult);
+            // 0x800A0035 = CTL_E_FILENOTFOUND (broken VBA references)
+            // 0x800ADEB9 = VBA project not ready / corrupt state (also from VBE dialog interference)
+            if (code == 0x800A0035 || code == 0x800ADEB9)
                 return true;
             return ex.InnerException != null && IsVbeFileNotFoundError(ex.InnerException);
         }
@@ -11206,7 +11232,9 @@ namespace MS.Access.MCP.Interop
             if (ex is COMException comException)
             {
                 var errorCode = unchecked((uint)comException.ErrorCode);
-                if (errorCode == 0x800ADEB9 || errorCode == 0x800A0BB9)
+                // 0x800ADEB9 is handled by IsVbeFileNotFoundError (retry with delay, don't reset).
+                // 0x800A0BB9 is a separate COM error that benefits from full reset.
+                if (errorCode == 0x800A0BB9)
                 {
                     return true;
                 }
@@ -11331,6 +11359,20 @@ namespace MS.Access.MCP.Interop
             {
                 Console.Error.WriteLine("[COM] Upgrading to exclusive: resetting Access to get a clean instance");
                 ResetAccessApplication();
+
+                // Wait for the .laccdb lock file to be released by the OS.
+                // Without this, OpenCurrentDatabase(path, true) may silently open
+                // non-exclusively, causing "exclusive access" errors in subsequent ops.
+                if (!string.IsNullOrWhiteSpace(_currentDatabasePath))
+                {
+                    var lockFile = _currentDatabasePath + ".laccdb";
+                    if (File.Exists(lockFile))
+                    {
+                        Console.Error.WriteLine($"[COM] Waiting for lock file release: {lockFile}");
+                        for (int i = 0; i < 10 && File.Exists(lockFile); i++)
+                            Thread.Sleep(500);
+                    }
+                }
             }
 
             if (_accessApplication == null)
@@ -11642,6 +11684,38 @@ namespace MS.Access.MCP.Interop
             }
 
             return dismissed;
+        }
+
+        /// <summary>
+        /// Runs an operation with a background dialog dismisser thread active.
+        /// Use this for VBE-accessing methods that don't go through ExecuteComOperation
+        /// (which has its own dismisser). Without a dismisser, VBE "File not found" dialogs
+        /// from broken references block the COM call forever.
+        /// </summary>
+        private T WithDialogDismisser<T>(Func<T> operation)
+        {
+            var dismissStop = new ManualResetEventSlim(false);
+            var dismissThread = new Thread(() =>
+            {
+                while (!dismissStop.IsSet)
+                {
+                    try { TryDismissVbeDialogs(); } catch { }
+                    dismissStop.Wait(200);
+                }
+            });
+            dismissThread.IsBackground = true;
+            dismissThread.Name = "VBE-Dialog-Dismisser-Lite";
+            dismissThread.Start();
+
+            try
+            {
+                return operation();
+            }
+            finally
+            {
+                dismissStop.Set();
+                dismissThread.Join(3000);
+            }
         }
 
         /// <summary>

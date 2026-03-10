@@ -363,7 +363,7 @@ class Program
                 new { name = "import_macro_from_text", description = "Import or replace a macro from text format", inputSchema = new { type = "object", properties = new { macro_name = new { type = "string" }, macro_data = new { type = "string" }, overwrite = new { type = "boolean" } }, required = new string[] { "macro_name", "macro_data" } } },
                 new { name = "delete_macro", description = "Delete a macro from the database", inputSchema = new { type = "object", properties = new { macro_name = new { type = "string" } }, required = new string[] { "macro_name" } } },
                 new { name = "get_vba_projects", description = "Get list of VBA projects", inputSchema = new { type = "object", properties = new { } } },
-                new { name = "get_vba_code", description = "Get VBA code from a module", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" } }, required = new string[] { "project_name", "module_name" } } },
+                new { name = "get_vba_code", description = "Get VBA code from a module", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" } }, required = new string[] { "module_name" } } },
                 new { name = "set_vba_code", description = "Set VBA code in a module", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" }, code = new { type = "string" } }, required = new string[] { "project_name", "module_name", "code" } } },
                 new { name = "add_vba_procedure", description = "Add a VBA procedure to a module", inputSchema = new { type = "object", properties = new { project_name = new { type = "string" }, module_name = new { type = "string" }, procedure_name = new { type = "string" }, code = new { type = "string" } }, required = new string[] { "project_name", "module_name", "procedure_name", "code" } } },
                 new { name = "compile_vba", description = "Compile VBA code", inputSchema = new { type = "object", properties = new { } } },
@@ -4675,13 +4675,11 @@ class Program
     {
         try
         {
-            var projectName = arguments.GetProperty("project_name").GetString();
-            var moduleName = arguments.GetProperty("module_name").GetString();
-            
-            if (string.IsNullOrEmpty(projectName) || string.IsNullOrEmpty(moduleName))
-                return new { success = false, error = "Project name and module name are required" };
-                
-            var code = accessService.GetVBACode(projectName, moduleName);
+            if (!TryGetRequiredString(arguments, "module_name", out var moduleName, out var moduleNameError))
+                return moduleNameError;
+            _ = TryGetOptionalString(arguments, "project_name", out var projectName);
+
+            var code = accessService.GetVBACode(string.IsNullOrWhiteSpace(projectName) ? null : projectName, moduleName);
             return new { success = true, code = code };
         }
         catch (Exception ex)
