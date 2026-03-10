@@ -642,6 +642,56 @@ try {
         Write-Host "connect_access_secure_arg_negative_path: SKIP system_database_path not exposed by tool schema"
     }
 
+    # ── Phase 9-12 Negative Path Tests ──
+    Write-Host ""
+    Write-Host "=== Phase 9-12 Negative Path Tests ==="
+    Cleanup-AccessArtifacts -DbPath $DatabasePath
+
+    $np2Calls = New-Object 'System.Collections.Generic.List[object]'
+    Add-ToolCall -Calls $np2Calls -Id 100 -Name "connect_access" -Arguments @{ database_path = $DatabasePath }
+    # Recordset tools with invalid handles
+    Add-ToolCall -Calls $np2Calls -Id 101 -Name "recordset_get_string" -Arguments @{ recordset_id = "rs_invalid" }
+    Add-ToolCall -Calls $np2Calls -Id 102 -Name "recordset_seek" -Arguments @{ recordset_id = "rs_invalid"; index_name = "PK"; key_values = @(1) }
+    Add-ToolCall -Calls $np2Calls -Id 103 -Name "recordset_clone" -Arguments @{ recordset_id = "rs_invalid" }
+    # Control tools with invalid form/report names
+    Add-ToolCall -Calls $np2Calls -Id 104 -Name "create_control" -Arguments @{ form_name = "nonexistent_form_np"; control_type = "TextBox" }
+    Add-ToolCall -Calls $np2Calls -Id 105 -Name "delete_control" -Arguments @{ form_name = "nonexistent_form_np"; control_name = "ctrl1" }
+    Add-ToolCall -Calls $np2Calls -Id 106 -Name "create_report_control" -Arguments @{ report_name = "nonexistent_report_np"; control_type = "TextBox" }
+    Add-ToolCall -Calls $np2Calls -Id 107 -Name "delete_report_control" -Arguments @{ report_name = "nonexistent_report_np"; control_name = "ctrl1" }
+    Add-ToolCall -Calls $np2Calls -Id 108 -Name "control_set_zorder" -Arguments @{ object_type = "form"; object_name = "nonexistent_form_np"; control_name = "ctrl1"; position = "front" }
+    Add-ToolCall -Calls $np2Calls -Id 109 -Name "get_tab_control_pages" -Arguments @{ form_name = "nonexistent_form_np"; control_name = "tabCtrl" }
+    # Phase 10-11 tools with invalid args
+    Add-ToolCall -Calls $np2Calls -Id 110 -Name "reset_subdatasheet_properties" -Arguments @{ table_name = "nonexistent_table_np" }
+    Add-ToolCall -Calls $np2Calls -Id 111 -Name "get_object_dependencies" -Arguments @{ object_type = "table"; object_name = "nonexistent_table_np" }
+    Add-ToolCall -Calls $np2Calls -Id 112 -Name "get_record_source_fields" -Arguments @{ source = "nonexistent_table_np" }
+    Add-ToolCall -Calls $np2Calls -Id 113 -Name "disconnect_access" -Arguments @{}
+
+    $np2Responses = Invoke-McpBatch -ExePath $ServerExe -Calls $np2Calls
+
+    # Checkpoint: connect must succeed
+    $np2Connect = Decode-McpResult -Response $np2Responses[100]
+    if (-not ($np2Connect -and $np2Connect.PSObject.Properties["success"] -and [bool]$np2Connect.success)) {
+        throw "Phase 9-12 negative paths: connect_access checkpoint failed."
+    }
+
+    Assert-FailureResponse -Responses $np2Responses -Id 101 -Name "recordset_get_string_invalid_handle"
+    Assert-FailureResponse -Responses $np2Responses -Id 102 -Name "recordset_seek_invalid_handle"
+    Assert-FailureResponse -Responses $np2Responses -Id 103 -Name "recordset_clone_invalid_handle"
+    Assert-FailureResponse -Responses $np2Responses -Id 104 -Name "create_control_invalid_form"
+    Assert-FailureResponse -Responses $np2Responses -Id 105 -Name "delete_control_invalid_form"
+    Assert-FailureResponse -Responses $np2Responses -Id 106 -Name "create_report_control_invalid_report"
+    Assert-FailureResponse -Responses $np2Responses -Id 107 -Name "delete_report_control_invalid_report"
+    Assert-FailureResponse -Responses $np2Responses -Id 108 -Name "control_set_zorder_invalid_form"
+    Assert-FailureResponse -Responses $np2Responses -Id 109 -Name "get_tab_control_pages_invalid_form"
+    Assert-FailureResponse -Responses $np2Responses -Id 110 -Name "reset_subdatasheet_properties_invalid_table"
+    Assert-FailureResponse -Responses $np2Responses -Id 111 -Name "get_object_dependencies_invalid_object"
+    Assert-FailureResponse -Responses $np2Responses -Id 112 -Name "get_record_source_fields_invalid_source"
+
+    $np2Disconnect = Decode-McpResult -Response $np2Responses[113]
+    if (-not ($np2Disconnect -and $np2Disconnect.PSObject.Properties["success"] -and [bool]$np2Disconnect.success)) {
+        Write-Host "Phase 9-12 negative paths: disconnect checkpoint failed (non-fatal)."
+    }
+
     Write-Host "NEGATIVE_PATHS_PASS=1"
     $exitCode = 0
 }

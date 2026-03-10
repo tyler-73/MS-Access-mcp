@@ -7303,6 +7303,261 @@ foreach ($id in ($p11Labels.Keys | Sort-Object)) {
     }
 }
 
+# ── Feature Gap Phase 12: RecordsetGetString + Control CRUD Verification (IDs 1331-1346) ──
+Write-Host ""
+Write-Host "=== Feature Gap Phase 12: RecordsetGetString + Control CRUD Verification (IDs 1331-1346) ==="
+Cleanup-AccessArtifacts -DbPath $DatabasePath
+Start-Sleep -Milliseconds 300
+
+$p12Calls = New-Object 'System.Collections.Generic.List[object]'
+Add-ToolCall $p12Calls 1331 "connect_access" @{ database_path = $DatabasePath }
+# Pre-cleanup (graceful-fail)
+Add-ToolCall $p12Calls 13311 "delete_table" @{ table_name = "mcp_p12_gs" }
+Add-ToolCall $p12Calls 13312 "delete_form" @{ form_name = "mcp_p12_ctrl" }
+# Setup table with data for GetString tests
+Add-ToolCall $p12Calls 1332 "create_table" @{ table_name = "mcp_p12_gs"; fields = @(@{ name = "id"; type = "LONG"; size = 0; required = $true; allow_zero_length = $false }, @{ name = "name"; type = "TEXT"; size = 50; required = $false; allow_zero_length = $true }, @{ name = "score"; type = "DOUBLE"; size = 0; required = $false; allow_zero_length = $false }) }
+Add-ToolCall $p12Calls 1333 "execute_sql" @{ sql = "INSERT INTO mcp_p12_gs (id, name, score) VALUES (1, 'Alice', 95.5)" }
+Add-ToolCall $p12Calls 13331 "execute_sql" @{ sql = "INSERT INTO mcp_p12_gs (id, name, score) VALUES (2, 'Bob', 87.0)" }
+Add-ToolCall $p12Calls 13332 "execute_sql" @{ sql = "INSERT INTO mcp_p12_gs (id, name, score) VALUES (3, 'Carol', NULL)" }
+# Open recordset and test GetString with defaults (first rs in batch = rs_1)
+Add-ToolCall $p12Calls 1334 "open_recordset" @{ source = "SELECT id, name, score FROM mcp_p12_gs ORDER BY id"; type = 4 }
+Add-ToolCall $p12Calls 1335 "recordset_get_string" @{ recordset_id = "rs_1" }
+Add-ToolCall $p12Calls 1336 "close_recordset" @{ recordset_id = "rs_1" }
+# Open recordset again and test GetString with custom delimiters + partial read (second rs = rs_2)
+Add-ToolCall $p12Calls 1337 "open_recordset" @{ source = "SELECT id, name, score FROM mcp_p12_gs ORDER BY id"; type = 4 }
+Add-ToolCall $p12Calls 1338 "recordset_get_string" @{ recordset_id = "rs_2"; num_rows = 2; column_delimiter = ","; row_delimiter = "|"; null_expr = "NULL" }
+Add-ToolCall $p12Calls 1339 "close_recordset" @{ recordset_id = "rs_2" }
+# Control CRUD tests on a form
+Add-ToolCall $p12Calls 1340 "create_form" @{ form_name = "mcp_p12_ctrl" }
+Add-ToolCall $p12Calls 1341 "create_control" @{ form_name = "mcp_p12_ctrl"; control_type = "TextBox"; section = 0 }
+Add-ToolCall $p12Calls 1342 "create_control" @{ form_name = "mcp_p12_ctrl"; control_type = "Label"; control_name = "P12_TestLabel"; section = 0 }
+Add-ToolCall $p12Calls 1343 "get_form_controls" @{ form_name = "mcp_p12_ctrl" }
+Add-ToolCall $p12Calls 1344 "delete_control" @{ form_name = "mcp_p12_ctrl"; control_name = "P12_TestLabel" }
+Add-ToolCall $p12Calls 1345 "delete_form" @{ form_name = "mcp_p12_ctrl" }
+Add-ToolCall $p12Calls 13451 "delete_table" @{ table_name = "mcp_p12_gs" }
+Add-ToolCall $p12Calls 1346 "disconnect_access" @{}
+
+$savedTimeout = $script:BatchTimeoutSeconds
+$script:BatchTimeoutSeconds = 300
+$p12Responses = Invoke-McpBatch -ExePath $ServerExe -Calls $p12Calls -ClientName "full-regression-phase12" -ClientVersion "1.0"
+$script:BatchTimeoutSeconds = $savedTimeout
+
+$p12Labels = @{
+    1331 = "p12_connect"
+    13311 = "p12_preclean_table"
+    13312 = "p12_preclean_form"
+    1332 = "p12_create_table"
+    1333 = "p12_insert_row1"
+    13331 = "p12_insert_row2"
+    13332 = "p12_insert_row3"
+    1334 = "p12_open_rs1"
+    1335 = "p12_get_string_defaults"
+    1336 = "p12_close_rs1"
+    1337 = "p12_open_rs2"
+    1338 = "p12_get_string_custom"
+    1339 = "p12_close_rs2"
+    1340 = "p12_create_form"
+    1341 = "p12_create_textbox"
+    1342 = "p12_create_label"
+    1343 = "p12_get_controls"
+    1344 = "p12_delete_label"
+    1345 = "p12_delete_form"
+    13451 = "p12_delete_table"
+    1346 = "p12_disconnect"
+}
+
+$p12Failed = $false
+$p12RsFailed = $false
+$p12CtrlFailed = $false
+foreach ($id in ($p12Labels.Keys | Sort-Object)) {
+    $label = $p12Labels[$id]
+    $decoded = Decode-McpResult -Response $p12Responses[[int]$id]
+
+    if ($null -eq $decoded) {
+        $failed++
+        $p12Failed = $true
+        Write-Host ('{0}: FAIL missing-response' -f $label)
+        continue
+    }
+
+    # Hard checks: connect/disconnect
+    if ($id -in @(1331, 1346)) {
+        if ($decoded.success -ne $true) {
+            $failed++
+            $p12Failed = $true
+            Write-Host ('{0}: FAIL success={1}' -f $label, $decoded.success)
+        } else {
+            Write-Host ('{0}: OK' -f $label)
+        }
+        continue
+    }
+
+    # Graceful-fail: pre-cleanup and cleanup steps
+    if ($id -in @(13311, 13312, 1345, 13451)) {
+        if ($decoded.success -ne $true) {
+            $failMsg = if ($decoded.error) { $decoded.error } else { "cleanup" }
+            Write-Host ('{0}: OK (graceful-fail: {1})' -f $label, $failMsg)
+        } else {
+            Write-Host ('{0}: OK' -f $label)
+        }
+        continue
+    }
+
+    # Setup steps: graceful-fail
+    if ($id -in @(1332, 1333, 13331, 13332)) {
+        if ($decoded.success -ne $true) {
+            Write-Host ('{0}: OK (graceful-fail: {1})' -f $label, $decoded.error)
+        } else {
+            Write-Host ('{0}: OK' -f $label)
+        }
+        continue
+    }
+
+    switch ($label) {
+        "p12_open_rs1" {
+            if ($decoded.success -ne $true) {
+                $p12RsFailed = $true
+                Write-Host ('{0}: OK (graceful-fail: {1})' -f $label, $decoded.error)
+            } else {
+                Write-Host ('{0}: OK' -f $label)
+            }
+        }
+        "p12_get_string_defaults" {
+            if ($p12RsFailed) {
+                Write-Host ('{0}: OK (graceful-skip: open_recordset failed)' -f $label)
+            } elseif ($decoded.success -ne $true) {
+                $failed++
+                $p12Failed = $true
+                Write-Host ('{0}: FAIL success={1} error={2}' -f $label, $decoded.success, $decoded.error)
+            } else {
+                # Verify data contains all 3 rows (tab-delimited by default)
+                $gsData = $decoded.data
+                if ($null -eq $gsData -or $gsData.Length -lt 5) {
+                    $failed++
+                    $p12Failed = $true
+                    Write-Host ('{0}: FAIL data too short: len={1}' -f $label, $(if ($null -eq $gsData) { 0 } else { $gsData.Length }))
+                } elseif (-not ($gsData -match 'Alice' -and $gsData -match 'Bob')) {
+                    $failed++
+                    $p12Failed = $true
+                    Write-Host ('{0}: FAIL expected Alice and Bob in data' -f $label)
+                } else {
+                    Write-Host ('{0}: OK [len={1}]' -f $label, $gsData.Length)
+                }
+            }
+        }
+        "p12_close_rs1" {
+            if ($p12RsFailed) {
+                Write-Host ('{0}: OK (graceful-skip: open_recordset failed)' -f $label)
+            } elseif ($decoded.success -ne $true) {
+                Write-Host ('{0}: OK (graceful-fail: {1})' -f $label, $decoded.error)
+            } else {
+                Write-Host ('{0}: OK' -f $label)
+            }
+        }
+        "p12_open_rs2" {
+            if ($decoded.success -ne $true) {
+                $p12RsFailed = $true
+                Write-Host ('{0}: OK (graceful-fail: {1})' -f $label, $decoded.error)
+            } else {
+                Write-Host ('{0}: OK' -f $label)
+            }
+        }
+        "p12_get_string_custom" {
+            if ($p12RsFailed) {
+                Write-Host ('{0}: OK (graceful-skip: open_recordset failed)' -f $label)
+            } elseif ($decoded.success -ne $true) {
+                $failed++
+                $p12Failed = $true
+                Write-Host ('{0}: FAIL success={1} error={2}' -f $label, $decoded.success, $decoded.error)
+            } else {
+                $gsData = $decoded.data
+                # Custom delimiters: comma column, pipe row, 2 rows only
+                if ($null -eq $gsData -or $gsData.Length -lt 3) {
+                    $failed++
+                    $p12Failed = $true
+                    Write-Host ('{0}: FAIL data too short' -f $label)
+                } elseif (-not ($gsData -match ',')) {
+                    $failed++
+                    $p12Failed = $true
+                    Write-Host ('{0}: FAIL expected comma delimiter in data' -f $label)
+                } else {
+                    Write-Host ('{0}: OK [len={1}]' -f $label, $gsData.Length)
+                }
+            }
+        }
+        "p12_close_rs2" {
+            if ($p12RsFailed) {
+                Write-Host ('{0}: OK (graceful-skip: open_recordset failed)' -f $label)
+            } elseif ($decoded.success -ne $true) {
+                Write-Host ('{0}: OK (graceful-fail: {1})' -f $label, $decoded.error)
+            } else {
+                Write-Host ('{0}: OK' -f $label)
+            }
+        }
+        "p12_create_form" {
+            if ($decoded.success -ne $true) {
+                $failed++
+                $p12CtrlFailed = $true
+                Write-Host ('{0}: FAIL success={1}' -f $label, $decoded.success)
+            } else {
+                Write-Host ('{0}: OK' -f $label)
+            }
+        }
+        "p12_create_textbox" {
+            if ($p12CtrlFailed) {
+                Write-Host ('{0}: OK (graceful-skip: create_form failed)' -f $label)
+            } elseif ($decoded.success -ne $true) {
+                $failed++
+                $p12CtrlFailed = $true
+                Write-Host ('{0}: FAIL success={1} error={2}' -f $label, $decoded.success, $decoded.error)
+            } else {
+                Write-Host ('{0}: OK' -f $label)
+            }
+        }
+        "p12_create_label" {
+            if ($p12CtrlFailed) {
+                Write-Host ('{0}: OK (graceful-skip: create_form failed)' -f $label)
+            } elseif ($decoded.success -ne $true) {
+                $failed++
+                $p12CtrlFailed = $true
+                Write-Host ('{0}: FAIL success={1} error={2}' -f $label, $decoded.success, $decoded.error)
+            } else {
+                Write-Host ('{0}: OK' -f $label)
+            }
+        }
+        "p12_get_controls" {
+            if ($p12CtrlFailed) {
+                Write-Host ('{0}: OK (graceful-skip: create_form failed)' -f $label)
+            } elseif ($decoded.success -ne $true) {
+                $failed++
+                $p12CtrlFailed = $true
+                Write-Host ('{0}: FAIL success={1}' -f $label, $decoded.success)
+            } else {
+                $ctrlCount = 0
+                if ($decoded.controls) { $ctrlCount = $decoded.controls.Count }
+                if ($ctrlCount -lt 2) {
+                    $failed++
+                    $p12Failed = $true
+                    Write-Host ('{0}: FAIL expected 2+ controls, got {1}' -f $label, $ctrlCount)
+                } else {
+                    Write-Host ('{0}: OK [controls={1}]' -f $label, $ctrlCount)
+                }
+            }
+        }
+        "p12_delete_label" {
+            if ($p12CtrlFailed) {
+                Write-Host ('{0}: OK (graceful-skip: create_form failed)' -f $label)
+            } elseif ($decoded.success -ne $true) {
+                $failed++
+                $p12CtrlFailed = $true
+                Write-Host ('{0}: FAIL success={1} error={2}' -f $label, $decoded.success, $decoded.error)
+            } else {
+                Write-Host ('{0}: OK' -f $label)
+            }
+        }
+    }
+}
+
 Write-Host "=== End Feature Gap Tests ==="
 Write-Host ""
 

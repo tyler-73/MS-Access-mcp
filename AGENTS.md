@@ -29,7 +29,7 @@ This is a .NET 8 (x64-only, Windows) MCP server using custom JSON-RPC over stdio
 - Do NOT change the JsonRpcResponse/JsonRpcRequest/JsonRpcErrorResponse classes
 - Keep the same coding style — no extra usings, no external packages, no async interop
 
-## Current Coverage (359 tools, 100% of practical Access COM/DAO surface)
+## Current Coverage (360 tools, 100% of practical Access COM/DAO surface)
 
 All COM-accessible, non-deprecated features that a developer working with Access through
 an MCP server would reasonably use. Excluded: deprecated replication, user-level security

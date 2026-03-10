@@ -542,6 +542,7 @@ class Program
                 // Phase 9
                 new { name = "recordset_seek", description = "Index-based lookup on a table-type recordset (much faster than Find for indexed fields). Sets the Index property then calls Seek.", inputSchema = new { type = "object", properties = new { recordset_id = new { type = "string", description = "The recordset handle ID (must be opened with type=1 for table-type)" }, index_name = new { type = "string", description = "Name of the index to use (e.g. 'PrimaryKey')" }, key_values = new { type = "array", items = new { }, description = "Array of key values to seek (matches index columns in order)" }, comparison = new { type = "string", @enum = new[] { "=", "<", ">", "<=", ">=" }, description = "Comparison operator (default '=')" } }, required = new string[] { "recordset_id", "index_name", "key_values" } } },
                 new { name = "recordset_clone", description = "Create an independent clone of an open recordset. The clone shares the same data but has its own current position.", inputSchema = new { type = "object", properties = new { recordset_id = new { type = "string", description = "The recordset handle ID to clone" } }, required = new string[] { "recordset_id" } } },
+                new { name = "recordset_get_string", description = "Get rows from an open recordset as a single delimited string using DAO GetString. Fast bulk export. The recordset cursor advances past the retrieved rows. A trailing row delimiter is appended after the last row.", inputSchema = new { type = "object", properties = new { recordset_id = new { type = "string", description = "The recordset handle ID" }, num_rows = new { type = "integer", description = "Number of rows to retrieve (default: all remaining rows, max 65535)" }, column_delimiter = new { type = "string", description = "Delimiter between columns (default: tab character)" }, row_delimiter = new { type = "string", description = "Delimiter between rows (default: carriage return)" }, null_expr = new { type = "string", description = "String to substitute for NULL values (default: empty string)" } }, required = new string[] { "recordset_id" } } },
                 new { name = "control_set_zorder", description = "Change the z-order of a control on a form or report (bring to front or send to back) in design view.", inputSchema = new { type = "object", properties = new { object_type = new { type = "string", @enum = new[] { "form", "report" }, description = "Type of object containing the control" }, object_name = new { type = "string", description = "Name of the form or report" }, control_name = new { type = "string", description = "Name of the control to reorder" }, position = new { type = "string", @enum = new[] { "front", "back" }, description = "Target z-order position" } }, required = new string[] { "object_type", "object_name", "control_name", "position" } } },
                 new { name = "get_tab_control_pages", description = "Enumerate pages in a TabControl on a form, returning name, caption, index, visibility, enabled state, and control count for each page.", inputSchema = new { type = "object", properties = new { form_name = new { type = "string", description = "Name of the form containing the tab control" }, control_name = new { type = "string", description = "Name of the tab control" } }, required = new string[] { "form_name", "control_name" } } },
                 // Phase 10: Analysis & Dependency Tools
@@ -921,6 +922,7 @@ class Program
             // Phase 9
             "recordset_seek" => HandleRecordsetSeek(accessService, toolArguments),
             "recordset_clone" => HandleRecordsetClone(accessService, toolArguments),
+            "recordset_get_string" => HandleRecordsetGetString(accessService, toolArguments),
             "control_set_zorder" => HandleControlSetZOrder(accessService, toolArguments),
             "get_tab_control_pages" => HandleGetTabControlPages(accessService, toolArguments),
             // Phase 10
@@ -8062,6 +8064,37 @@ class Program
         catch (Exception ex)
         {
             return BuildOperationErrorResponse("recordset_clone", ex);
+        }
+    }
+
+    static object HandleRecordsetGetString(AccessInteropService accessService, JsonElement arguments)
+    {
+        try
+        {
+            if (!TryGetRequiredString(arguments, "recordset_id", out var id, out var idError))
+                return idError;
+
+            if (!TryGetOptionalInt(arguments, "num_rows", out var numRowsOpt, out var nrError))
+                return nrError;
+            var numRows = numRowsOpt ?? -1;
+            if (numRows > 65535) numRows = 65535;
+
+            _ = TryGetOptionalString(arguments, "column_delimiter", out var columnDelimiter);
+            _ = TryGetOptionalString(arguments, "row_delimiter", out var rowDelimiter);
+            _ = TryGetOptionalString(arguments, "null_expr", out var nullExpr);
+
+            var result = accessService.RecordsetGetString(
+                id,
+                numRows,
+                columnDelimiter ?? "\t",
+                rowDelimiter ?? "\r",
+                nullExpr ?? "");
+
+            return new { success = true, recordset_id = id, data = result };
+        }
+        catch (Exception ex)
+        {
+            return BuildOperationErrorResponse("recordset_get_string", ex);
         }
     }
 

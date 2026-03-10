@@ -8301,6 +8301,38 @@ namespace MS.Access.MCP.Interop
             return newId;
         }
 
+        public string RecordsetGetString(string recordsetId, int numRows = -1,
+            string columnDelimiter = "\t", string rowDelimiter = "\r", string nullExpr = "")
+        {
+            var rs = GetRecordset(recordsetId);
+
+            if ((bool)rs.EOF)
+                return "";
+
+            int maxRows = numRows > 0 ? numRows : 65535;
+            int fieldCount = (int)rs.Fields.Count;
+            var sb = new System.Text.StringBuilder();
+            int rowsRead = 0;
+
+            while (!(bool)rs.EOF && rowsRead < maxRows)
+            {
+                for (int i = 0; i < fieldCount; i++)
+                {
+                    if (i > 0) sb.Append(columnDelimiter);
+                    var val = rs.Fields[i].Value;
+                    if (val == null || val is DBNull)
+                        sb.Append(nullExpr);
+                    else
+                        sb.Append(Convert.ToString(val));
+                }
+                sb.Append(rowDelimiter);
+                rowsRead++;
+                rs.MoveNext();
+            }
+
+            return sb.ToString();
+        }
+
         #endregion
 
         #region 12. XML/Data Exchange & Printer Management
