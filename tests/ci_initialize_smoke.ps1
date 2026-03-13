@@ -169,8 +169,8 @@ if ($resourcesListResponse.result -and $resourcesListResponse.result.resources) 
     $resources = @($resourcesListResponse.result.resources)
 }
 
-if ($resources.Count -ne 10) {
-    Fail-Smoke -Reason ("resources/list expected 10 resources, got " + $resources.Count) -ExitCode 15
+if ($resources.Count -ne 13) {
+    Fail-Smoke -Reason ("resources/list expected 13 resources, got " + $resources.Count) -ExitCode 15
 }
 
 Write-CiMarker ("CHECK resources/list PASS resources=" + $resources.Count)
@@ -191,8 +191,8 @@ if ($promptsListResponse.result -and $promptsListResponse.result.prompts) {
     $prompts = @($promptsListResponse.result.prompts)
 }
 
-if ($prompts.Count -ne 6) {
-    Fail-Smoke -Reason ("prompts/list expected 6 prompts, got " + $prompts.Count) -ExitCode 18
+if ($prompts.Count -ne 9) {
+    Fail-Smoke -Reason ("prompts/list expected 9 prompts, got " + $prompts.Count) -ExitCode 18
 }
 
 Write-CiMarker ("CHECK prompts/list PASS prompts=" + $prompts.Count)

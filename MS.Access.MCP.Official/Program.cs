@@ -7,6 +7,7 @@ using MS.Access.MCP.Interop;
 class Program
 {
     static readonly JsonElement EmptyJsonObject = JsonSerializer.Deserialize<JsonElement>("{}");
+    static readonly JsonSerializerOptions SerializerOptions = new();
     const string PodbcDefaultSchema = "AccessCatalog";
 
     // Logging level for MCP logging capability
@@ -969,6 +970,7 @@ class Program
             }
 
             SendLogNotification("info", "connection", new { databasePath = accessService.CurrentDatabasePath ?? databasePath, message = "Connected successfully" });
+            SendNotification("notifications/resources/list_changed");
             return new
             {
                 success = true,
@@ -3448,11 +3450,12 @@ class Program
         try
         {
             accessService.Disconnect();
+            SendNotification("notifications/resources/list_changed");
             return new { success = true, message = "Disconnected from database" };
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("disconnect_access", ex);
         }
     }
 
@@ -3465,7 +3468,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("is_connected", ex);
         }
     }
 
@@ -3642,7 +3645,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("create_query", ex);
         }
     }
 
@@ -3660,7 +3663,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("update_query", ex);
         }
     }
 
@@ -3676,7 +3679,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("delete_query", ex);
         }
     }
 
@@ -3717,7 +3720,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("create_relationship", ex);
         }
     }
 
@@ -3759,7 +3762,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("update_relationship", ex);
         }
     }
 
@@ -3775,7 +3778,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("delete_relationship", ex);
         }
     }
 
@@ -4264,7 +4267,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("create_table", ex);
         }
     }
 
@@ -4281,7 +4284,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("delete_table", ex);
         }
     }
 
@@ -4320,7 +4323,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("add_field", ex);
         }
     }
 
@@ -4341,7 +4344,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("alter_field", ex);
         }
     }
 
@@ -4359,7 +4362,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("drop_field", ex);
         }
     }
 
@@ -4377,7 +4380,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("rename_table", ex);
         }
     }
 
@@ -4397,7 +4400,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("rename_field", ex);
         }
     }
 
@@ -4413,7 +4416,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("get_indexes", ex);
         }
     }
 
@@ -4453,7 +4456,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("delete_index", ex);
         }
     }
 
@@ -4466,7 +4469,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("launch_access", ex);
         }
     }
 
@@ -4480,7 +4483,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("close_access", ex);
         }
     }
 
@@ -4493,7 +4496,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("get_forms", ex);
         }
     }
 
@@ -4506,7 +4509,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("get_reports", ex);
         }
     }
 
@@ -4519,7 +4522,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("get_macros", ex);
         }
     }
 
@@ -4532,7 +4535,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("get_modules", ex);
         }
     }
 
@@ -4587,7 +4590,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("close_form", ex);
         }
     }
 
@@ -4669,7 +4672,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("get_vba_projects", ex);
         }
     }
 
@@ -4686,7 +4689,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("get_vba_code", ex);
         }
     }
 
@@ -4705,7 +4708,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("set_vba_code", ex);
         }
     }
 
@@ -4726,7 +4729,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("add_vba_procedure", ex);
         }
     }
 
@@ -4739,7 +4742,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("compile_vba", ex);
         }
     }
 
@@ -5180,7 +5183,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("get_system_tables", ex);
         }
     }
 
@@ -5271,7 +5274,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("get_object_metadata", ex);
         }
     }
 
@@ -5288,7 +5291,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("form_exists", ex);
         }
     }
 
@@ -5305,7 +5308,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("get_form_controls", ex);
         }
     }
 
@@ -5324,7 +5327,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("get_control_properties", ex);
         }
     }
 
@@ -5346,7 +5349,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("set_control_property", ex);
         }
     }
 
@@ -5398,7 +5401,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("close_report", ex);
         }
     }
 
@@ -5440,7 +5443,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("create_macro", ex);
         }
     }
 
@@ -5458,7 +5461,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("update_macro", ex);
         }
     }
 
@@ -5474,7 +5477,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("export_macro_to_text", ex);
         }
     }
 
@@ -5493,7 +5496,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("import_macro_from_text", ex);
         }
     }
 
@@ -5509,7 +5512,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("delete_macro", ex);
         }
     }
 
@@ -5526,7 +5529,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("get_report_controls", ex);
         }
     }
 
@@ -5545,7 +5548,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("get_report_control_properties", ex);
         }
     }
 
@@ -5567,7 +5570,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("set_report_control_property", ex);
         }
     }
 
@@ -6084,7 +6087,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("export_form_to_text", ex);
         }
     }
 
@@ -6108,7 +6111,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("import_form_from_text", ex);
         }
     }
 
@@ -6125,7 +6128,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("delete_form", ex);
         }
     }
 
@@ -6145,7 +6148,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("export_report_to_text", ex);
         }
     }
 
@@ -6169,7 +6172,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("import_report_from_text", ex);
         }
     }
 
@@ -6186,7 +6189,7 @@ class Program
         }
         catch (Exception ex)
         {
-            return new { success = false, error = ex.Message };
+            return BuildOperationErrorResponse("delete_report", ex);
         }
     }
 
@@ -6317,6 +6320,7 @@ class Program
         try
         {
             accessService.CloseDatabase();
+            SendNotification("notifications/resources/list_changed");
             return new { success = true, message = "Database closed" };
         }
         catch (Exception ex)
@@ -8698,21 +8702,33 @@ class Program
         };
     }
 
+    static string CategorizeError(Exception ex)
+    {
+        if (ex is COMException || ex.InnerException is COMException) return "com";
+        if (ex is System.Data.OleDb.OleDbException || ex is System.Data.Odbc.OdbcException) return "database";
+        if (ex is IOException) return "io";
+        if (ex is ArgumentException or ArgumentNullException) return "validation";
+        if (ex is InvalidOperationException && (ex.Message.Contains("not connected") || ex.Message.Contains("Not connected"))) return "connection";
+        return "internal";
+    }
+
     static object BuildOperationErrorResponse(string operationName, Exception ex)
     {
         var preflight = BuildPreflightDiagnostics(ex);
         var error = BuildRemediatedErrorMessage(operationName, ex, preflight);
+        var category = CategorizeError(ex);
 
-        var isCom = ex is COMException || ex.InnerException is COMException;
         SendLogNotification(
             "error",
-            isCom ? "com" : "operation",
-            new { operation = operationName, error = ex.Message, exceptionType = ex.GetType().Name });
+            category == "com" ? "com" : "operation",
+            new { operation = operationName, error = ex.Message, exceptionType = ex.GetType().Name, category });
 
         return new
         {
             success = false,
             error,
+            category,
+            operation = operationName,
             preflight = ToPreflightPayload(preflight)
         };
     }
@@ -8836,7 +8852,7 @@ class Program
 
     static object WrapCallToolResult(object payload)
     {
-        var structuredContent = JsonSerializer.SerializeToElement(payload);
+        var structuredContent = JsonSerializer.SerializeToElement(payload, SerializerOptions);
         var isError = structuredContent.TryGetProperty("success", out var successElement) &&
                       successElement.ValueKind == JsonValueKind.False;
 
@@ -8976,7 +8992,10 @@ class Program
             new { uri = "access://macros", name = "Macros", description = "All macro objects in the database", mimeType = "application/json" },
             new { uri = "access://modules", name = "Modules", description = "All VBA module objects in the database", mimeType = "application/json" },
             new { uri = "access://linked-tables", name = "Linked Tables", description = "All linked/attached table definitions", mimeType = "application/json" },
-            new { uri = "access://metadata", name = "Object Metadata", description = "MSysObjects metadata for all database objects", mimeType = "application/json" }
+            new { uri = "access://metadata", name = "Object Metadata", description = "MSysObjects metadata for all database objects", mimeType = "application/json" },
+            new { uri = "access://database-properties", name = "Database Properties", description = "Database-level properties including system and custom properties", mimeType = "application/json" },
+            new { uri = "access://security", name = "Security Info", description = "Database password status and encryption information", mimeType = "application/json" },
+            new { uri = "access://statistics", name = "Database Statistics", description = "Table record counts, sizes, and database file information", mimeType = "application/json" }
         };
 
         return new { resources };
@@ -8993,7 +9012,10 @@ class Program
             new { uriTemplate = "access://query/{queryName}", name = "Query Definition", description = "SQL definition of a specific saved query", mimeType = "application/json" },
             new { uriTemplate = "access://vba/{moduleName}", name = "VBA Module Code", description = "Source code of a specific VBA module", mimeType = "text/plain" },
             new { uriTemplate = "access://form/{formName}", name = "Form Definition", description = "Exported text representation of a specific form", mimeType = "application/json" },
-            new { uriTemplate = "access://report/{reportName}", name = "Report Definition", description = "Exported text representation of a specific report", mimeType = "application/json" }
+            new { uriTemplate = "access://report/{reportName}", name = "Report Definition", description = "Exported text representation of a specific report", mimeType = "application/json" },
+            new { uriTemplate = "access://table-data/{tableName}", name = "Table Data Preview", description = "First 50 rows of a specific table", mimeType = "application/json" },
+            new { uriTemplate = "access://form-controls/{formName}", name = "Form Controls", description = "Controls and their properties for a specific form", mimeType = "application/json" },
+            new { uriTemplate = "access://report-controls/{reportName}", name = "Report Controls", description = "Controls and their properties for a specific report", mimeType = "application/json" }
         };
 
         return new { resourceTemplates };
@@ -9027,6 +9049,9 @@ class Program
                 "modules" => accessService.IsConnected ? accessService.GetModules() : (object)new List<object>(),
                 "linked-tables" => accessService.IsConnected ? accessService.GetLinkedTables() : (object)new List<object>(),
                 "metadata" => accessService.IsConnected ? accessService.GetObjectMetadata() : (object)new List<object>(),
+                "database-properties" => accessService.IsConnected ? accessService.GetDatabaseProperties() : (object)new List<object>(),
+                "security" => accessService.IsConnected ? accessService.GetDatabaseSecurityInfo() : (object)new { },
+                "statistics" => accessService.IsConnected ? accessService.GetDatabaseStatistics() : (object)new { },
                 _ => null
             };
 
@@ -9081,6 +9106,21 @@ class Program
                     var reportName = Uri.UnescapeDataString(path.Substring("report/".Length));
                     var reportData = accessService.ExportReportToText(reportName);
                     data = new { name = reportName, definition = reportData };
+                }
+                else if (path.StartsWith("table-data/"))
+                {
+                    var tableName = Uri.UnescapeDataString(path.Substring("table-data/".Length));
+                    data = accessService.ExecuteSql($"SELECT TOP 50 * FROM [{tableName}]");
+                }
+                else if (path.StartsWith("form-controls/"))
+                {
+                    var formName = Uri.UnescapeDataString(path.Substring("form-controls/".Length));
+                    data = accessService.GetFormControls(formName);
+                }
+                else if (path.StartsWith("report-controls/"))
+                {
+                    var reportName = Uri.UnescapeDataString(path.Substring("report-controls/".Length));
+                    data = accessService.GetReportControls(reportName);
                 }
                 else
                 {
@@ -9158,6 +9198,27 @@ class Program
                 {
                     new { name = "module_name", description = "Name of the VBA module to review", required = true }
                 }
+            },
+            new
+            {
+                name = "performance_analysis",
+                description = "Analyze database performance: identify missing indexes, slow queries, and optimization opportunities",
+                arguments = Array.Empty<object>()
+            },
+            new
+            {
+                name = "security_audit",
+                description = "Audit database security: password protection, macro settings, linked table security, and trusted locations",
+                arguments = Array.Empty<object>()
+            },
+            new
+            {
+                name = "index_optimization",
+                description = "Recommend optimal indexes based on table structure and query patterns",
+                arguments = new object[]
+                {
+                    new { name = "table_name", description = "Name of the table to optimize indexes for", required = true }
+                }
             }
         };
 
@@ -9186,6 +9247,9 @@ class Program
             "migrate_data" => BuildMigrateDataPrompt(arguments),
             "document_database" => BuildDocumentDatabasePrompt(accessService),
             "vba_review" => BuildVbaReviewPrompt(accessService, arguments),
+            "performance_analysis" => BuildPerformanceAnalysisPrompt(accessService),
+            "security_audit" => BuildSecurityAuditPrompt(accessService),
+            "index_optimization" => BuildIndexOptimizationPrompt(accessService, arguments),
             _ => new JsonRpcErrorSentinel { Code = -32602, Message = $"Unknown prompt: {promptName}" }
         };
     }
@@ -9423,6 +9487,110 @@ class Program
         return new { messages };
     }
 
+    static object BuildPerformanceAnalysisPrompt(AccessInteropService accessService)
+    {
+        var messages = new List<object>
+        {
+            new
+            {
+                role = "user",
+                content = new object[]
+                {
+                    new
+                    {
+                        type = "resource",
+                        resource = new { uri = "access://tables", mimeType = "application/json", text = accessService.IsConnected ? JsonSerializer.Serialize(accessService.GetTables()) : "[]" }
+                    },
+                    new
+                    {
+                        type = "resource",
+                        resource = new { uri = "access://queries", mimeType = "application/json", text = accessService.IsConnected ? JsonSerializer.Serialize(accessService.GetQueries()) : "[]" }
+                    },
+                    new
+                    {
+                        type = "resource",
+                        resource = new { uri = "access://relationships", mimeType = "application/json", text = accessService.IsConnected ? JsonSerializer.Serialize(accessService.GetRelationships()) : "[]" }
+                    },
+                    new
+                    {
+                        type = "text",
+                        text = "Analyze this Microsoft Access database for performance issues. Examine the tables, indexes, queries, and relationships. Report on:\n\n1. **Missing indexes** — fields used in WHERE clauses, JOINs, or ORDER BY that lack indexes\n2. **Redundant indexes** — indexes that duplicate or overlap with other indexes\n3. **Query optimization** — saved queries that could be rewritten for better performance (avoid SELECT *, use parameterized queries, etc.)\n4. **Table design issues** — oversized Text fields, missing primary keys, tables without indexes\n5. **Relationship performance** — foreign key fields that should be indexed for JOIN performance\n6. **Record count concerns** — tables that may benefit from archiving or partitioning\n\nFor each issue, provide the specific table/query name, the problem, and a concrete fix with SQL or instructions."
+                    }
+                }
+            }
+        };
+
+        return new { messages };
+    }
+
+    static object BuildSecurityAuditPrompt(AccessInteropService accessService)
+    {
+        var messages = new List<object>
+        {
+            new
+            {
+                role = "user",
+                content = new object[]
+                {
+                    new
+                    {
+                        type = "resource",
+                        resource = new { uri = "access://tables", mimeType = "application/json", text = accessService.IsConnected ? JsonSerializer.Serialize(accessService.GetTables()) : "[]" }
+                    },
+                    new
+                    {
+                        type = "resource",
+                        resource = new { uri = "access://linked-tables", mimeType = "application/json", text = accessService.IsConnected ? JsonSerializer.Serialize(accessService.GetLinkedTables()) : "[]" }
+                    },
+                    new
+                    {
+                        type = "resource",
+                        resource = new { uri = "access://macros", mimeType = "application/json", text = accessService.IsConnected ? JsonSerializer.Serialize(accessService.GetMacros()) : "[]" }
+                    },
+                    new
+                    {
+                        type = "text",
+                        text = "Perform a security audit of this Microsoft Access database. Examine the database configuration, linked tables, macros, and VBA code. Report on:\n\n1. **Database password** — is the database password-protected? Is encryption enabled?\n2. **Linked table security** — are connection strings stored with embedded credentials?\n3. **Macro security** — are there AutoExec macros that run on open? Any macros with potentially dangerous actions (RunCommand, Shell, etc.)?\n4. **VBA code risks** — modules that use Shell(), SendKeys, or external process execution\n5. **Trust Center** — recommendations for Trust Center settings and trusted locations\n6. **Data exposure** — tables containing sensitive data (passwords, SSN, credit cards) without protection\n\nFor each finding, rate severity (Critical/High/Medium/Low) and provide a specific remediation step."
+                    }
+                }
+            }
+        };
+
+        return new { messages };
+    }
+
+    static object BuildIndexOptimizationPrompt(AccessInteropService accessService, JsonElement arguments)
+    {
+        var tableName = "";
+        if (arguments.TryGetProperty("table_name", out var tableEl) && tableEl.ValueKind == JsonValueKind.String)
+            tableName = tableEl.GetString() ?? "";
+
+        if (string.IsNullOrWhiteSpace(tableName))
+            return new JsonRpcErrorSentinel { Code = -32602, Message = "Missing required argument: table_name" };
+
+        var tableSchema = accessService.IsConnected ? JsonSerializer.Serialize(accessService.DescribeTable(tableName)) : "{}";
+        var indexes = accessService.IsConnected ? JsonSerializer.Serialize(accessService.GetIndexes(tableName)) : "[]";
+        var queries = accessService.IsConnected ? JsonSerializer.Serialize(accessService.GetQueries()) : "[]";
+
+        var messages = new List<object>
+        {
+            new
+            {
+                role = "user",
+                content = new object[]
+                {
+                    new
+                    {
+                        type = "text",
+                        text = $"Table schema for [{tableName}]:\n{tableSchema}\n\nExisting indexes:\n{indexes}\n\nAll saved queries in the database:\n{queries}\n\nAnalyze the table [{tableName}] and recommend optimal indexes. Consider:\n\n1. **Which queries reference this table** — examine WHERE, JOIN, ORDER BY, and GROUP BY clauses\n2. **Current index coverage** — which query patterns are already indexed vs. missing\n3. **Composite indexes** — multi-column indexes that would benefit common query patterns\n4. **Index overhead** — balance read performance gains against write/update costs\n5. **Primary key** — is there an appropriate primary key? Should it be changed?\n\nFor each recommendation, provide the exact CREATE INDEX SQL statement and explain which queries benefit."
+                    }
+                }
+            }
+        };
+
+        return new { messages };
+    }
+
     // ── completion/complete handler ──
 
     static object HandleCompletionComplete(AccessInteropService accessService, JsonElement @params)
@@ -9470,7 +9638,7 @@ class Program
                 // Prompt argument completion
                 if (argumentName == "module_name")
                     candidates = accessService.GetModules().Select(m => m.Name);
-                else if (argumentName == "source_table")
+                else if (argumentName == "source_table" || argumentName == "table_name")
                     candidates = accessService.GetTables().Select(t => t.Name);
             }
 

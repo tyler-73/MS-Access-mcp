@@ -2524,15 +2524,42 @@ namespace MS.Access.MCP.Interop
                 _ = InvokeDynamicMethod(
                     doCmd,
                     "PrintOut",
-                    NormalizeDoCmdVariant(printRange),
+                    MapPrintRangeEnum(printRange),
                     pageFrom.HasValue ? pageFrom.Value : Type.Missing,
                     pageTo.HasValue ? pageTo.Value : Type.Missing,
-                    NormalizeDoCmdVariant(printQuality),
+                    MapPrintQualityEnum(printQuality),
                     copies.HasValue ? copies.Value : Type.Missing,
                     collateCopies);
             },
             requireExclusive: false,
             releaseOleDb: false);
+        }
+
+        private static object MapPrintRangeEnum(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return Type.Missing;
+            if (int.TryParse(value.Trim(), out var n)) return n;
+            return value.Trim().ToLowerInvariant() switch
+            {
+                "all" => 0,        // acPrintAll
+                "selection" => 1,  // acSelection
+                "pages" => 2,      // acPages
+                _ => Type.Missing
+            };
+        }
+
+        private static object MapPrintQualityEnum(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return Type.Missing;
+            if (int.TryParse(value.Trim(), out var n)) return n;
+            return value.Trim().ToLowerInvariant() switch
+            {
+                "high" => 0,    // acHigh
+                "medium" => 1,  // acMedium
+                "low" => 2,     // acLow
+                "draft" => 3,   // acDraft
+                _ => Type.Missing
+            };
         }
 
         public void OpenQuery(string queryName, string? view = null, string? dataMode = null)
@@ -2955,8 +2982,8 @@ namespace MS.Access.MCP.Interop
                 _ = InvokeDynamicMethod(
                     doCmd,
                     "BrowseTo",
-                    objectName.Trim(),
                     objectTypeValue,
+                    objectName.Trim(),
                     string.IsNullOrWhiteSpace(pathToSubformControl) ? Type.Missing : pathToSubformControl.Trim(),
                     string.IsNullOrWhiteSpace(whereCondition) ? Type.Missing : whereCondition.Trim(),
                     NormalizeDoCmdVariant(page));
@@ -13715,37 +13742,37 @@ namespace MS.Access.MCP.Interop
 
             return ExecuteComOperation(accessApp =>
             {
-                var currentDb = TryGetCurrentDb(accessApp)
+                dynamic currentDb = TryGetCurrentDb(accessApp)
                     ?? throw new InvalidOperationException("DAO CurrentDb is unavailable.");
-                var tableDefs = TryGetDynamicProperty(currentDb, "TableDefs")
-                    ?? throw new InvalidOperationException("DAO TableDefs collection is unavailable.");
 
                 if (overwrite)
                 {
                     try
                     {
-                        InvokeDynamicMethod(tableDefs, "Delete", tableName);
-                        InvokeDynamicMethod(tableDefs, "Refresh");
+                        currentDb.TableDefs.Delete(tableName);
+                        currentDb.TableDefs.Refresh();
                     }
                     catch { }
                 }
 
-                var tdf = InvokeDynamicMethod(currentDb, "CreateTableDef", tableName)
-                    ?? throw new InvalidOperationException("Failed to create TableDef.");
-                SetDynamicProperty(tdf, "Connect", connectStr);
-                SetDynamicProperty(tdf, "SourceTableName", sourceTableName);
-                InvokeDynamicMethod(tableDefs, "Append", tdf);
-                InvokeDynamicMethod(tableDefs, "Refresh");
+                // Use dynamic dispatch (DLR COM binder) for ODBC linked table creation.
+                // NewLateBinding.LateSet fails with "Operation is not supported for this type of object"
+                // because it doesn't properly marshal DAO property setters on TableDef COM objects.
+                dynamic tdf = currentDb.CreateTableDef(tableName);
+                tdf.Connect = connectStr;
+                tdf.SourceTableName = sourceTableName.Trim();
+                currentDb.TableDefs.Append(tdf);
+                currentDb.TableDefs.Refresh();
 
                 // Read back the created link
-                var created = InvokeDynamicMethod(tableDefs, "Item", tableName);
+                dynamic created = currentDb.TableDefs[tableName];
                 return new LinkedTableInfo
                 {
                     Name = tableName,
                     SourceTableName = sourceTableName,
-                    ConnectString = SafeToString(TryGetDynamicProperty(created, "Connect")),
+                    ConnectString = SafeToString((object?)created.Connect),
                     SourceDatabasePath = connectStr,
-                    Attributes = ToInt32(TryGetDynamicProperty(created, "Attributes"))
+                    Attributes = ToInt32((object?)created.Attributes)
                 };
             },
             requireExclusive: true,

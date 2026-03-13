@@ -28,6 +28,14 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
       - name: Publish server
         shell: pwsh
         run: |
@@ -113,4 +121,41 @@ jobs:
           $podbcCompatOutput = Get-Content -LiteralPath $podbcCompatLog -Raw
           if ($podbcCompatOutput -notmatch "PODBC_COMPAT_PASS=1") {
             throw "podbc compatibility output did not contain PODBC_COMPAT_PASS=1."
+          }
+
+      - name: Check display availability
+        id: display-check
+        shell: pwsh
+        run: |
+          try {
+            Add-Type -AssemblyName System.Windows.Forms
+            $screen = [System.Windows.Forms.Screen]::PrimaryScreen
+            if ($null -eq $screen) {
+              Write-Host "No display detected -- UI coverage tests will be skipped"
+              echo "has_display=false" >> $env:GITHUB_OUTPUT
+            } else {
+              Write-Host "Display detected: $($screen.Bounds.Width)x$($screen.Bounds.Height)"
+              echo "has_display=true" >> $env:GITHUB_OUTPUT
+            }
+          } catch {
+            Write-Host "Display check failed: $_ -- UI coverage tests will be skipped"
+            echo "has_display=false" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Run UI coverage regression
+        if: steps.display-check.outputs.has_display == 'true'
+        shell: pwsh
+        run: |
+          $publishDir = Join-Path $env:RUNNER_TEMP "mcp-server-official-x64"
+          $serverExe = Join-Path $publishDir "MS.Access.MCP.Official.exe"
+          $uiCoverageLog = Join-Path $env:RUNNER_TEMP "full_toolset_ui_coverage.log"
+
+          & .\tests\full_toolset_regression.ps1 -ServerExe $serverExe -DatabasePath $env:ACCESS_DATABASE_PATH -IncludeUiCoverage 2>&1 | Tee-Object -FilePath $uiCoverageLog
+          if ($LASTEXITCODE -ne 0) {
+            throw "UI coverage regression failed with exit code $LASTEXITCODE."
+          }
+
+          $uiOutput = Get-Content -LiteralPath $uiCoverageLog -Raw
+          if ($uiOutput -notmatch "TOTAL_FAIL=0") {
+            throw "UI coverage regression output did not contain TOTAL_FAIL=0."
           }

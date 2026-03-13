@@ -1,5 +1,7 @@
 # Microsoft Access MCP Server
 
+[![Build & Smoke](https://github.com/tyler-73/MS-Access-mcp/actions/workflows/windows-hosted-build-smoke.yml/badge.svg)](https://github.com/tyler-73/MS-Access-mcp/actions/workflows/windows-hosted-build-smoke.yml)
+
 A comprehensive Model Context Protocol (MCP) server providing **360 tools** that cover 100% of the practical Microsoft Access COM/DAO automation surface. Works with Claude Desktop, Claude Code, VS Code (GitHub Copilot), and any MCP-compatible client.
 
 ## Overview
@@ -327,6 +329,45 @@ Drop-in replacement for the core data tools from `pyodbc-access` (OpenLink `mcp-
 
 `podbc_get_schemas`, `podbc_get_tables`, `podbc_filter_table_names`, `podbc_describe_table`, `podbc_query_database`, `podbc_execute_query`, `podbc_execute_query_md`
 
+## MCP Resources (13 static + 9 templates)
+
+The server exposes read-only resources for database introspection without tool calls:
+
+**Static resources** (`resources/list`):
+- `access://connection` — Current connection status and database path
+- `access://tables`, `access://queries`, `access://relationships` — Schema objects
+- `access://forms`, `access://reports`, `access://macros`, `access://modules` — Application objects
+- `access://linked-tables` — Linked table catalog
+- `access://vba-projects` — VBA project structure
+- `access://database-properties` — Database-level properties (system + custom)
+- `access://security` — Password status and encryption info
+- `access://statistics` — Table record counts, sizes, file info
+
+**URI templates** (`resources/templates/list`):
+- `access://schema/{tableName}` — Column definitions for a table
+- `access://table-data/{tableName}` — First 50 rows of a table
+- `access://form-controls/{formName}` — Controls for a form
+- `access://report-controls/{reportName}` — Controls for a report
+- `access://query-sql/{queryName}` — SQL text of a query
+- `access://vba-code/{moduleName}` — VBA source code of a module
+- `access://field-properties/{tableName}/{fieldName}` — Field-level properties
+- `access://index-details/{tableName}` — Index definitions
+- `access://table-relationships/{tableName}` — Relationships involving a table
+
+## MCP Prompts (9)
+
+Pre-built prompt templates for common analysis tasks:
+
+- `schema_analysis` — Analyze database schema and suggest improvements
+- `query_optimization` — Optimize a SQL query for performance
+- `debug_query` — Debug a failing or incorrect query (arg: `query_text`)
+- `normalized_schema` — Design a normalized schema from requirements (arg: `requirements`)
+- `data_dictionary` — Generate a data dictionary for the database
+- `migration_plan` — Plan migration to another database platform (arg: `target_platform`)
+- `performance_analysis` — Identify missing indexes, slow queries, optimization opportunities
+- `security_audit` — Audit password protection, macro settings, linked table security
+- `index_optimization` — Recommend optimal indexes for a table (arg: `table_name`)
+
 ## Usage Examples
 
 ### Basic Connection and Discovery
@@ -391,10 +432,11 @@ Drop-in replacement for the core data tools from `pyodbc-access` (OpenLink `mcp-
 
 ## CI
 
-This repository includes two GitHub Actions workflows with different coverage goals:
+This repository includes three GitHub Actions workflows:
 
-- `windows-hosted-build-smoke.yml` runs on GitHub-hosted `windows-latest` for `push` and `pull_request`. It validates publish/build health and runs an MCP `initialize` smoke test that does not require Microsoft Access.
-- `windows-self-hosted-access-regression.yml` runs on self-hosted Windows (`workflow_dispatch` plus weekly schedule) and executes `tests\full_toolset_regression.ps1`, `tests\full_toolset_negative_paths.ps1`, and `tests\podbc_compat_regression.ps1`. It requires Microsoft Access on the runner and an `ACCESS_DATABASE_PATH` value provided by dispatch input (`access_database_path`) or secret (`ACCESS_DATABASE_PATH`), and asserts that database-lifecycle, secure-connect, and podbc compatibility coverage markers are present in logs.
+- `windows-hosted-build-smoke.yml` runs on GitHub-hosted `windows-latest` for `push` and `pull_request`. It validates publish/build health and runs an MCP `initialize` smoke test that does not require Microsoft Access. Build artifacts are uploaded with 30-day retention.
+- `windows-self-hosted-access-regression.yml` runs on self-hosted Windows (`workflow_dispatch` plus weekly schedule) and executes `tests\full_toolset_regression.ps1`, `tests\full_toolset_negative_paths.ps1`, and `tests\podbc_compat_regression.ps1`. It requires Microsoft Access on the runner and an `ACCESS_DATABASE_PATH` value provided by dispatch input (`access_database_path`) or secret (`ACCESS_DATABASE_PATH`), and asserts that database-lifecycle, secure-connect, and podbc compatibility coverage markers are present in logs. When a display is available, UI coverage tests (`-IncludeUiCoverage`) are also run.
+- `release.yml` runs on tag push (`v*`). It builds, runs the smoke test, zips the published output, and creates a GitHub Release with the zip attached and auto-generated release notes.
 
 Bootstrap GitHub auth/secret/workflow setup from terminal:
 
@@ -501,9 +543,10 @@ The server implements the MCP JSON-RPC stdio transport directly (no external MCP
 - **360 Tools**: Covers connection, DDL, DML, forms, reports, VBA, macros, recordsets, properties, attachments, navigation groups, conditional formatting, data macros, security, printing, and more
 - **Exclusive Mode**: Automatic exclusive DB access for DDL operations with process lifecycle management
 - **Dialog Dismisser**: Background thread auto-dismisses modal Access/VBA dialogs during batch operations
-- **MCP Resources**: 10 read-only resources (connection status, tables, queries, relationships, etc.)
-- **MCP Prompts**: 6 prompt templates for common database operations
-- **Preflight Diagnostics**: Error responses include bitness, ACE provider, and Trust Center indicators
+- **MCP Resources**: 13 static resources + 9 URI templates (connection, tables, queries, relationships, properties, security, statistics, per-table data preview, per-form/report controls)
+- **MCP Prompts**: 9 prompt templates for schema analysis, query debugging, normalization, performance analysis, security auditing, and index optimization
+- **Preflight Diagnostics**: Error responses include bitness, ACE provider, Trust Center indicators, error category, and operation name
+- **listChanged Notifications**: Resource list change notifications on connect/disconnect/close
 - **pyodbc Compatibility**: Drop-in replacement for 7 core pyodbc-access tools
 
 ## Troubleshooting

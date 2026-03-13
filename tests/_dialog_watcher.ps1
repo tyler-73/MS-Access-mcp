@@ -345,6 +345,28 @@ function Try-AutoDismissDialog {
         return [PSCustomObject]@{ Dismissed = $true; Pattern = "save_as_prompt"; Safe = $true; Reason = "Save As dialog dismissed via WM_CLOSE" }
     }
 
+    # SQL Server Login dialog (from ODBC linked table connections)
+    if ($titleLower -match 'sql server login|sql server') {
+        $cancelButton = [DialogDetector]::FindChildByText($handle, "Cancel")
+        if ($cancelButton -ne [IntPtr]::Zero) {
+            [DialogDetector]::ClickButton($cancelButton) | Out-Null
+            return [PSCustomObject]@{ Dismissed = $true; Pattern = "sql_server_login"; Safe = $true; Reason = "SQL Server Login dismissed via Cancel button" }
+        }
+        [DialogDetector]::DismissViaClose($handle) | Out-Null
+        return [PSCustomObject]@{ Dismissed = $true; Pattern = "sql_server_login"; Safe = $true; Reason = "SQL Server Login dismissed via WM_CLOSE" }
+    }
+
+    # Microsoft Outlook dialog (e.g., profile picker, MAPI auth) — dismiss via OK or WM_CLOSE
+    if ($titleLower -match 'microsoft outlook|outlook|choose profile') {
+        $okButton = [DialogDetector]::FindChildByText($handle, "OK")
+        if ($okButton -ne [IntPtr]::Zero) {
+            [DialogDetector]::ClickButton($okButton) | Out-Null
+            return [PSCustomObject]@{ Dismissed = $true; Pattern = "outlook_dialog"; Safe = $true; Reason = "Outlook dialog dismissed via OK button" }
+        }
+        [DialogDetector]::DismissViaClose($handle) | Out-Null
+        return [PSCustomObject]@{ Dismissed = $true; Pattern = "outlook_dialog"; Safe = $true; Reason = "Outlook dialog dismissed via WM_CLOSE" }
+    }
+
     # Unrecognized dialog - do not dismiss
     return [PSCustomObject]@{ Dismissed = $false; Pattern = "unknown"; Safe = $false; Reason = "Unrecognized dialog - not auto-dismissed" }
 }

@@ -1,12 +1,12 @@
-name: Windows Hosted Build + MCP Smoke
+name: Release
 
 on:
   push:
-  pull_request:
+    tags: ["v*"]
 
 jobs:
-  build-and-smoke:
-    name: Build and initialize smoke (no Access required)
+  release:
+    name: Build and publish release
     runs-on: windows-latest
 
     steps:
@@ -29,26 +29,30 @@ jobs:
       - name: Publish server
         shell: pwsh
         run: |
-          $publishDir = Join-Path $env:RUNNER_TEMP "mcp-server-official-x64"
+          $publishDir = Join-Path $env:RUNNER_TEMP "release"
           dotnet publish MS.Access.MCP.Official/MS.Access.MCP.Official.csproj -c Release -r win-x64 --self-contained true -o $publishDir
 
-      - name: MCP initialize smoke
+      - name: Smoke test
         shell: pwsh
         run: |
-          $publishDir = Join-Path $env:RUNNER_TEMP "mcp-server-official-x64"
-          $serverExe = Join-Path $publishDir "MS.Access.MCP.Official.exe"
+          $serverExe = Join-Path $env:RUNNER_TEMP "release" "MS.Access.MCP.Official.exe"
           if (-not (Test-Path -LiteralPath $serverExe)) {
             throw "Server executable not found: $serverExe"
           }
           & .\tests\ci_initialize_smoke.ps1 -ServerExe $serverExe
           if ($LASTEXITCODE -ne 0) {
-            throw "CI initialize smoke failed with exit code $LASTEXITCODE."
+            throw "Release smoke test failed with exit code $LASTEXITCODE."
           }
 
-      - name: Upload published server
-        if: always()
-        uses: actions/upload-artifact@v4
+      - name: Create release zip
+        shell: pwsh
+        run: |
+          $releaseDir = Join-Path $env:RUNNER_TEMP "release"
+          $zipPath = Join-Path $env:RUNNER_TEMP "MS.Access.MCP.Official-win-x64.zip"
+          Compress-Archive -Path "$releaseDir\*" -DestinationPath $zipPath
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: mcp-server-official-x64
-          path: ${{ runner.temp }}/mcp-server-official-x64/
-          retention-days: 30
+          files: ${{ runner.temp }}/MS.Access.MCP.Official-win-x64.zip
+          generate_release_notes: true
