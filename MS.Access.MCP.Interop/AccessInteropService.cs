@@ -8671,7 +8671,8 @@ namespace MS.Access.MCP.Interop
                     var rowData = new List<string?>();
                     for (int col = 0; col < columnCount; col++)
                     {
-                        var val = InvokeDynamicMethod(control, "Column", col, row);
+                                // Column is an indexed property, not a method.
+                        var val = TryGetDynamicProperty(control, "Column", col, row);
                         rowData.Add(val?.ToString());
                     }
                     items.Add(rowData);
@@ -9038,52 +9039,59 @@ namespace MS.Access.MCP.Interop
             var normalizedPassword = string.IsNullOrWhiteSpace(newPassword) ? null : newPassword.Trim();
             var tempPath = BuildCompactTemporaryPath(sourcePath);
 
-            // Kill the Access COM process first to release file locks (.laccdb),
-            // then close OleDb/ODBC connections. Disconnect() alone only closes
-            // SQL connections but leaves the COM process holding the file lock.
+            // Close OleDb/ODBC connections first (ACE engine holds file locks too),
+            // then kill the Access COM process to release all .laccdb locks.
+            CloseSqlConnections();
             ResetAccessApplication();
             Disconnect();
 
-            // Wait for .laccdb lock file to be released (up to 10 seconds).
+            // Wait for .laccdb lock file to be released (up to 15 seconds).
             var laccdbPath = Path.ChangeExtension(sourcePath, ".laccdb");
-            for (int i = 0; i < 20 && File.Exists(laccdbPath); i++)
+            for (int i = 0; i < 30 && File.Exists(laccdbPath); i++)
                 Thread.Sleep(500);
 
             try
             {
                 ExecuteWithTemporaryAccessApplication(accessApp =>
                 {
-                    var options = string.IsNullOrWhiteSpace(normalizedPassword) ? null : $";PWD={normalizedPassword}";
                     Exception? lastError = null;
                     var compacted = false;
 
-                    try
+                    // Use DBEngine.CompactDatabase for password operations — Application.CompactRepair
+                    // does not support password parameters. DBEngine.CompactDatabase accepts password
+                    // via the destination locale/options parameters.
+                    if (!string.IsNullOrWhiteSpace(normalizedPassword))
                     {
-                        var primaryResult = string.IsNullOrWhiteSpace(options)
-                            ? InvokeDynamicMethod(accessApp, "CompactRepair", sourcePath, tempPath, true)
-                            : InvokeDynamicMethod(accessApp, "CompactRepair", sourcePath, tempPath, true, Type.Missing, options);
-
-                        compacted = primaryResult is bool compactedBool ? compactedBool : File.Exists(tempPath);
+                        try
+                        {
+                            // DBEngine.CompactDatabase(srcName, dstName, dstLocale, options, srcPassword)
+                            // dbEncrypt = 2, dbDecrypt = 4
+                            var dbEngine = TryGetDynamicProperty(accessApp, "DBEngine");
+                            if (dbEngine != null)
+                            {
+                                InvokeDynamicMethod(dbEngine, "CompactDatabase", sourcePath, tempPath,
+                                    Type.Missing, 2, $";pwd={normalizedPassword}");
+                                compacted = File.Exists(tempPath);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            lastError = ex;
+                        }
                     }
-                    catch (Exception ex)
-                    {
-                        lastError = ex;
-                    }
 
+                    // Fallback / no-password path: use Application.CompactRepair (3-param form).
                     if (!compacted)
                     {
                         try
                         {
-                            var fallbackResult = string.IsNullOrWhiteSpace(options)
-                                ? InvokeDynamicMethod(accessApp, "CompactRepair", sourcePath, tempPath)
-                                : InvokeDynamicMethod(accessApp, "CompactRepair", sourcePath, tempPath, true, options);
-
-                            compacted = fallbackResult is bool fallbackBool ? fallbackBool : File.Exists(tempPath);
+                            var result = accessApp.CompactRepair(sourcePath, tempPath, true);
+                            compacted = result is bool b ? b : File.Exists(tempPath);
                             lastError = null;
                         }
-                        catch (Exception fallbackEx)
+                        catch (Exception ex2)
                         {
-                            lastError = fallbackEx;
+                            if (lastError == null) lastError = ex2;
                         }
                     }
 
@@ -12873,6 +12881,19 @@ namespace MS.Access.MCP.Interop
             if (index < 0)
                 return null;
 
+            // Pattern 1: Indexed property access (like Section(i)).
+            try
+            {
+                var byProp = TryGetDynamicProperty(report, "GroupLevel", index);
+                if (byProp != null)
+                    return byProp;
+            }
+            catch
+            {
+                // Fall through to alternate access patterns.
+            }
+
+            // Pattern 2: Collection Item method.
             try
             {
                 var groupLevels = TryGetDynamicProperty(report, "GroupLevels");
@@ -12888,6 +12909,7 @@ namespace MS.Access.MCP.Interop
                 // Fall through to alternate access patterns.
             }
 
+            // Pattern 3: Direct method call.
             try
             {
                 var byMethod = InvokeDynamicMethod(report, "GroupLevel", index);
