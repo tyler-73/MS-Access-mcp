@@ -7847,7 +7847,7 @@ Add-ToolCall $p14Calls 1436 "set_section_property" @{ object_type = "form"; obje
 Add-ToolCall $p14Calls 1437 "get_tab_order" @{ form_name = "mcp_p14_frm" }
 Add-ToolCall $p14Calls 1438 "set_tab_order" @{ form_name = "mcp_p14_frm"; control_names = @("P14_Txt2", "P14_Txt1", "P14_List1") }
 # Set RowSourceType for listbox to Value List before runtime ops
-Add-ToolCall $p14Calls 1439 "set_control_property" @{ form_name = "mcp_p14_frm"; control_name = "P14_List1"; property_name = "RowSourceType"; property_value = "Value List" }
+Add-ToolCall $p14Calls 1439 "set_control_property" @{ form_name = "mcp_p14_frm"; control_name = "P14_List1"; property_name = "RowSourceType"; value = "Value List" }
 # Save and reopen in form view for listbox runtime ops
 Add-ToolCall $p14Calls 14391 "close_object" @{ object_type = "form"; object_name = "mcp_p14_frm"; save = "yes" }
 Add-ToolCall $p14Calls 14392 "open_form" @{ form_name = "mcp_p14_frm" }

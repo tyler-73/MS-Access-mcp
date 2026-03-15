@@ -3841,12 +3841,27 @@ namespace MS.Access.MCP.Interop
 
             return ExecuteComOperation(accessApp =>
             {
-                var axl = InvokeDynamicMethod(accessApp, "SaveAsAXL", 0, tableName);
-                var text = SafeToString(axl);
-                if (string.IsNullOrWhiteSpace(text))
-                    throw new InvalidOperationException($"SaveAsAXL returned empty output for table '{tableName}'.");
+                // SaveAsAXL(ObjectType, ObjectName, FileName) requires a file path as the 3rd parameter.
+                // ObjectType 0 = acTable. Only works with web databases (.accdb with web features).
+                var tempFile = Path.Combine(Path.GetTempPath(), $"axl_export_{Guid.NewGuid():N}.xml");
+                try
+                {
+                    InvokeDynamicMethod(accessApp, "SaveAsAXL", 0, tableName, tempFile);
 
-                return text;
+                    if (!File.Exists(tempFile))
+                        throw new InvalidOperationException($"SaveAsAXL did not produce output file for table '{tableName}'. " +
+                            "This operation requires a web database (.accdb with web features enabled).");
+
+                    var text = File.ReadAllText(tempFile);
+                    if (string.IsNullOrWhiteSpace(text))
+                        throw new InvalidOperationException($"SaveAsAXL returned empty output for table '{tableName}'.");
+
+                    return text;
+                }
+                finally
+                {
+                    try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { }
+                }
             },
             requireExclusive: false,
             releaseOleDb: false);
@@ -3860,7 +3875,18 @@ namespace MS.Access.MCP.Interop
 
             ExecuteComOperation(accessApp =>
             {
-                _ = InvokeDynamicMethod(accessApp, "LoadFromAXL", 0, tableName, axlXml);
+                // LoadFromAXL(ObjectType, FileName) requires a file path, not XML content.
+                // ObjectType 0 = acTable. Only works with web databases.
+                var tempFile = Path.Combine(Path.GetTempPath(), $"axl_import_{Guid.NewGuid():N}.xml");
+                try
+                {
+                    File.WriteAllText(tempFile, axlXml);
+                    InvokeDynamicMethod(accessApp, "LoadFromAXL", 0, tempFile);
+                }
+                finally
+                {
+                    try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { }
+                }
             },
             requireExclusive: true,
             releaseOleDb: true);
@@ -7061,11 +7087,15 @@ namespace MS.Access.MCP.Interop
 
                         var headerValue = groupHeader ?? true;
                         var footerValue = groupFooter ?? true;
-                        groupLevel = InvokeDynamicMethod(accessApp, "CreateGroupLevel", reportName, expression, headerValue, footerValue)
-                            ?? throw new InvalidOperationException("Failed to create report group level.");
-                        effectiveIndex = ToNullableInt(TryGetDynamicProperty(groupLevel, "GroupLevel")) ??
-                            ToNullableInt(TryGetDynamicProperty(groupLevel, "Index")) ??
+                        var createResult = InvokeDynamicMethod(accessApp, "CreateGroupLevel", reportName, expression, headerValue, footerValue);
+                        if (createResult == null)
+                            throw new InvalidOperationException("Failed to create report group level.");
+
+                        // CreateGroupLevel returns an int (the group level index), not a GroupLevel object.
+                        effectiveIndex = ToNullableInt(createResult) ??
                             Math.Max(0, ToInt32(TryGetDynamicProperty(TryGetDynamicProperty(report, "GroupLevels"), "Count")) - 1);
+                        groupLevel = TryGetReportGroupLevel(report, effectiveIndex)
+                            ?? throw new InvalidOperationException($"Failed to retrieve GroupLevel object at index {effectiveIndex} after CreateGroupLevel.");
                     }
 
                     if (expression != null)
@@ -9008,7 +9038,17 @@ namespace MS.Access.MCP.Interop
             var normalizedPassword = string.IsNullOrWhiteSpace(newPassword) ? null : newPassword.Trim();
             var tempPath = BuildCompactTemporaryPath(sourcePath);
 
+            // Kill the Access COM process first to release file locks (.laccdb),
+            // then close OleDb/ODBC connections. Disconnect() alone only closes
+            // SQL connections but leaves the COM process holding the file lock.
+            ResetAccessApplication();
             Disconnect();
+
+            // Wait for .laccdb lock file to be released (up to 10 seconds).
+            var laccdbPath = Path.ChangeExtension(sourcePath, ".laccdb");
+            for (int i = 0; i < 20 && File.Exists(laccdbPath); i++)
+                Thread.Sleep(500);
+
             try
             {
                 ExecuteWithTemporaryAccessApplication(accessApp =>
@@ -12911,15 +12951,26 @@ namespace MS.Access.MCP.Interop
 
         private static List<object> GetSectionObjects(object formOrReport)
         {
-            var sections = TryGetDynamicProperty(formOrReport, "Sections") ?? InvokeDynamicMethod(formOrReport, "Sections");
-            if (sections == null)
-                throw new InvalidOperationException("Sections collection is not available for this Access object.");
-
+            // Access Sections use indexed property access (Section(0), Section(1), etc.),
+            // NOT collection enumeration which fails with 0x800A09A1.
+            // Standard sections: 0=Detail, 1=Header, 2=Footer, 3=PageHeader, 4=PageFooter.
             var sectionObjects = new List<object>();
-            foreach (var section in (dynamic)sections)
+            for (int i = 0; i <= 4; i++)
             {
-                sectionObjects.Add(section);
+                try
+                {
+                    var section = TryGetDynamicProperty(formOrReport, "Section", i);
+                    if (section != null)
+                        sectionObjects.Add(section);
+                }
+                catch
+                {
+                    // Section doesn't exist at this index — skip it.
+                }
             }
+
+            if (sectionObjects.Count == 0)
+                throw new InvalidOperationException("Sections collection is not available for this Access object.");
 
             return sectionObjects;
         }
