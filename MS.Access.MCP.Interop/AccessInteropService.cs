@@ -2253,7 +2253,7 @@ namespace MS.Access.MCP.Interop
             if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentException("Table name is required", nameof(tableName));
             if (string.IsNullOrWhiteSpace(fileName)) throw new ArgumentException("File name is required", nameof(fileName));
 
-            var transferTypeValue = ParseTransferType(transferType, nameof(transferType));
+            var transferTypeValue = ParseTransferTextType(transferType);
             var normalizedSpecificationName = string.IsNullOrWhiteSpace(specificationName) ? null : specificationName.Trim();
             var normalizedHtmlTableName = string.IsNullOrWhiteSpace(htmlTableName) ? null : htmlTableName.Trim();
 
@@ -2800,7 +2800,7 @@ namespace MS.Access.MCP.Interop
                     databaseName.Trim(),
                     objectTypeValue,
                     source.Trim(),
-                    string.IsNullOrWhiteSpace(destination) ? Type.Missing : destination.Trim(),
+                    string.IsNullOrWhiteSpace(destination) ? source.Trim() : destination.Trim(),
                     structureOnly,
                     storeLogin);
             },
@@ -3140,19 +3140,21 @@ namespace MS.Access.MCP.Interop
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
             if (string.IsNullOrWhiteSpace(ribbonName)) throw new ArgumentException("Ribbon name is required.", nameof(ribbonName));
-            if (string.IsNullOrWhiteSpace(ribbonXml)) throw new ArgumentException("Ribbon XML is required.", nameof(ribbonXml));
 
             EnsureNoActiveTransaction("Ribbon XML update");
             EnsureUsysRibbonsTable();
 
+            // Delete existing entry (always — either clearing or replacing)
             using (var deleteCommand = CreateCommand("DELETE FROM [USysRibbons] WHERE [RibbonName] = ?"))
             {
                 AddCommandParameter(deleteCommand, "@p1", ribbonName);
                 _ = deleteCommand.ExecuteNonQuery();
             }
 
-            using (var insertCommand = CreateCommand("INSERT INTO [USysRibbons] ([RibbonName], [RibbonXML]) VALUES (?, ?)"))
+            // If ribbon_xml is empty/null, this is a clear operation — skip the insert.
+            if (!string.IsNullOrWhiteSpace(ribbonXml))
             {
+                using var insertCommand = CreateCommand("INSERT INTO [USysRibbons] ([RibbonName], [RibbonXML]) VALUES (?, ?)");
                 AddCommandParameter(insertCommand, "@p1", ribbonName);
                 AddCommandParameter(insertCommand, "@p2", ribbonXml);
                 _ = insertCommand.ExecuteNonQuery();
@@ -8628,6 +8630,8 @@ namespace MS.Access.MCP.Interop
                 var form = TryGetDynamicProperty(forms, "Item", formName);
                 var controls = TryGetDynamicProperty(form, "Controls");
                 var control = TryGetDynamicProperty(controls, "Item", controlName);
+                // Dropdown requires the control to have focus first
+                InvokeDynamicMethod(control, "SetFocus");
                 InvokeDynamicMethod(control, "Dropdown");
             }, requireExclusive: false, releaseOleDb: false);
         }
@@ -12437,6 +12441,38 @@ namespace MS.Access.MCP.Interop
             };
         }
 
+        /// <summary>
+        /// Parse transfer type for DoCmd.TransferText which uses AcTextTransferType enum
+        /// (different from TransferDatabase's AcDataTransferType).
+        /// </summary>
+        private static int ParseTransferTextType(string transferType)
+        {
+            if (string.IsNullOrWhiteSpace(transferType))
+                throw new ArgumentException("Transfer type is required.", nameof(transferType));
+
+            var trimmed = transferType.Trim();
+            if (int.TryParse(trimmed, out var numericTransferType))
+                return numericTransferType;
+
+            var normalized = NormalizeEnumToken(trimmed);
+            return normalized switch
+            {
+                "import" or "importdelim" or "acimportdelim" => 0,
+                "importfixed" or "acimportfixed" => 1,
+                "export" or "exportdelim" or "acexportdelim" => 2,
+                "exportfixed" or "acexportfixed" => 3,
+                "exportmerge" or "acexportmerge" => 4,
+                "link" or "linkdelim" or "aclinkdelim" => 5,
+                "linkfixed" or "aclinkfixed" => 6,
+                "importhtml" or "acimporthtml" => 7,
+                "exporthtml" or "acexporthtml" => 8,
+                "linkhtml" or "aclinkhtml" => 9,
+                _ => throw new ArgumentException(
+                    "transfer_type must be import, export, link, import_fixed, export_fixed, export_merge, link_fixed, or an AcTextTransferType integer.",
+                    nameof(transferType))
+            };
+        }
+
         private static int ParseSpreadsheetType(string? spreadsheetType)
         {
             if (string.IsNullOrWhiteSpace(spreadsheetType))
@@ -14144,6 +14180,19 @@ namespace MS.Access.MCP.Interop
                     ObjectType = objectType
                 };
 
+                // Auto-enable Name AutoCorrect tracking if needed — GetDependencyInfo
+                // requires "Track Name AutoCorrect Info" to be True. This is an
+                // Application option, not a DAO property.
+                bool wasTrackEnabled = false;
+                try
+                {
+                    var trackVal = InvokeDynamicMethod(accessApp, "GetOption", "Track Name AutoCorrect Info");
+                    wasTrackEnabled = trackVal is bool b ? b : trackVal is int i ? i != 0 : false;
+                    if (!wasTrackEnabled)
+                        _ = InvokeDynamicMethod(accessApp, "SetOption", "Track Name AutoCorrect Info", true);
+                }
+                catch { /* option may not be available — proceed and let GetDependencyInfo report the error */ }
+
                 try
                 {
                     dynamic depInfo = accessApp.Application.GetDependencyInfo(acObjType, objectName);
@@ -14188,6 +14237,15 @@ namespace MS.Access.MCP.Interop
                             "Enable it via File > Options > Current Database > Name AutoCorrect Options.", ex);
                     }
                     throw;
+                }
+                finally
+                {
+                    // Restore original Track Name AutoCorrect setting if we changed it
+                    if (!wasTrackEnabled)
+                    {
+                        try { _ = InvokeDynamicMethod(accessApp, "SetOption", "Track Name AutoCorrect Info", false); }
+                        catch { }
+                    }
                 }
 
                 return result;

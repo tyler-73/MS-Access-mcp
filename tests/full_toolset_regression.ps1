@@ -8260,6 +8260,17 @@ foreach ($tf in @($p19CsvPath, $p19XlsPath, $p19DbPath, $p19XmlExportPath)) {
 }
 # Also clean .laccdb for transfer db
 Remove-Item -Path ($p19DbPath -replace '\.accdb$', '.laccdb') -Force -ErrorAction SilentlyContinue
+# Pre-create empty target .accdb for TransferDatabase (export requires existing target file)
+try {
+    $p19CatType = [Type]::GetTypeFromProgID("ADOX.Catalog")
+    $p19Cat = [Activator]::CreateInstance($p19CatType)
+    $p19CatCn = $p19Cat.Create("Provider=Microsoft.ACE.OLEDB.16.0;Data Source=$p19DbPath")
+    # Close the connection returned by Create to release the file lock
+    if ($p19CatCn) { $p19CatCn.Close(); [System.Runtime.InteropServices.Marshal]::ReleaseComObject($p19CatCn) | Out-Null }
+    $p19Cat.ActiveConnection = $null
+    [System.Runtime.InteropServices.Marshal]::ReleaseComObject($p19Cat) | Out-Null
+    [System.Data.OleDb.OleDbConnection]::ReleaseObjectPool()
+} catch { Write-Host "WARN: failed to pre-create $p19DbPath - $_" }
 
 $p19Calls = New-Object 'System.Collections.Generic.List[object]'
 Add-ToolCall $p19Calls 1590 "connect_access" @{ database_path = $DatabasePath }

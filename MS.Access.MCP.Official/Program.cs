@@ -256,7 +256,7 @@ class Program
                 new { name = "get_startup_properties", description = "Get application startup properties (StartupForm, AppTitle, AppIcon).", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "set_startup_properties", description = "Set application startup properties (StartupForm, AppTitle, AppIcon).", inputSchema = new { type = "object", properties = new { startup_form = new { type = "string" }, app_title = new { type = "string" }, app_icon = new { type = "string" } } } },
                 new { name = "get_ribbon_xml", description = "Get ribbon XML by ribbon name or by default database ribbon property.", inputSchema = new { type = "object", properties = new { ribbon_name = new { type = "string" } } } },
-                new { name = "set_ribbon_xml", description = "Create or replace ribbon XML in USysRibbons and optionally set as default.", inputSchema = new { type = "object", properties = new { ribbon_name = new { type = "string" }, ribbon_xml = new { type = "string" }, apply_as_default = new { type = "boolean" } }, required = new string[] { "ribbon_name", "ribbon_xml" } } },
+                new { name = "set_ribbon_xml", description = "Create or replace ribbon XML in USysRibbons and optionally set as default. Pass empty ribbon_xml to clear/delete the ribbon entry.", inputSchema = new { type = "object", properties = new { ribbon_name = new { type = "string" }, ribbon_xml = new { type = "string", description = "Ribbon XML content. Empty or omitted to clear the ribbon entry." }, apply_as_default = new { type = "boolean" } }, required = new string[] { "ribbon_name" } } },
                 new { name = "get_application_info", description = "Get Access application metadata and current project/data info.", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_current_project_data", description = "Get CurrentProject and CurrentData properties.", inputSchema = new { type = "object", properties = new { } } },
                 new { name = "get_application_option", description = "Get an Access application option value using Application.GetOption.", inputSchema = new { type = "object", properties = new { option_name = new { type = "string" } }, required = new string[] { "option_name" } } },
@@ -2705,12 +2705,13 @@ class Program
         {
             if (!TryGetRequiredString(arguments, "ribbon_name", out var ribbonName, out var ribbonNameError))
                 return ribbonNameError;
-            if (!TryGetRequiredString(arguments, "ribbon_xml", out var ribbonXml, out var ribbonXmlError))
-                return ribbonXmlError;
+            // ribbon_xml is optional — empty/null means "clear" (delete the ribbon entry)
+            _ = TryGetOptionalString(arguments, "ribbon_xml", out var ribbonXml);
 
             var applyAsDefault = GetOptionalBool(arguments, "apply_as_default", false);
-            accessService.SetRibbonXml(ribbonName, ribbonXml, applyAsDefault);
-            return new { success = true, ribbon_name = ribbonName, apply_as_default = applyAsDefault };
+            accessService.SetRibbonXml(ribbonName, ribbonXml ?? "", applyAsDefault);
+            var cleared = string.IsNullOrWhiteSpace(ribbonXml);
+            return new { success = true, ribbon_name = ribbonName, apply_as_default = applyAsDefault, message = cleared ? "Ribbon cleared" : "Ribbon set" };
         }
         catch (Exception ex)
         {
@@ -6985,7 +6986,26 @@ class Program
         try
         {
             var objectType = GetOptionalIntFromAliases(arguments, new[] { "object_type" }, -1);
-            if (objectType < 0) return new { success = false, error = "object_type is required" };
+            // Accept string object_type names as well as integers
+            if (objectType < 0)
+            {
+                _ = TryGetOptionalString(arguments, "object_type", out var objTypeStr);
+                if (!string.IsNullOrWhiteSpace(objTypeStr))
+                {
+                    objectType = objTypeStr.Trim().ToLowerInvariant() switch
+                    {
+                        "table" => 0,   // acExportTable
+                        "query" => 1,   // acExportQuery
+                        "form" => 2,    // acExportForm
+                        "report" => 3,  // acExportReport
+                        "server_view" or "serverview" => 7,
+                        "stored_procedure" or "storedprocedure" => 9,
+                        "function" => 10,
+                        _ => -1
+                    };
+                }
+            }
+            if (objectType < 0) return new { success = false, error = "object_type is required (use table, query, form, report, or an integer)" };
             if (!TryGetRequiredString(arguments, "data_source", out var dataSource, out var dsError))
                 return dsError;
             if (!TryGetRequiredString(arguments, "data_target", out var dataTarget, out var dtError))
