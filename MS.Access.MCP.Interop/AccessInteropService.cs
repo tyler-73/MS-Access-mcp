@@ -3498,7 +3498,13 @@ namespace MS.Access.MCP.Interop
                     ? numericCommand
                     : command.Trim();
 
-                var result = InvokeDynamicMethod(accessApp, "SysCmd", commandValue, arg1 ?? Type.Missing, arg2 ?? Type.Missing, arg3 ?? Type.Missing);
+                // Only pass args that are actually provided — Type.Missing causes
+                // COM parameter count mismatch for methods with optional params.
+                var args = new List<object> { commandValue };
+                if (arg1 != null) args.Add(arg1);
+                if (arg2 != null) args.Add(arg2);
+                if (arg3 != null) args.Add(arg3);
+                var result = InvokeDynamicMethod(accessApp, "SysCmd", args.ToArray());
                 return result == null ? null : NormalizeValue(result);
             },
             requireExclusive: false,
@@ -3563,8 +3569,20 @@ namespace MS.Access.MCP.Interop
                         .ToList();
                 }
 
-                var axlObject = InvokeDynamicMethod(accessApp, "SaveAsAXL", 0, tableName);
-                var axl = SafeToString(axlObject) ?? string.Empty;
+                // SaveAsAXL(ObjectType, ObjectName, FileName) requires a file path.
+                var axl = string.Empty;
+                var tempFile = Path.Combine(Path.GetTempPath(), $"axl_datamacro_{Guid.NewGuid():N}.xml");
+                try
+                {
+                    InvokeDynamicMethod(accessApp, "SaveAsAXL", 0, tableName, tempFile);
+                    if (File.Exists(tempFile))
+                        axl = File.ReadAllText(tempFile);
+                }
+                catch { /* SaveAsAXL may fail for non-web databases */ }
+                finally
+                {
+                    try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { }
+                }
                 foreach (Match match in Regex.Matches(axl, "<[^>]*DataMacro[^>]*\\bName\\s*=\\s*\"(?<name>[^\"]+)\"", RegexOptions.IgnoreCase))
                 {
                     var name = match.Groups["name"].Value.Trim();
@@ -4113,23 +4131,22 @@ namespace MS.Access.MCP.Interop
 
             ExecuteComOperation(accessApp =>
             {
-                var updated = false;
-                try
+                // Try SetOption with various boolean representations.
+                // Note: DoCmd.SelectObject fallback is intentionally omitted because it
+                // hangs Access in headless/batch mode waiting for UI input.
+                Exception? lastEx = null;
+                foreach (var val in new object[] { visible, visible ? -1 : 0, visible ? true : false })
                 {
-                    _ = InvokeDynamicMethod(accessApp, "SetOption", "Show Navigation Pane", visible);
-                    updated = true;
+                    try
+                    {
+                        _ = InvokeDynamicMethod(accessApp, "SetOption", "Show Navigation Pane", val);
+                        return;
+                    }
+                    catch (Exception ex) { lastEx = ex; }
                 }
-                catch
-                {
-                    // Fall through to alternate strategy.
-                }
-
-                if (!updated)
-                {
-                    var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
-                        ?? throw new InvalidOperationException("DoCmd object is unavailable.");
-                    _ = InvokeDynamicMethod(doCmd, "SelectObject", Type.Missing, Type.Missing, visible);
-                }
+                throw new InvalidOperationException(
+                    $"SetOption('Show Navigation Pane') failed: {lastEx?.Message ?? "unknown error"}. " +
+                    "Navigation pane visibility may not be controllable in headless/batch mode.");
             },
             requireExclusive: false,
             releaseOleDb: false);
@@ -7140,29 +7157,12 @@ namespace MS.Access.MCP.Interop
                 {
                     var groupLevel = TryGetReportGroupLevel(report, index)
                         ?? throw new InvalidOperationException($"Group level index {index} was not found.");
-                    var deleted = false;
-                    try
-                    {
-                        _ = InvokeDynamicMethod(groupLevel, "Delete");
-                        deleted = true;
-                    }
-                    catch
-                    {
-                        // Fall through to legacy fallback.
-                    }
 
-                    if (!deleted)
-                    {
-                        var groupLevels = TryGetDynamicProperty(report, "GroupLevels");
-                        if (groupLevels != null)
-                        {
-                            _ = InvokeDynamicMethod(groupLevels, "Delete", index);
-                            deleted = true;
-                        }
-                    }
-
-                    if (!deleted)
-                        throw new InvalidOperationException($"Failed to delete group level index {index}.");
+                    // Access has no GroupLevel.Delete() or GroupLevels.Delete(index) method.
+                    // The standard way to remove a group level is to set both GroupHeader and
+                    // GroupFooter to False, which removes it from the collection on save.
+                    SetDynamicProperty(groupLevel, "GroupHeader", false);
+                    SetDynamicProperty(groupLevel, "GroupFooter", false);
 
                     accessApp.DoCmd.Save(3, reportName);
                 }
@@ -8477,22 +8477,20 @@ namespace MS.Access.MCP.Interop
 
             ExecuteComOperation(app =>
             {
-                var forms = TryGetDynamicProperty(app, "Forms");
-                var form = TryGetDynamicProperty(forms, "Item", formName);
-                var printers = TryGetDynamicProperty(app, "Printers");
-                dynamic? targetPrinter = null;
-                foreach (var p in printers)
+                var openedHere = false;
+                var form = EnsureFormOpen(app, formName, true, out openedHere);
+                try
                 {
-                    if (string.Equals(TryGetDynamicProperty(p, "DeviceName")?.ToString(), printerName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        targetPrinter = p;
-                        break;
-                    }
+                    var targetPrinter = FindPrinterByName(app, printerName);
+                    SetDynamicProperty(form, "Printer", targetPrinter);
+                    app.DoCmd.Save(2, formName); // acForm = 2
                 }
-                if (targetPrinter == null)
-                    throw new ArgumentException($"Printer '{printerName}' not found");
-                SetDynamicProperty(form, "Printer", targetPrinter);
-            }, requireExclusive: false, releaseOleDb: false);
+                finally
+                {
+                    if (openedHere)
+                        CloseFormInternal(app, formName, saveChanges: false);
+                }
+            }, requireExclusive: true, releaseOleDb: true);
         }
 
         public void SetReportPrinter(string reportName, string printerName)
@@ -8501,22 +8499,32 @@ namespace MS.Access.MCP.Interop
 
             ExecuteComOperation(app =>
             {
-                var reports = TryGetDynamicProperty(app, "Reports");
-                var report = TryGetDynamicProperty(reports, "Item", reportName);
-                var printers = TryGetDynamicProperty(app, "Printers");
-                dynamic? targetPrinter = null;
-                foreach (var p in printers)
+                var openedHere = false;
+                var report = EnsureReportOpen(app, reportName, true, out openedHere);
+                try
                 {
-                    if (string.Equals(TryGetDynamicProperty(p, "DeviceName")?.ToString(), printerName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        targetPrinter = p;
-                        break;
-                    }
+                    var targetPrinter = FindPrinterByName(app, printerName);
+                    SetDynamicProperty(report, "Printer", targetPrinter);
+                    app.DoCmd.Save(3, reportName); // acReport = 3
                 }
-                if (targetPrinter == null)
-                    throw new ArgumentException($"Printer '{printerName}' not found");
-                SetDynamicProperty(report, "Printer", targetPrinter);
-            }, requireExclusive: false, releaseOleDb: false);
+                finally
+                {
+                    if (openedHere)
+                        CloseReportInternal(app, reportName, saveChanges: false);
+                }
+            }, requireExclusive: true, releaseOleDb: true);
+        }
+
+        private static dynamic FindPrinterByName(dynamic app, string printerName)
+        {
+            var printers = TryGetDynamicProperty(app, "Printers")
+                ?? throw new InvalidOperationException("Printers collection is unavailable.");
+            foreach (var p in printers)
+            {
+                if (string.Equals(TryGetDynamicProperty(p, "DeviceName")?.ToString(), printerName, StringComparison.OrdinalIgnoreCase))
+                    return p;
+            }
+            throw new ArgumentException($"Printer '{printerName}' not found");
         }
 
         public List<Dictionary<string, object?>> ListPrinters()
