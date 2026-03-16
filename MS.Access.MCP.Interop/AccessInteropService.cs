@@ -3661,18 +3661,19 @@ namespace MS.Access.MCP.Interop
             releaseOleDb: false);
         }
 
-        public void RunAutoExec()
+        public bool RunAutoExec()
         {
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
 
-            ExecuteComOperation(accessApp =>
+            return ExecuteComOperation(accessApp =>
             {
                 if (!MacroExists(accessApp, "AutoExec"))
-                    throw new InvalidOperationException("AutoExec macro does not exist.");
+                    return false;
 
                 var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
                     ?? throw new InvalidOperationException("DoCmd is unavailable on the Access application instance.");
                 _ = InvokeDynamicMethod(doCmd, "RunMacro", "AutoExec");
+                return true;
             },
             requireExclusive: false,
             releaseOleDb: false);
@@ -7160,42 +7161,60 @@ namespace MS.Access.MCP.Interop
             if (string.IsNullOrWhiteSpace(reportName)) throw new ArgumentException("reportName is required.", nameof(reportName));
             if (index < 0) throw new ArgumentOutOfRangeException(nameof(index), "index must be greater than or equal to 0.");
 
-            ExecuteComOperation(accessApp =>
+            // GroupLevel properties are read-only via COM in modern Access.
+            // Use SaveAsText/LoadFromText to manipulate the report design text
+            // and remove the specified GroupLevel block.
+            var reportText = ExportReportToText(reportName, TextModeAccessText);
+            if (string.IsNullOrWhiteSpace(reportText))
+                throw new InvalidOperationException("Failed to export report text.");
+
+            // Parse GroupLevel blocks: they appear as "Begin\n  ... GroupLevel = ...\nEnd"
+            // in the report text. We need to find and remove the Nth GroupLevel block.
+            var lines = reportText.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None).ToList();
+            var groupLevelStarts = new List<int>();
+            var groupLevelEnds = new List<int>();
+
+            for (var i = 0; i < lines.Count; i++)
             {
-                var openedHere = false;
-                var report = EnsureReportOpen(accessApp, reportName, true, out openedHere);
-                try
+                if (lines[i].TrimStart().StartsWith("GroupLevel =", StringComparison.OrdinalIgnoreCase))
                 {
-                    dynamic groupLevel = TryGetReportGroupLevel(report, index)
-                        ?? throw new InvalidOperationException($"Group level index {index} was not found.");
-
-                    // Access has no GroupLevel.Delete() or GroupLevels.Delete(index) method.
-                    // The standard way to remove a group level is to set both GroupHeader and
-                    // GroupFooter to False, which removes it from the collection on save.
-                    // Use dynamic dispatch (DLR COM binder) -- SetDynamicProperty/LateSet fails
-                    // with "This property is read-only" on GroupLevel COM objects.
-                    try
+                    // Walk backward to find the "Begin" for this block
+                    var blockStart = i;
+                    for (var j = i - 1; j >= 0; j--)
                     {
-                        groupLevel.GroupHeader = false;
-                        groupLevel.GroupFooter = false;
+                        if (lines[j].Trim().Equals("Begin", StringComparison.OrdinalIgnoreCase))
+                        {
+                            blockStart = j;
+                            break;
+                        }
                     }
-                    catch
+                    // Walk forward to find the "End" for this block
+                    var blockEnd = i;
+                    for (var j = i + 1; j < lines.Count; j++)
                     {
-                        // Fallback: try via SetDynamicProperty in case dynamic dispatch doesn't bind
-                        SetDynamicProperty(groupLevel, "GroupHeader", false);
-                        SetDynamicProperty(groupLevel, "GroupFooter", false);
+                        if (lines[j].Trim().Equals("End", StringComparison.OrdinalIgnoreCase))
+                        {
+                            blockEnd = j;
+                            break;
+                        }
                     }
+                    groupLevelStarts.Add(blockStart);
+                    groupLevelEnds.Add(blockEnd);
+                }
+            }
 
-                    accessApp.DoCmd.Save(3, reportName);
-                }
-                finally
-                {
-                    if (openedHere)
-                        CloseReportInternal(accessApp, reportName, saveChanges: false);
-                }
-            },
-            requireExclusive: true,
-            releaseOleDb: true);
+            if (index >= groupLevelStarts.Count)
+                throw new InvalidOperationException($"Group level index {index} was not found. Report has {groupLevelStarts.Count} group level(s).");
+
+            // Remove the lines for the specified group level block
+            var removeStart = groupLevelStarts[index];
+            var removeEnd = groupLevelEnds[index];
+            lines.RemoveRange(removeStart, removeEnd - removeStart + 1);
+
+            var modifiedText = string.Join("\r\n", lines);
+
+            // Reimport the modified report text
+            ImportReportFromText(reportName, modifiedText, TextModeAccessText);
         }
 
         public ReportSortingInfo GetReportSorting(string reportName)

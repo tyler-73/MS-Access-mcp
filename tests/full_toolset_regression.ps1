@@ -5128,7 +5128,6 @@ $docmdGracefulFailIds = @{
     955 = "save_object may fail if the table is not truly open in the batch COM context"
     957 = "open_query view string may cause type mismatch in some Access versions"
     974 = "execute_vba CurrentProject.FullName may not be evaluable in all contexts"
-    976 = "run_autoexec may fail if no AutoExec macro exists in database"
 }
 
 foreach ($id in ($docmdIdLabels.Keys | Sort-Object)) {

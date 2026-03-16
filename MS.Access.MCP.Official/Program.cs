@@ -2940,8 +2940,8 @@ class Program
     {
         try
         {
-            accessService.RunAutoExec();
-            return new { success = true };
+            var ran = accessService.RunAutoExec();
+            return new { success = true, executed = ran, message = ran ? "AutoExec macro executed." : "No AutoExec macro found in database." };
         }
         catch (Exception ex)
         {
