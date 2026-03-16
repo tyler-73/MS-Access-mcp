@@ -2567,6 +2567,10 @@ namespace MS.Access.MCP.Interop
             if (!IsConnected) throw new InvalidOperationException("Not connected to database");
             if (string.IsNullOrWhiteSpace(queryName)) throw new ArgumentException("Query name is required.", nameof(queryName));
 
+            // Parse view/dataMode to enum integers BEFORE the dynamic lambda (same pattern as OpenForm).
+            var viewValue = ParseOpenFormView(view);       // AcView enum: normal=0, design=1, preview=2, etc.
+            var dataModeValue = ParseOpenDataMode(dataMode); // AcOpenDataMode: add=0, edit=1, read_only=2
+
             ExecuteComOperation(accessApp =>
             {
                 var doCmd = TryGetDynamicProperty(accessApp, "DoCmd")
@@ -2576,8 +2580,8 @@ namespace MS.Access.MCP.Interop
                     doCmd,
                     "OpenQuery",
                     queryName,
-                    NormalizeDoCmdVariant(view),
-                    NormalizeDoCmdVariant(dataMode));
+                    viewValue,
+                    dataModeValue);
             },
             requireExclusive: false,
             releaseOleDb: false);
@@ -2736,8 +2740,8 @@ namespace MS.Access.MCP.Interop
                     objectTypeValue,
                     string.IsNullOrWhiteSpace(objectName) ? Type.Missing : objectName.Trim());
             },
-            requireExclusive: true,
-            releaseOleDb: true);
+            requireExclusive: false,
+            releaseOleDb: false);
         }
 
         public void CloseObject(string? objectType = null, string? objectName = null, string? save = null)
@@ -6105,8 +6109,8 @@ namespace MS.Access.MCP.Interop
 
                 _ = InvokeDynamicMethod(specs, "Add", specificationName.Trim(), specificationXml);
             },
-            requireExclusive: true,
-            releaseOleDb: true);
+            requireExclusive: false,
+            releaseOleDb: false);
         }
 
         public void DeleteImportExportSpec(string specificationName)
@@ -6123,8 +6127,8 @@ namespace MS.Access.MCP.Interop
 
                 _ = InvokeDynamicMethod(spec, "Delete");
             },
-            requireExclusive: true,
-            releaseOleDb: true);
+            requireExclusive: false,
+            releaseOleDb: false);
         }
 
         public void RunImportExportSpec(string specificationName)
@@ -8984,6 +8988,12 @@ namespace MS.Access.MCP.Interop
 
             try
             {
+                // Close existing connections and release the OleDb connection pool to flush
+                // cached schema metadata.  Without this, dropped/added columns may remain
+                // visible (or invisible) in subsequent describe_table calls because ACE OLEDB
+                // caches table schemas per pool entry.
+                CloseSqlConnections();
+                System.Data.OleDb.OleDbConnection.ReleaseObjectPool();
                 OpenPreferredConnection(_currentDatabasePath);
             }
             catch
@@ -12561,14 +12571,14 @@ namespace MS.Access.MCP.Interop
             var normalized = NormalizeEnumToken(trimmed);
             return normalized switch
             {
-                "normal" or "acnormal" => 0,
-                "design" or "acdesign" => 1,
-                "preview" or "printpreview" or "acpreview" => 2,
-                "pivottable" or "acpivottable" => 3,
-                "pivotchart" or "acpivotchart" => 4,
-                "layout" or "aclayout" => 6,
+                "normal" or "datasheet" or "acnormal" or "acviewnormal" => 0,
+                "design" or "acdesign" or "acviewdesign" => 1,
+                "preview" or "printpreview" or "acpreview" or "acviewpreview" => 2,
+                "pivottable" or "acpivottable" or "acviewpivottable" => 3,
+                "pivotchart" or "acpivotchart" or "acviewpivotchart" => 4,
+                "layout" or "aclayout" or "acviewlayout" => 6,
                 _ => throw new ArgumentException(
-                    "view must be normal, design, preview, pivot_table, pivot_chart, layout, or an Access enum integer value.",
+                    "view must be normal, datasheet, design, preview, pivot_table, pivot_chart, layout, or an Access enum integer value.",
                     nameof(view))
             };
         }

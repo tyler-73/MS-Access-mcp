@@ -5408,7 +5408,16 @@ Cleanup-AccessArtifacts -DbPath $DatabasePath
 Start-Sleep -Milliseconds 300
 
 $specName = "MCP_TestSpec_$suffix"
-$specXml = "<ImportExportSpecification><Name>$specName</Name><Type>1</Type></ImportExportSpecification>"
+$specTxtPath = Join-Path ([System.IO.Path]::GetTempPath()) "mcp_spec_test_$suffix.txt"
+$specXml = @"
+<?xml version="1.0" encoding="utf-8" ?>
+<ImportExportSpecification Path="$specTxtPath" xmlns="urn:www.microsoft.com/office/access/imexspec">
+  <ExportText TextFormat="Delimited" FirstRowHasNames="true" FieldDelimiter="," TextDelimiter="{DoubleQuote}" CodePage="1252" AccessObject="$tableName" ObjectType="Table">
+    <DateFormat DateOrder="MDY" DateDelimiter="/" TimeDelimiter=":" FourYearDates="true" DatesLeadingZeros="false" />
+    <NumberFormat DecimalSymbol="." />
+  </ExportText>
+</ImportExportSpecification>
+"@
 
 $specCalls = New-Object 'System.Collections.Generic.List[object]'
 
