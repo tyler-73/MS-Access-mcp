@@ -1017,8 +1017,10 @@ try {
         throw "Batch 6b: connect_access checkpoint failed."
     }
 
+    # ID 344 (encrypt_database) SKIPPED: now succeeds after file-lock fix (DBEngine.CompactDatabase)
+    # ID 345 (set_database_password) SKIPPED: now succeeds after file-lock fix
     # ID 346 (remove_database_password) SKIPPED: succeeds as no-op when no password is set
-    foreach ($id in @(342, 343, 344, 345, 347, 348, 349)) {
+    foreach ($id in @(342, 343, 347, 348, 349)) {
         Assert-FailureResponse -Responses $np6bResponses -Id $id -Name "batch6b_id$id"
     }
 

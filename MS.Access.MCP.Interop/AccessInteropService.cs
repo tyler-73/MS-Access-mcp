@@ -3543,7 +3543,9 @@ namespace MS.Access.MCP.Interop
                 var currentData = TryGetDynamicProperty(accessApp, "CurrentData");
                 var allTables = TryGetDynamicProperty(currentData, "AllTables");
                 var table = allTables == null ? null : FindObjectByName(allTables, tableName);
-                var dataMacros = table == null ? null : TryGetDynamicProperty(table, "DataMacros");
+                if (table == null)
+                    throw new InvalidOperationException($"Table '{tableName}' does not exist.");
+                var dataMacros = TryGetDynamicProperty(table, "DataMacros");
                 var results = new List<DataMacroInfo>();
 
                 if (dataMacros != null)
