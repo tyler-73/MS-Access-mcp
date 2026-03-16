@@ -4851,11 +4851,14 @@ namespace MS.Access.MCP.Interop
             if (string.IsNullOrWhiteSpace(objectName)) throw new ArgumentException("objectName is required.", nameof(objectName));
 
             var normalizedType = NormalizeEnumToken(objectType);
+            // Tables, queries, macros, and modules don't have event bindings -- return empty list.
+            if (normalizedType != "form" && normalizedType != "report")
+                return new List<ObjectEventInfo>();
+
             string sourceText = normalizedType switch
             {
                 "form" => ExportFormToText(objectName, TextModeAccessText),
-                "report" => ExportReportToText(objectName, TextModeAccessText),
-                _ => throw new ArgumentException("objectType must be form or report.", nameof(objectType))
+                _ => ExportReportToText(objectName, TextModeAccessText)
             };
 
             var events = new List<ObjectEventInfo>();
@@ -7163,14 +7166,25 @@ namespace MS.Access.MCP.Interop
                 var report = EnsureReportOpen(accessApp, reportName, true, out openedHere);
                 try
                 {
-                    var groupLevel = TryGetReportGroupLevel(report, index)
+                    dynamic groupLevel = TryGetReportGroupLevel(report, index)
                         ?? throw new InvalidOperationException($"Group level index {index} was not found.");
 
                     // Access has no GroupLevel.Delete() or GroupLevels.Delete(index) method.
                     // The standard way to remove a group level is to set both GroupHeader and
                     // GroupFooter to False, which removes it from the collection on save.
-                    SetDynamicProperty(groupLevel, "GroupHeader", false);
-                    SetDynamicProperty(groupLevel, "GroupFooter", false);
+                    // Use dynamic dispatch (DLR COM binder) -- SetDynamicProperty/LateSet fails
+                    // with "This property is read-only" on GroupLevel COM objects.
+                    try
+                    {
+                        groupLevel.GroupHeader = false;
+                        groupLevel.GroupFooter = false;
+                    }
+                    catch
+                    {
+                        // Fallback: try via SetDynamicProperty in case dynamic dispatch doesn't bind
+                        SetDynamicProperty(groupLevel, "GroupHeader", false);
+                        SetDynamicProperty(groupLevel, "GroupFooter", false);
+                    }
 
                     accessApp.DoCmd.Save(3, reportName);
                 }
